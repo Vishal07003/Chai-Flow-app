@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
+import React from 'react';
+import { View, Text, StyleSheet } from 'react-native';
 import { useApp } from '../context/AppContext';
 
 interface ActivityTimelineProps {
@@ -8,49 +7,40 @@ interface ActivityTimelineProps {
 }
 
 export default function ActivityTimeline({ limit = 5 }: ActivityTimelineProps) {
-  const { activities } = useApp();
-  const [showAll, setShowAll] = useState(false);
+  const { activities = [] } = useApp();
 
-  const displayedActivities =
-    showAll || !limit ? activities : activities.slice(0, limit);
-  const hasMore = activities.length > limit;
+  const displayedActivities = activities.slice(0, limit);
+
+  if (displayedActivities.length === 0) {
+    return (
+      <View style={[styles.card, styles.emptyCard]}>
+        <Text style={styles.emptyText}>No recent activity</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.card}>
-      {displayedActivities.map((item, index) => (
-        <View key={item.id} style={styles.row}>
-          <View style={styles.leftTimeline}>
-            <View style={[styles.dot, { backgroundColor: item.color }]} />
-            {index !== displayedActivities.length - 1 && (
-              <View style={styles.verticalLine} />
-            )}
-          </View>
+      {displayedActivities.map((item, index) => {
+        const isLast = index === displayedActivities.length - 1;
+        return (
+          <View
+            key={item.id}
+            style={[styles.row, isLast && styles.lastRow]}
+          >
+            <View style={styles.leftTimeline}>
+              <View style={[styles.dot, { backgroundColor: item.color }]} />
+              {!isLast && <View style={styles.verticalLine} />}
+            </View>
 
-          <View style={styles.content}>
-            <Text style={styles.title}>{item.title}</Text>
-            <Text style={styles.subtitle}>{item.subtitle}</Text>
-            <Text style={styles.time}>{item.time}</Text>
+            <View style={styles.content}>
+              <Text style={styles.title}>{item.title}</Text>
+              <Text style={styles.subtitle}>{item.subtitle}</Text>
+              <Text style={styles.time}>{item.time}</Text>
+            </View>
           </View>
-        </View>
-      ))}
-
-      {hasMore && (
-        <TouchableOpacity
-          activeOpacity={0.7}
-          style={styles.viewAllBtn}
-          onPress={() => setShowAll(!showAll)}
-        >
-          <Text style={styles.viewAllText}>
-            {showAll ? 'Show Less' : `View All (${activities.length})`}
-          </Text>
-          <Ionicons
-            name={showAll ? 'chevron-up' : 'chevron-down'}
-            size={16}
-            color="#8C331A"
-            style={{ marginLeft: 4 }}
-          />
-        </TouchableOpacity>
-      )}
+        );
+      })}
     </View>
   );
 }
@@ -61,7 +51,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingTop: 18,
-    paddingBottom: 8,
+    paddingBottom: 18,
     marginVertical: 10,
     elevation: 2,
     shadowColor: '#000',
@@ -69,9 +59,21 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 6,
   },
+  emptyCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+  },
+  emptyText: {
+    color: '#9E9288',
+    fontSize: 14,
+  },
   row: {
     flexDirection: 'row',
     marginBottom: 18,
+  },
+  lastRow: {
+    marginBottom: 0,
   },
   leftTimeline: {
     alignItems: 'center',
@@ -109,18 +111,5 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontStyle: 'italic',
   },
-  viewAllBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    marginTop: 4,
-    borderTopWidth: 1,
-    borderTopColor: '#F3EFEA',
-  },
-  viewAllText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#8C331A',
-  },
 });
+
