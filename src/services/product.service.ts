@@ -1,54 +1,85 @@
 import apiClient from './api';
-import { ProductItem } from '../types/product';
+
+export interface Category {
+  id: number;
+  name: string;
+  description?: string;
+}
+
+export interface BackendProduct {
+  id: number;
+  name: string;
+  category: number | null;
+  category_name?: string;
+  price: string;
+  description?: string;
+  image_url?: string;
+  is_available: boolean;
+  created_at: string;
+}
 
 export const productService = {
-  async getProducts(initialData?: ProductItem[]): Promise<ProductItem[]> {
-    return apiClient.get<ProductItem[]>('/products', initialData || []);
+  /**
+   * Fetch categories from Django backend
+   */
+  async getCategories(): Promise<Category[]> {
+    return apiClient.get<Category[]>('/products/categories/');
   },
 
-  async addProduct(product: Omit<ProductItem, 'id'>): Promise<ProductItem> {
-    const id = Date.now().toString();
-    const newProduct: ProductItem = {
-      ...product,
-      id,
-    };
-    return apiClient.post<ProductItem>('/products', product, newProduct);
+  /**
+   * Fetch all products or filter by category / availability
+   */
+  async getProducts(params?: { category?: number; available?: boolean }): Promise<BackendProduct[]> {
+    const query = new URLSearchParams();
+    if (params?.category) query.append('category', String(params.category));
+    if (params?.available !== undefined) query.append('available', String(params.available));
+    const qs = query.toString();
+    return apiClient.get<BackendProduct[]>(`/products/items/${qs ? `?${qs}` : ''}`);
   },
 
-  async updateStock(
-    productId: string,
-    newStockNumber: number,
-  ): Promise<{ productId: string; newStockNumber: number }> {
-    return apiClient.put(`/products/${productId}/stock`, { newStockNumber }, {
-      productId,
-      newStockNumber,
-    });
+  /**
+   * Fetch single product detail
+   */
+  async getProductById(id: number | string): Promise<BackendProduct> {
+    return apiClient.get<BackendProduct>(`/products/items/${id}/`);
   },
 
-  async updateImage(
-    productId: string,
-    imageUrl: string,
-  ): Promise<{ productId: string; imageUrl: string }> {
-    return apiClient.put(`/products/${productId}/image`, { imageUrl }, {
-      productId,
-      imageUrl,
-    });
+  /**
+   * Create new product (Owner only)
+   */
+  async createProduct(data: {
+    name: string;
+    category?: number;
+    price: string | number;
+    description?: string;
+    image_url?: string;
+    is_available?: boolean;
+  }): Promise<BackendProduct> {
+    return apiClient.post<BackendProduct>('/products/items/', data);
   },
 
-  async updatePrice(
-    productId: string,
-    newPrice: string,
-  ): Promise<{ productId: string; newPrice: string }> {
-    return apiClient.put(`/products/${productId}/price`, { newPrice }, {
-      productId,
-      newPrice,
-    });
+  /**
+   * Update product (Owner only)
+   */
+  async updateProduct(
+    id: number | string,
+    data: Partial<{
+      name: string;
+      category: number;
+      price: string | number;
+      description: string;
+      image_url: string;
+      is_available: boolean;
+    }>,
+  ): Promise<BackendProduct> {
+    return apiClient.patch<BackendProduct>(`/products/items/${id}/`, data);
   },
 
-  async deleteProduct(id: string): Promise<{ success: boolean }> {
-    return apiClient.delete<{ success: boolean }>(`/products/${id}`, {
-      success: true,
-    });
+  /**
+   * Delete product (Owner only)
+   */
+  async deleteProduct(id: number | string): Promise<void> {
+    return apiClient.delete<void>(`/products/items/${id}/`);
   },
 };
 

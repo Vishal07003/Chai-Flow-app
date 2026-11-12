@@ -9,7 +9,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import ChaiFlowHeader from '../../components/ChaiFlowHeader';
+import ChaiFlowHeader from '../../components/common/ChaiFlowHeader';
 import { useApp } from '../../context/AppContext';
 import { validation } from '../../utils/validation';
 import { AppToast } from '../../utils/toast';
