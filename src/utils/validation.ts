@@ -1,6 +1,6 @@
 /**
  * Validation Utility Module
- * ChaiFlow / ClientManageApp
+ * Chai Flow App
  * 
  * Comprehensive validation helpers for form fields,
  * mobile numbers, email addresses, OTP, GSTIN, PIN codes, and amounts.

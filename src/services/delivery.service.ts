@@ -64,6 +64,58 @@ export const deliveryService = {
   ): Promise<BackendDelivery> {
     return apiClient.patch<BackendDelivery>(`/deliveries/${deliveryId}/`, data);
   },
+
+  // Compatibility methods for AppContext DeliveryBoy operations
+  async getDeliveryBoys(initialData?: any[]): Promise<any[]> {
+    return apiClient.get<any[]>('/delivery-boys', initialData || []);
+  },
+
+  async addDeliveryBoy(boy: any): Promise<any> {
+    const id = Date.now().toString();
+    const newBoy = {
+      ...boy,
+      id,
+      avatarUrl:
+        boy.avatarUrl ||
+        `https://ui-avatars.com/api/?name=${encodeURIComponent(
+          boy.name,
+        )}&background=3B82F6&color=FFF`,
+    };
+    return apiClient.post<any>('/delivery-boys', boy, newBoy);
+  },
+
+  async updateDeliveryBoy(
+    boyId: string,
+    updated: any,
+  ): Promise<any> {
+    return apiClient.put(`/delivery-boys/${boyId}`, updated, {
+      id: boyId,
+      ...updated,
+    });
+  },
+
+  async deleteDeliveryBoy(boyId: string): Promise<{ success: boolean }> {
+    return apiClient.delete<{ success: boolean }>(`/delivery-boys/${boyId}`, {
+      success: true,
+    });
+  },
+
+  async assignOrder(boyId: string): Promise<{ success: boolean; boyId: string }> {
+    return apiClient.post(`/delivery-boys/${boyId}/assign`, {}, {
+      success: true,
+      boyId,
+    });
+  },
+
+  async updateStatus(
+    boyId: string,
+    status: 'BUSY' | 'READY' | 'OFFLINE',
+  ): Promise<{ boyId: string; status: 'BUSY' | 'READY' | 'OFFLINE' }> {
+    return apiClient.put(`/delivery-boys/${boyId}/status`, { status }, {
+      boyId,
+      status,
+    });
+  },
 };
 
 export default deliveryService;

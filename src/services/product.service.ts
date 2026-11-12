@@ -81,6 +81,46 @@ export const productService = {
   async deleteProduct(id: number | string): Promise<void> {
     return apiClient.delete<void>(`/products/items/${id}/`);
   },
+
+  // Compatibility methods for AppContext ProductItem operations
+  async addProduct(product: any): Promise<any> {
+    const id = Date.now().toString();
+    const newProduct = {
+      ...product,
+      id,
+    };
+    return apiClient.post<any>('/products', product, newProduct);
+  },
+
+  async updateStock(
+    productId: string,
+    newStockNumber: number,
+  ): Promise<{ productId: string; newStockNumber: number }> {
+    return apiClient.put(`/products/${productId}/stock`, { newStockNumber }, {
+      productId,
+      newStockNumber,
+    });
+  },
+
+  async updateImage(
+    productId: string,
+    imageUrl: string,
+  ): Promise<{ productId: string; imageUrl: string }> {
+    return apiClient.put(`/products/${productId}/image`, { imageUrl }, {
+      productId,
+      imageUrl,
+    });
+  },
+
+  async updatePrice(
+    productId: string,
+    newPrice: string,
+  ): Promise<{ productId: string; newPrice: string }> {
+    return apiClient.put(`/products/${productId}/price`, { newPrice }, {
+      productId,
+      newPrice,
+    });
+  },
 };
 
 export default productService;

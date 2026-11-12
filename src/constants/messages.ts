@@ -1,6 +1,6 @@
 /**
  * Centralized Application Messages & Text Constants
- * ChaiFlow / ClientManageApp
+ * Chai Flow App
  */
 
 export const AUTH_MESSAGES = {

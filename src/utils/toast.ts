@@ -1,6 +1,6 @@
 /**
  * Toast Utility Module
- * ChaiFlow / ClientManageApp
+ * Chai Flow App
  * 
  * Powered by react-native-toast-message
  */

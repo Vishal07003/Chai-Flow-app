@@ -1,6 +1,6 @@
 /**
  * Storage Utility Module
- * ChaiFlow / ClientManageApp
+ * Chai Flow App
  *
  * Provides type-safe wrapper functions around AsyncStorage
  * with predefined keys, error handling, and batch operations.

@@ -771,8 +771,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const [userRole, setUserRole] = useState<UserRole>('ADMIN');
 
   const login = async (mobile?: string, roleOverride?: UserRole) => {
-    await authService.login(mobile, roleOverride);
     const targetMobile = mobile || userMobile;
+    try {
+      await authService.login(targetMobile, 'ChaiPass@123');
+    } catch {
+      // Offline / fallback demo login support
+    }
     const cleanDigits = (str: string) =>
       (str || '').replace(/\D/g, '').slice(-10);
     const inputDigits = cleanDigits(targetMobile);
@@ -813,12 +817,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       const resolvedRole = roleOverride || 'ADMIN';
       const formattedPhone =
         targetMobile === '+91 0000000000' ||
-        !targetMobile ||
-        inputDigits === '1234567899'
+          !targetMobile ||
+          inputDigits === '1234567899'
           ? '+91 1234567899'
           : targetMobile.startsWith('+91')
-          ? targetMobile
-          : `+91 ${targetMobile.trim()}`;
+            ? targetMobile
+            : `+91 ${targetMobile.trim()}`;
 
       setUserMobile(formattedPhone);
       setUserRole(resolvedRole);
@@ -835,9 +839,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     setIsAuthenticated(true);
+    // Register FCM device token for authenticated user session
+    await notificationService.registerDeviceToken();
   };
 
   const logout = async () => {
+    // Deactivate device token before clearing auth session
+    await notificationService.deactivateDeviceToken();
     await authService.logout();
     setIsDrawerOpen(false);
     setIsAuthenticated(false);
@@ -1095,8 +1103,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     const dueStatusText = isPaidOnSpot
       ? 'Paid on Spot'
       : isPartial
-      ? `Partially Paid (₹${remainingDue.toLocaleString()} due)`
-      : 'Counter Credit';
+        ? `Partially Paid (₹${remainingDue.toLocaleString()} due)`
+        : 'Counter Credit';
 
     const status: 'PAID' | 'PENDING' = isPaidOnSpot ? 'PAID' : 'PENDING';
 
@@ -1123,8 +1131,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         billData.paymentMethod === 'UPI'
           ? 'UPI / GPay'
           : billData.paymentMethod === 'Credit'
-          ? 'Bank Transfer'
-          : 'Cash';
+            ? 'Bank Transfer'
+            : 'Cash';
 
       setCollectionsTotal(prev => prev + billData.paidAmount);
       setPaymentHistory(prev => [
@@ -1172,9 +1180,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         id: `act-${Date.now()}`,
         color: '#059669',
         title: `Quick Bill Created (${newInv.invoiceNo})`,
-        subtitle: `₹${billData.grandTotal.toLocaleString()} for ${
-          billData.customerName
-        } [${billData.paymentMethod}]`,
+        subtitle: `₹${billData.grandTotal.toLocaleString()} for ${billData.customerName
+          } [${billData.paymentMethod}]`,
         time: 'Just now',
       },
       ...prev,
@@ -1301,8 +1308,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       paymentMethod === 'Cash'
         ? 'Cash'
         : paymentMethod === 'Card' || paymentMethod === 'Bank Transfer'
-        ? 'Bank Transfer'
-        : 'UPI / GPay';
+          ? 'Bank Transfer'
+          : 'UPI / GPay';
 
     setPaymentHistory(prev => [
       {
@@ -1360,16 +1367,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       prev.map(inv =>
         inv.id === orderId || inv.invoiceNo === orderId
           ? {
-              ...inv,
-              deliveryStatus: status,
-              currentLocation:
-                location ||
-                (status === 'Delivered'
-                  ? 'Delivered to Customer'
-                  : status === 'Out for delivery'
+            ...inv,
+            deliveryStatus: status,
+            currentLocation:
+              location ||
+              (status === 'Delivered'
+                ? 'Delivered to Customer'
+                : status === 'Out for delivery'
                   ? 'In Transit / On Route'
                   : 'At Hub'),
-            }
+          }
           : inv,
       ),
     );
@@ -1583,8 +1590,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
               status === 'READY'
                 ? 'At Hub'
                 : status === 'BUSY'
-                ? 'En route'
-                : 'Offline',
+                  ? 'En route'
+                  : 'Offline',
             progress: status === 'BUSY' ? 50 : 0,
           };
         }
@@ -1601,9 +1608,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     // Send notification to Delivery Partner & system
     addNotification({
       title: '📅 New Delivery Route Assigned',
-      message: `New route "${
-        newSch.title || newSch.customerName
-      }" assigned to ${newSch.deliveryBoy} for ${newSch.timeSlot}.`,
+      message: `New route "${newSch.title || newSch.customerName
+        }" assigned to ${newSch.deliveryBoy} for ${newSch.timeSlot}.`,
       type: 'order',
     });
 

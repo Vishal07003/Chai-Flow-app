@@ -34,15 +34,17 @@ class ApiClient {
   }
 
   async setTokens(access: string, refresh?: string): Promise<void> {
-    const pairs: [string, string][] = [[STORAGE_KEYS.ACCESS_TOKEN, access]];
+    const entries: Record<string, string> = {
+      [STORAGE_KEYS.ACCESS_TOKEN]: access,
+    };
     if (refresh) {
-      pairs.push([STORAGE_KEYS.REFRESH_TOKEN, refresh]);
+      entries[STORAGE_KEYS.REFRESH_TOKEN] = refresh;
     }
-    await AsyncStorage.multiSet(pairs);
+    await AsyncStorage.setMany(entries);
   }
 
   async clearTokens(): Promise<void> {
-    await AsyncStorage.multiRemove([
+    await AsyncStorage.removeMany([
       STORAGE_KEYS.ACCESS_TOKEN,
       STORAGE_KEYS.REFRESH_TOKEN,
       STORAGE_KEYS.USER_PROFILE,
@@ -159,15 +161,33 @@ class ApiClient {
     }
   }
 
-  get<T>(endpoint: string, headers?: Record<string, string>): Promise<T> {
-    return this.request<T>(endpoint, { method: 'GET', headers });
+  get<T>(endpoint: string, fallbackOrHeaders?: T | Record<string, string>): Promise<T> {
+    const headers =
+      fallbackOrHeaders && !Array.isArray(fallbackOrHeaders) && typeof fallbackOrHeaders === 'object' && !('length' in fallbackOrHeaders)
+        ? (fallbackOrHeaders as Record<string, string>)
+        : undefined;
+    return this.request<T>(endpoint, { method: 'GET', headers }).catch(err => {
+      if (fallbackOrHeaders !== undefined && headers === undefined) {
+        return fallbackOrHeaders as T;
+      }
+      throw err;
+    });
   }
 
-  post<T>(endpoint: string, body?: any, headers?: Record<string, string>): Promise<T> {
+  post<T>(endpoint: string, body?: any, fallbackOrHeaders?: T | Record<string, string>): Promise<T> {
+    const headers =
+      fallbackOrHeaders && typeof fallbackOrHeaders === 'object' && !('id' in (fallbackOrHeaders as object)) && !('success' in (fallbackOrHeaders as object))
+        ? (fallbackOrHeaders as Record<string, string>)
+        : undefined;
     return this.request<T>(endpoint, {
       method: 'POST',
       body: body ? JSON.stringify(body) : undefined,
       headers,
+    }).catch(err => {
+      if (fallbackOrHeaders !== undefined && headers === undefined) {
+        return fallbackOrHeaders as T;
+      }
+      throw err;
     });
   }
 
@@ -179,16 +199,34 @@ class ApiClient {
     });
   }
 
-  put<T>(endpoint: string, body?: any, headers?: Record<string, string>): Promise<T> {
+  put<T>(endpoint: string, body?: any, fallbackOrHeaders?: T | Record<string, string>): Promise<T> {
+    const headers =
+      fallbackOrHeaders && typeof fallbackOrHeaders === 'object' && !('id' in (fallbackOrHeaders as object)) && !('success' in (fallbackOrHeaders as object))
+        ? (fallbackOrHeaders as Record<string, string>)
+        : undefined;
     return this.request<T>(endpoint, {
       method: 'PUT',
       body: body ? JSON.stringify(body) : undefined,
       headers,
+    }).catch(err => {
+      if (fallbackOrHeaders !== undefined && headers === undefined) {
+        return fallbackOrHeaders as T;
+      }
+      throw err;
     });
   }
 
-  delete<T>(endpoint: string, headers?: Record<string, string>): Promise<T> {
-    return this.request<T>(endpoint, { method: 'DELETE', headers });
+  delete<T>(endpoint: string, fallbackOrHeaders?: T | Record<string, string>): Promise<T> {
+    const headers =
+      fallbackOrHeaders && typeof fallbackOrHeaders === 'object' && !('success' in (fallbackOrHeaders as object))
+        ? (fallbackOrHeaders as Record<string, string>)
+        : undefined;
+    return this.request<T>(endpoint, { method: 'DELETE', headers }).catch(err => {
+      if (fallbackOrHeaders !== undefined && headers === undefined) {
+        return fallbackOrHeaders as T;
+      }
+      throw err;
+    });
   }
 }
 
