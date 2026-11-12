@@ -7,6 +7,7 @@ import paymentService from './payment.service';
 import scheduleService from './schedule.service';
 import profileService from './profile.service';
 import notificationService from './notification.service';
+import billingService from './billing.service';
 import apiClient from './api';
 
 export {
@@ -20,6 +21,7 @@ export {
   scheduleService,
   profileService,
   notificationService,
+  billingService,
 };
 
 export default {
@@ -33,4 +35,5 @@ export default {
   schedule: scheduleService,
   profile: profileService,
   notification: notificationService,
+  billing: billingService,
 };
