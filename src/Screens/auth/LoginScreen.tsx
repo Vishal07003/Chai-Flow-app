@@ -4,6 +4,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  ActivityIndicator,
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,6 +12,7 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import ChaiFlowHeader from '../../components/common/ChaiFlowHeader';
 import { useApp } from '../../context/AppContext';
+import { authService } from '../../services/auth.service';
 import { validation } from '../../utils/validation';
 import { AppToast } from '../../utils/toast';
 
@@ -21,8 +23,9 @@ interface LoginScreenProps {
 export default function LoginScreen({ navigation }: LoginScreenProps) {
   const { setUserMobile } = useApp();
   const [phone, setPhone] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSendOtp = () => {
+  const handleSendOtp = async () => {
     const trimmed = phone.trim();
 
     if (!validation.isValidPhone(trimmed)) {
@@ -30,12 +33,31 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
       return;
     }
 
-    const formatted = trimmed.startsWith('+91') ? trimmed : `+91 ${trimmed}`;
+    const cleanDigits = trimmed.replace(/\D/g, '').slice(-10);
+    const formatted = `+91 ${cleanDigits}`;
     setUserMobile(formatted);
-    AppToast.info('OTP Sent', `Verification code sent to ${formatted}`);
 
-    if (navigation) {
-      navigation.navigate('VerifyOtp');
+    setIsLoading(true);
+    try {
+      const res = await authService.sendOtp(cleanDigits);
+      if (res.success && res.session_id) {
+        AppToast.success('OTP Sent', res.message || `Verification code sent to ${formatted}`);
+        if (navigation) {
+          navigation.navigate('VerifyOtp', {
+            phone: cleanDigits,
+            sessionId: res.session_id,
+            cooldownSeconds: res.cooldown_seconds || 60,
+            userExists: res.user_exists,
+          });
+        }
+      } else {
+        AppToast.error('OTP Failed', res.message || 'Unable to send OTP. Please try again.');
+      }
+    } catch (err: any) {
+      const errorMsg = err?.message || 'Network error occurred while requesting OTP.';
+      AppToast.error('Request Failed', errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -81,23 +103,32 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
               value={phone}
               onChangeText={setPhone}
               keyboardType="phone-pad"
-              placeholder="Enter mobile number"
+              maxLength={10}
+              placeholder="Enter 10-digit mobile number"
               placeholderTextColor="#A09085"
+              editable={!isLoading}
             />
           </View>
 
           <TouchableOpacity
-            style={styles.sendButton}
+            style={[styles.sendButton, isLoading ? styles.sendButtonDisabled : null]}
             activeOpacity={0.8}
             onPress={handleSendOtp}
+            disabled={isLoading}
           >
-            <Text style={styles.buttonText}>Send OTP</Text>
-            <Ionicons
-              name="arrow-forward"
-              size={18}
-              color="#FFFFFF"
-              style={styles.arrowIcon}
-            />
+            {isLoading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <>
+                <Text style={styles.buttonText}>Send OTP</Text>
+                <Ionicons
+                  name="arrow-forward"
+                  size={18}
+                  color="#FFFFFF"
+                  style={styles.arrowIcon}
+                />
+              </>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -140,14 +171,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     color: '#8C331A',
-    letterSpacing: 1.2,
+    letterSpacing: 1.5,
   },
   mainTitle: {
     fontSize: 28,
-    fontWeight: '800',
+    fontWeight: '900',
     color: '#2C1E18',
-    marginBottom: 6,
-    letterSpacing: -0.3,
+    letterSpacing: -0.5,
+    marginBottom: 8,
   },
   subTitle: {
     fontSize: 14,
@@ -157,35 +188,36 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 22,
-    shadowColor: '#2C1E18',
+    borderRadius: 20,
+    padding: 24,
+    shadowColor: '#8C331A',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.04,
+    shadowOpacity: 0.06,
     shadowRadius: 16,
     elevation: 3,
-    marginBottom: 30,
+    borderWidth: 1,
+    borderColor: '#F0E6DE',
   },
   inputLabel: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#7A6A60',
-    letterSpacing: 0.8,
+    fontWeight: '800',
+    color: '#5C4A3E',
+    letterSpacing: 1,
     marginBottom: 10,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FAF6F2',
-    borderWidth: 1,
-    borderColor: '#ECE2D8',
-    borderRadius: 20,
-    paddingHorizontal: 16,
+    backgroundColor: '#FAF7F4',
+    borderWidth: 1.5,
+    borderColor: '#E8DED6',
+    borderRadius: 14,
+    paddingHorizontal: 14,
     height: 52,
     marginBottom: 20,
   },
   phoneIcon: {
-    marginRight: 10,
+    marginRight: 8,
   },
   countryCode: {
     fontSize: 15,
@@ -196,37 +228,45 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 15,
-    fontWeight: '600',
     color: '#2C1E18',
+    fontWeight: '600',
     padding: 0,
   },
   sendButton: {
-    backgroundColor: '#963819',
-    borderRadius: 28,
+    backgroundColor: '#8C331A',
+    borderRadius: 14,
     height: 52,
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#8C331A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#C5A496',
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   arrowIcon: {
     marginLeft: 8,
   },
   footer: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 'auto',
-    paddingVertical: 12,
+    justifyContent: 'center',
+    marginTop: 24,
   },
   footerText: {
     fontSize: 12,
     color: '#8C7C72',
-    fontWeight: '500',
     marginLeft: 6,
+    fontWeight: '500',
   },
 });

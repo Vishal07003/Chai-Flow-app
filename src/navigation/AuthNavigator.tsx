@@ -7,7 +7,7 @@ import VerifyOtpScreen from '../Screens/auth/VerifyOtpScreen';
 export type AuthStackParamList = {
   Splash: undefined;
   Login: undefined;
-  VerifyOtp: { role?: 'ADMIN' | 'DELIVERY_PARTNER' } | undefined;
+  VerifyOtp: { phone: string; sessionId: string; cooldownSeconds?: number; userExists?: boolean; role?: 'ADMIN' | 'DELIVERY_PARTNER' };
 };
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();

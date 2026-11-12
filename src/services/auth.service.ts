@@ -21,6 +21,20 @@ export interface AuthTokens {
   refresh: string;
 }
 
+export interface SendOtpResponse {
+  success: boolean;
+  message: string;
+  session_id: string;
+  cooldown_seconds: number;
+  user_exists?: boolean;
+}
+
+export interface VerifyOtpResponse {
+  success: boolean;
+  user: UserProfileResponse;
+  tokens: AuthTokens;
+}
+
 export interface RegisterPayload {
   username: string;
   password?: string;
@@ -33,7 +47,38 @@ export interface RegisterPayload {
 
 export const authService = {
   /**
-   * Register customer account via Django backend
+   * Send OTP to user's mobile number via backend OTP service
+   */
+  async sendOtp(phone: string): Promise<SendOtpResponse> {
+    return apiClient.post<SendOtpResponse>('/accounts/otp/send/', { phone });
+  },
+
+  /**
+   * Resend OTP to user's mobile number
+   */
+  async resendOtp(phone: string): Promise<SendOtpResponse> {
+    return apiClient.post<SendOtpResponse>('/accounts/otp/resend/', { phone });
+  },
+
+  /**
+   * Verify entered OTP code and obtain session JWT tokens
+   */
+  async verifyOtp(phone: string, sessionId: string, otp: string): Promise<VerifyOtpResponse> {
+    const res = await apiClient.post<VerifyOtpResponse>('/accounts/otp/verify/', {
+      phone,
+      session_id: sessionId,
+      otp,
+    });
+
+    if (res.tokens?.access) {
+      await apiClient.setTokens(res.tokens.access, res.tokens.refresh);
+      await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(res.user));
+    }
+    return res;
+  },
+
+  /**
+   * Register customer account via Django backend (form-based)
    */
   async register(data: RegisterPayload): Promise<{ user: UserProfileResponse; tokens: AuthTokens }> {
     const res = await apiClient.post<{ user: UserProfileResponse; tokens: AuthTokens }>(
@@ -48,7 +93,7 @@ export const authService = {
   },
 
   /**
-   * Login via JWT endpoint (/api/v1/auth/token/)
+   * Username/password login via JWT endpoint (/api/v1/auth/token/)
    */
   async login(username: string, password: string): Promise<AuthTokens> {
     const tokens = await apiClient.post<AuthTokens>('/auth/token/', {

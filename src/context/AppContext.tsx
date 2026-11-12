@@ -275,6 +275,7 @@ export interface AppContextType {
   userRole: UserRole;
   setUserRole: (role: UserRole) => void;
   login: (mobile?: string, role?: UserRole) => Promise<void> | void;
+  loginWithVerifiedUser: (userResponse: any) => Promise<void>;
   logout: () => Promise<void> | void;
 
   userProfile: UserProfile;
@@ -769,6 +770,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [userMobile, setUserMobile] = useState<string>('+91 1234567899');
   const [userRole, setUserRole] = useState<UserRole>('ADMIN');
+
+  const loginWithVerifiedUser = async (userResponse: any) => {
+    const role = userResponse?.profile?.role || 'customer';
+    const phone = userResponse?.profile?.phone || userMobile;
+    const formattedPhone = phone.startsWith('+91') ? phone : `+91 ${phone}`;
+
+    setUserMobile(formattedPhone);
+
+    if (role === 'delivery') {
+      setUserRole('DELIVERY_PARTNER');
+      setUserProfile({
+        fullName: `${userResponse.first_name || ''} ${userResponse.last_name || ''}`.trim() || userResponse.username || 'Delivery Partner',
+        role: 'Delivery Partner',
+        phone: formattedPhone,
+        email: userResponse.email || `${userResponse.username}@chaiflow.in`,
+        businessName: 'ChaiFlow Fleet',
+        address: userResponse?.profile?.address || 'Hub Central',
+        avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(userResponse.username || 'Delivery')}&background=3B82F6&color=FFF`,
+        vehicle: 'Hero Electric Splendor',
+        plateNumber: 'KA-01-EA-9920',
+      });
+    } else {
+      setUserRole('ADMIN');
+      setUserProfile({
+        fullName: `${userResponse.first_name || ''} ${userResponse.last_name || ''}`.trim() || 'Arjun Mehta',
+        role: role === 'owner' ? 'Network Owner' : 'Customer Account',
+        phone: formattedPhone,
+        email: userResponse.email || 'arjun@chaiflow.in',
+        businessName: 'ChaiFlow Beverages',
+        address: userResponse?.profile?.address || 'Shop 14, Kirti Nagar, New Delhi',
+        avatarUrl:
+          'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
+      });
+    }
+
+    setIsAuthenticated(true);
+    await notificationService.registerDeviceToken();
+  };
 
   const login = async (mobile?: string, roleOverride?: UserRole) => {
     const targetMobile = mobile || userMobile;
@@ -1760,6 +1799,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         userRole,
         setUserRole,
         login,
+        loginWithVerifiedUser,
         logout,
 
         userProfile,
