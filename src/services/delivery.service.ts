@@ -9,18 +9,66 @@ export interface DriverDetails {
   phone?: string;
 }
 
+export interface BackendDeliveryItem {
+  id: number;
+  delivery: number;
+  product: number;
+  product_name: string;
+  ordered_quantity: number;
+  delivered_quantity: number;
+  discrepancy_notes?: string;
+  has_discrepancy: boolean;
+}
+
+export interface DeliveryStatusHistoryItem {
+  id: number;
+  from_status: string;
+  to_status: string;
+  changed_by_name: string;
+  notes?: string;
+  created_at: string;
+}
+
 export interface BackendDelivery {
   id: number;
   order: number;
   order_details: BackendOrder;
   driver: number | null;
   driver_details: DriverDetails | null;
-  status: 'assigned' | 'picked_up' | 'delivered' | 'failed';
+  status: 'assigned' | 'accepted' | 'picked_up' | 'on_the_way' | 'delivered' | 'failed';
   pickup_time: string | null;
   delivered_time: string | null;
   current_lat: number | null;
   current_lng: number | null;
+  failure_reason?: string;
   updated_at: string;
+  delivered_items?: BackendDeliveryItem[];
+  status_history?: DeliveryStatusHistoryItem[];
+}
+
+export interface DeliveryPartnerProfile {
+  id: number;
+  user?: number | null;
+  name: string;
+  phone: string;
+  emergency_phone?: string;
+  license_number?: string;
+  vehicle_type: string;
+  vehicle_model?: string;
+  number_plate?: string;
+  location?: string;
+  status: 'READY' | 'BUSY' | 'OFFLINE';
+  avatar_url?: string;
+  active_deliveries_count: number;
+  created_at: string;
+}
+
+export interface LocationPingPayload {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  speed?: number;
+  recorded_at?: string;
 }
 
 export const deliveryService = {
@@ -43,7 +91,7 @@ export const deliveryService = {
   },
 
   /**
-   * Assign delivery driver to an order (Owner only)
+   * Assign or reassign delivery driver to an order (Owner only)
    */
   async assignDriver(deliveryId: number | string, driverId: number): Promise<BackendDelivery> {
     return apiClient.patch<BackendDelivery>(`/deliveries/${deliveryId}/`, {
@@ -52,129 +100,81 @@ export const deliveryService = {
   },
 
   /**
-   * Update delivery GPS coordinates & status (Assigned delivery partner)
+   * Delivery Partner status transition (assigned -> accepted -> picked_up -> on_the_way -> delivered / failed)
    */
-  async updateLocationAndStatus(
+  async updateStatus(
     deliveryId: number | string,
-    data: {
-      status?: BackendDelivery['status'];
-      current_lat?: number;
-      current_lng?: number;
-    },
+    status: BackendDelivery['status'],
+    notes?: string,
   ): Promise<BackendDelivery> {
-    return apiClient.patch<BackendDelivery>(`/deliveries/${deliveryId}/`, data);
+    return apiClient.patch<BackendDelivery>(`/deliveries/${deliveryId}/`, {
+      status,
+      notes,
+    });
   },
 
-  // Fleet Partner operations connected to Django /api/v1/deliveries/partners/
+  /**
+   * Record actual delivered quantities before marking delivered (Discrepancy audit)
+   */
+  async recordDeliveredQuantities(
+    deliveryId: number | string,
+    items: Array<{ product_id: number; delivered_quantity: number; discrepancy_notes?: string }>,
+  ): Promise<BackendDeliveryItem[]> {
+    return apiClient.post<BackendDeliveryItem[]>(`/deliveries/${deliveryId}/record-delivered-quantities/`, {
+      items,
+    });
+  },
+
+  /**
+   * Send single or buffered location pings (Terminates immediately when delivered/failed)
+   */
+  async sendLocationPings(
+    deliveryId: number | string,
+    pings: LocationPingPayload | LocationPingPayload[],
+  ): Promise<{ success: boolean; pings_recorded: number; active_tracking: boolean }> {
+    const payload = Array.isArray(pings) ? { pings } : pings;
+    return apiClient.post(`/deliveries/${deliveryId}/location-ping/`, payload);
+  },
+
+  /**
+   * Fleet Partner CRUD
+   */
+  async getDeliveryPartners(status?: string): Promise<DeliveryPartnerProfile[]> {
+    const qs = status ? `?status=${status}` : '';
+    return apiClient.get<DeliveryPartnerProfile[]>(`/deliveries/partners/${qs}`);
+  },
+
   async getDeliveryBoys(initialData?: any[]): Promise<any[]> {
     try {
-      const backendPartners = await apiClient.get<any[]>('/deliveries/partners/');
-      if (Array.isArray(backendPartners) && backendPartners.length > 0) {
-        return backendPartners.map(p => ({
-          id: String(p.id),
-          name: p.name,
-          phone: p.phone,
-          status: p.status,
-          vehicleType: p.vehicle_type,
-          vehicleModel: p.vehicle_model,
-          numberPlate: p.number_plate,
-          location: p.location || 'Hub Central',
-          activeDeliveries: p.active_deliveries || 0,
-          completedToday: p.completed_today || 0,
-          rating: p.rating ? parseFloat(p.rating) : 4.8,
-          batteryLevel: p.battery_level ? `${p.battery_level}%` : '85%',
-          avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=3B82F6&color=FFF`,
+      const data = await apiClient.get<any[]>('/deliveries/partners/');
+      if (Array.isArray(data) && data.length > 0) {
+        return data.map(item => ({
+          id: String(item.id),
+          name: item.name,
+          phone: item.phone,
+          status: item.status || 'READY',
+          location: item.location || 'Hub Central',
+          vehicleType: item.vehicle_type || 'Scooter',
+          vehicleModel: item.vehicle_model || '',
+          numberPlate: item.number_plate || '',
         }));
       }
     } catch (e) {
-      console.log('Using local fallback for delivery boys:', e);
+      console.log('Failed to fetch delivery partners from backend:', e);
     }
     return initialData || [];
   },
 
-  async addDeliveryBoy(boy: any): Promise<any> {
-    const id = Date.now().toString();
-    try {
-      const res = await apiClient.post<any>('/deliveries/partners/', {
-        name: boy.name,
-        phone: boy.phone || '+91 9999999999',
-        status: boy.status || 'READY',
-        vehicle_type: boy.vehicleType || 'Electric Scooter',
-        vehicle_model: boy.vehicleModel || 'Hero Electric Splendor',
-        number_plate: boy.numberPlate || 'KA-01-EA-9920',
-        location: boy.location || 'Hub Central',
-      });
-      return {
-        ...boy,
-        id: String(res.id),
-        avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(boy.name)}&background=3B82F6&color=FFF`,
-      };
-    } catch {
-      const newBoy = {
-        ...boy,
-        id,
-        avatarUrl:
-          boy.avatarUrl ||
-          `https://ui-avatars.com/api/?name=${encodeURIComponent(
-            boy.name,
-          )}&background=3B82F6&color=FFF`,
-      };
-      return newBoy;
-    }
+  async addDeliveryBoy(data: any): Promise<any> {
+    return apiClient.post('/deliveries/partners/', data);
   },
 
-  async updateDeliveryBoy(
-    boyId: string,
-    updated: any,
-  ): Promise<any> {
-    try {
-      await apiClient.patch(`/deliveries/partners/${boyId}/`, {
-        name: updated.name,
-        phone: updated.phone,
-        status: updated.status,
-        location: updated.location,
-        vehicle_type: updated.vehicleType,
-        vehicle_model: updated.vehicleModel,
-        number_plate: updated.numberPlate,
-      });
-    } catch (e) {
-      console.log('Update delivery partner fallback:', e);
-    }
-    return {
-      id: boyId,
-      ...updated,
-    };
+  async updateDeliveryBoy(id: string | number, data: any): Promise<any> {
+    return apiClient.patch(`/deliveries/partners/${id}/`, data);
   },
 
-  async deleteDeliveryBoy(boyId: string): Promise<{ success: boolean }> {
-    try {
-      await apiClient.delete(`/deliveries/partners/${boyId}/`);
-    } catch (e) {
-      console.log('Delete delivery partner fallback:', e);
-    }
-    return { success: true };
-  },
-
-  async assignOrder(boyId: string): Promise<{ success: boolean; boyId: string }> {
-    return {
-      success: true,
-      boyId,
-    };
-  },
-
-  async updateStatus(
-    boyId: string,
-    status: 'BUSY' | 'READY' | 'OFFLINE',
-  ): Promise<{ boyId: string; status: 'BUSY' | 'READY' | 'OFFLINE' }> {
-    try {
-      await apiClient.patch(`/deliveries/partners/${boyId}/`, { status });
-    } catch (e) {
-      console.log('Update partner status fallback:', e);
-    }
-    return {
-      boyId,
-      status,
-    };
+  async deleteDeliveryBoy(id: string | number): Promise<void> {
+    return apiClient.delete(`/deliveries/partners/${id}/`);
   },
 };
 

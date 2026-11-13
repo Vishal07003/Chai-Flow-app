@@ -140,6 +140,26 @@ export const companyService = {
   }): Promise<any> {
     return apiClient.post(`/billing/companies/${companyId}/adjustments/`, data);
   },
+
+  /**
+   * List contracted rates and volume slabs for company
+   */
+  async getContractedPrices(companyId: number | string): Promise<CompanyProductPrice[]> {
+    return apiClient.get<CompanyProductPrice[]>(`/billing/companies/${companyId}/prices/`);
+  },
+
+  /**
+   * Add new contracted rate slab for company (Owner only)
+   */
+  async addContractedPrice(companyId: number | string, data: {
+    product: number;
+    custom_price: number | string;
+    min_quantity: number;
+    valid_from?: string;
+    valid_to?: string | null;
+  }): Promise<CompanyProductPrice> {
+    return apiClient.post<CompanyProductPrice>(`/billing/companies/${companyId}/prices/`, data);
+  },
 };
 
 export default companyService;
