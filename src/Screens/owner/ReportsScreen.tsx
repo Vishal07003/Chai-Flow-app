@@ -120,131 +120,144 @@ export default function ReportsScreen({ navigation }: any) {
         </View>
       )}
 
-      {/* Fixed Top Section: Hero Card, Tabs, Search & Method Chips */}
-      <View style={styles.fixedTopContainer}>
-        {/* Total Revenue & Collections Hero Banner */}
-        <View style={styles.heroCard}>
-          <View style={styles.heroHeaderRow}>
-            <View style={styles.heroBadgeRow}>
+      {/* Single Vertical ScrollView with Sticky Tabs */}
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        stickyHeaderIndices={[1]}
+      >
+        {/* Index 0: Top Revenue Summary Card - Scrolls away naturally */}
+        <View style={styles.heroCardContainer}>
+          <View style={styles.heroCard}>
+            <View style={styles.heroHeaderRow}>
+              <View style={styles.heroBadgeRow}>
+                <Ionicons
+                  name="cash"
+                  size={16}
+                  color="#F7D3C6"
+                  style={{ marginRight: 4 }}
+                />
+                <Text style={styles.heroBadge}>TOTAL REVENUE AUDIT</Text>
+              </View>
+              <View style={styles.growthBadge}>
+                <Ionicons name="trending-up" size={13} color="#D1FAE5" />
+                <Text style={styles.growthText}>{revenueGrowth}</Text>
+              </View>
+            </View>
+
+            <Text style={styles.heroLabel}>Total Revenue Collected (MTD)</Text>
+            <Text style={styles.heroValue}>₹{totalRevenue.toLocaleString()}</Text>
+
+            <View style={styles.heroStatsDivider} />
+
+            <View style={styles.heroStatsRow}>
+              <View style={styles.heroStatItem}>
+                <Text style={styles.heroStatLabel}>Collections Total</Text>
+                <Text style={styles.heroStatVal}>
+                  ₹{collectionsTotal.toLocaleString()}
+                </Text>
+              </View>
+              <View style={styles.heroStatItem}>
+                <Text style={styles.heroStatLabel}>Outstanding Balance</Text>
+                <Text style={styles.heroStatValOrange}>
+                  ₹{totalOutstanding.toLocaleString()}
+                </Text>
+              </View>
+              <View style={styles.heroStatItem}>
+                <Text style={styles.heroStatLabel}>Total Transactions</Text>
+                <Text style={styles.heroStatVal}>{paymentHistory.length}</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* Index 1: Sticky Header Section (Tabs, Search, and Category Chips) */}
+        <View style={styles.stickyHeaderContainer}>
+          {/* 1. Navigation Tabs: Payment History vs Defaulters */}
+          <View style={styles.tabsRow}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={[
+                styles.tabBtn,
+                activeTab === 'HISTORY' && styles.tabBtnActive,
+              ]}
+              onPress={() => setActiveTab('HISTORY')}
+            >
               <Ionicons
-                name="cash"
+                name="receipt-outline"
                 size={16}
-                color="#F7D3C6"
-                style={{ marginRight: 4 }}
+                color={activeTab === 'HISTORY' ? '#FFFFFF' : '#8C331A'}
+                style={{ marginRight: 6 }}
               />
-              <Text style={styles.heroBadge}>TOTAL REVENUE AUDIT</Text>
-            </View>
-            <View style={styles.growthBadge}>
-              <Ionicons name="trending-up" size={13} color="#D1FAE5" />
-              <Text style={styles.growthText}>{revenueGrowth}</Text>
-            </View>
-          </View>
-
-          <Text style={styles.heroLabel}>Total Revenue Collected (MTD)</Text>
-          <Text style={styles.heroValue}>₹{totalRevenue.toLocaleString()}</Text>
-
-          <View style={styles.heroStatsDivider} />
-
-          <View style={styles.heroStatsRow}>
-            <View style={styles.heroStatItem}>
-              <Text style={styles.heroStatLabel}>Collections Total</Text>
-              <Text style={styles.heroStatVal}>
-                ₹{collectionsTotal.toLocaleString()}
+              <Text
+                style={[
+                  styles.tabBtnText,
+                  activeTab === 'HISTORY' && styles.tabBtnTextActive,
+                ]}
+              >
+                Payment History ({paymentHistory.length})
               </Text>
-            </View>
-            <View style={styles.heroStatItem}>
-              <Text style={styles.heroStatLabel}>Outstanding Balance</Text>
-              <Text style={styles.heroStatValOrange}>
-                ₹{totalOutstanding.toLocaleString()}
-              </Text>
-            </View>
-            <View style={styles.heroStatItem}>
-              <Text style={styles.heroStatLabel}>Total Transactions</Text>
-              <Text style={styles.heroStatVal}>{paymentHistory.length}</Text>
-            </View>
-          </View>
-        </View>
+            </TouchableOpacity>
 
-        {/* Navigation Tabs: Payment History vs Delinquent Accounts */}
-        <View style={styles.tabsRow}>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={[
-              styles.tabBtn,
-              activeTab === 'HISTORY' && styles.tabBtnActive,
-            ]}
-            onPress={() => setActiveTab('HISTORY')}
-          >
-            <Ionicons
-              name="receipt-outline"
-              size={16}
-              color={activeTab === 'HISTORY' ? '#FFFFFF' : '#8C331A'}
-              style={{ marginRight: 6 }}
-            />
-            <Text
+            <TouchableOpacity
+              activeOpacity={0.8}
               style={[
-                styles.tabBtnText,
-                activeTab === 'HISTORY' && styles.tabBtnTextActive,
+                styles.tabBtn,
+                activeTab === 'DELINQUENT' && styles.tabBtnActive,
               ]}
+              onPress={() => setActiveTab('DELINQUENT')}
             >
-              Payment History ({paymentHistory.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={[
-              styles.tabBtn,
-              activeTab === 'DELINQUENT' && styles.tabBtnActive,
-            ]}
-            onPress={() => setActiveTab('DELINQUENT')}
-          >
-            <Ionicons
-              name="alert-circle-outline"
-              size={16}
-              color={activeTab === 'DELINQUENT' ? '#FFFFFF' : '#8C331A'}
-              style={{ marginRight: 6 }}
-            />
-            <Text
-              style={[
-                styles.tabBtnText,
-                activeTab === 'DELINQUENT' && styles.tabBtnTextActive,
-              ]}
-            >
-              Defaulters ({overdueCustomers.length})
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {activeTab === 'HISTORY' && (
-          <>
-            {/* Search Input Bar */}
-            <View style={styles.searchBoxContainer}>
               <Ionicons
-                name="search-outline"
-                size={18}
-                color="#8A7E75"
-                style={{ marginRight: 8 }}
+                name="alert-circle-outline"
+                size={16}
+                color={activeTab === 'DELINQUENT' ? '#FFFFFF' : '#8C331A'}
+                style={{ marginRight: 6 }}
               />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search payment by customer, ref # or mode..."
-                placeholderTextColor="#A09489"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-              />
-              {searchQuery !== '' && (
-                <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <Ionicons name="close-circle" size={18} color="#8A7E75" />
-                </TouchableOpacity>
-              )}
-            </View>
+              <Text
+                style={[
+                  styles.tabBtnText,
+                  activeTab === 'DELINQUENT' && styles.tabBtnTextActive,
+                ]}
+              >
+                Defaulters ({overdueCustomers.length})
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-            {/* Payment Method Filters Horizontal Bar */}
+          {/* 2. Search Input Bar (pinned right under tabs) */}
+          <View style={styles.searchBoxContainer}>
+            <Ionicons
+              name="search-outline"
+              size={18}
+              color="#8A7E75"
+              style={{ marginRight: 8 }}
+            />
+            <TextInput
+              style={styles.searchInput}
+              placeholder={
+                activeTab === 'HISTORY'
+                  ? 'Search payment by customer, ref # or mode...'
+                  : 'Search overdue customer or location...'
+              }
+              placeholderTextColor="#A09489"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {searchQuery !== '' && (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Ionicons name="close-circle" size={18} color="#8A7E75" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* 3. Payment Method / Category Chips Bar (pinned right under search) */}
+          {activeTab === 'HISTORY' && (
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
               style={styles.methodScroll}
+              contentContainerStyle={styles.methodScrollContent}
+              nestedScrollEnabled={true}
             >
               {['All', 'UPI', 'Cash', 'Bank Transfer', 'PhonePe'].map(
                 method => (
@@ -270,191 +283,188 @@ export default function ReportsScreen({ navigation }: any) {
                 ),
               )}
             </ScrollView>
-          </>
-        )}
-      </View>
+          )}
+        </View>
 
-      {/* Scrollable Content Area */}
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {activeTab === 'HISTORY' ? (
-          <View>
-            {/* Subtitle Summary */}
-            <View style={styles.historySummaryRow}>
-              <Text style={styles.sectionTitle}>PAID TRANSACTIONS HISTORY</Text>
-              <Text style={styles.historySumText}>
-                Total:{' '}
-                <Text style={{ color: '#059669', fontWeight: '800' }}>
-                  ₹{totalHistorySum.toLocaleString()}
-                </Text>
-              </Text>
-            </View>
-
-            {/* Payment History List Cards */}
-            {filteredPayments.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Ionicons name="wallet-outline" size={48} color="#D1C7BD" />
-                <Text style={styles.emptyTitle}>No Payments Found</Text>
-                <Text style={styles.emptySub}>
-                  No matching payment transactions found for "
-                  {searchQuery || selectedMethod}".
+        {/* Index 2: Scrollable Content List */}
+        <View style={styles.tabContentContainer}>
+          {activeTab === 'HISTORY' ? (
+            <View>
+              {/* Subtitle Summary */}
+              <View style={styles.historySummaryRow}>
+                <Text style={styles.sectionTitle}>PAID TRANSACTIONS HISTORY</Text>
+                <Text style={styles.historySumText}>
+                  Total:{' '}
+                  <Text style={{ color: '#059669', fontWeight: '800' }}>
+                    ₹{totalHistorySum.toLocaleString()}
+                  </Text>
                 </Text>
               </View>
-            ) : (
-              filteredPayments.map(item => {
-                let isUPI =
-                  item.method.includes('UPI') ||
-                  item.method.includes('PhonePe');
-                let isCash = item.method.includes('Cash');
 
-                return (
-                  <View key={item.id} style={styles.paymentCard}>
-                    <View style={styles.paymentLeft}>
-                      <View
-                        style={[
-                          styles.payIconBox,
-                          isUPI
-                            ? styles.bgGreenLight
-                            : isCash
-                            ? styles.bgOrangeLight
-                            : styles.bgBlueLight,
-                        ]}
-                      >
-                        <Ionicons
-                          name={
+              {/* Payment History List Cards */}
+              {filteredPayments.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="wallet-outline" size={48} color="#D1C7BD" />
+                  <Text style={styles.emptyTitle}>No Payments Found</Text>
+                  <Text style={styles.emptySub}>
+                    No matching payment transactions found for "
+                    {searchQuery || selectedMethod}".
+                  </Text>
+                </View>
+              ) : (
+                filteredPayments.map(item => {
+                  let isUPI =
+                    item.method.includes('UPI') ||
+                    item.method.includes('PhonePe');
+                  let isCash = item.method.includes('Cash');
+
+                  return (
+                    <View key={item.id} style={styles.paymentCard}>
+                      <View style={styles.paymentLeft}>
+                        <View
+                          style={[
+                            styles.payIconBox,
                             isUPI
-                              ? 'phone-portrait-outline'
+                              ? styles.bgGreenLight
                               : isCash
-                              ? 'cash-outline'
-                              : 'card-outline'
-                          }
-                          size={20}
-                          color={
-                            isUPI ? '#059669' : isCash ? '#D97706' : '#2563EB'
-                          }
-                        />
-                      </View>
-
-                      <View style={styles.paymentDetails}>
-                        <Text style={styles.customerName}>
-                          {item.customerName}
-                        </Text>
-                        <View style={styles.payMetaRow}>
-                          <View
-                            style={[
-                              styles.methodBadge,
+                              ? styles.bgOrangeLight
+                              : styles.bgBlueLight,
+                          ]}
+                        >
+                          <Ionicons
+                            name={
                               isUPI
-                                ? styles.bgGreenBadge
+                                ? 'phone-portrait-outline'
                                 : isCash
-                                ? styles.bgOrangeBadge
-                                : styles.bgBlueBadge,
-                            ]}
-                          >
-                            <Text
+                                ? 'cash-outline'
+                                : 'card-outline'
+                            }
+                            size={20}
+                            color={
+                              isUPI ? '#059669' : isCash ? '#D97706' : '#2563EB'
+                            }
+                          />
+                        </View>
+
+                        <View style={styles.paymentDetails}>
+                          <Text style={styles.customerName}>
+                            {item.customerName}
+                          </Text>
+                          <View style={styles.payMetaRow}>
+                            <View
                               style={[
-                                styles.methodBadgeText,
+                                styles.methodBadge,
                                 isUPI
-                                  ? styles.textGreen
+                                  ? styles.bgGreenBadge
                                   : isCash
-                                  ? styles.textOrange
-                                  : styles.textBlue,
+                                  ? styles.bgOrangeBadge
+                                  : styles.bgBlueBadge,
                               ]}
                             >
-                              {item.method}
-                            </Text>
+                              <Text
+                                style={[
+                                  styles.methodBadgeText,
+                                  isUPI
+                                    ? styles.textGreen
+                                    : isCash
+                                    ? styles.textOrange
+                                    : styles.textBlue,
+                                ]}
+                              >
+                                {item.method}
+                              </Text>
+                            </View>
+                            <Text style={styles.refText}>• {item.refNo}</Text>
                           </View>
-                          <Text style={styles.refText}>• {item.refNo}</Text>
+                          <Text style={styles.dateText}>
+                            {item.date} · {item.time}
+                          </Text>
                         </View>
-                        <Text style={styles.dateText}>
-                          {item.date} · {item.time}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.paymentRight}>
-                      <Text style={styles.paymentAmount}>
-                        +₹{item.amount.toLocaleString()}
-                      </Text>
-                      <View style={styles.statusSuccessBadge}>
-                        <Ionicons
-                          name="checkmark-circle"
-                          size={12}
-                          color="#059669"
-                        />
-                        <Text style={styles.statusSuccessText}>
-                          {item.status}
-                        </Text>
                       </View>
 
-                      <TouchableOpacity
-                        activeOpacity={0.7}
-                        style={styles.shareReceiptBtn}
-                        onPress={() => handleShareReceipt(item)}
-                      >
-                        <Ionicons
-                          name="share-social-outline"
-                          size={14}
-                          color="#8C331A"
-                        />
-                        <Text style={styles.shareReceiptText}>Receipt</Text>
-                      </TouchableOpacity>
+                      <View style={styles.paymentRight}>
+                        <Text style={styles.paymentAmount}>
+                          +₹{item.amount.toLocaleString()}
+                        </Text>
+                        <View style={styles.statusSuccessBadge}>
+                          <Ionicons
+                            name="checkmark-circle"
+                            size={12}
+                            color="#059669"
+                          />
+                          <Text style={styles.statusSuccessText}>
+                            {item.status}
+                          </Text>
+                        </View>
+
+                        <TouchableOpacity
+                          activeOpacity={0.7}
+                          style={styles.shareReceiptBtn}
+                          onPress={() => handleShareReceipt(item)}
+                        >
+                          <Ionicons
+                            name="share-social-outline"
+                            size={14}
+                            color="#8C331A"
+                          />
+                          <Text style={styles.shareReceiptText}>Receipt</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                  </View>
-                );
-              })
-            )}
-          </View>
-        ) : (
-          <View>
-            {/* Overdue Defaulters Tab View */}
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>
-                DELINQUENT & OVERDUE ACCOUNTS
-              </Text>
-              <Text style={styles.countBadge}>
-                {overdueCustomers.length} Accounts
-              </Text>
+                  );
+                })
+              )}
             </View>
+          ) : (
+            <View>
+              {/* Overdue Defaulters Tab View */}
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionTitle}>
+                  DELINQUENT & OVERDUE ACCOUNTS
+                </Text>
+                <Text style={styles.countBadge}>
+                  {overdueCustomers.length} Accounts
+                </Text>
+              </View>
 
-            {overdueCustomers.map(item => (
-              <View key={item.id} style={styles.defaulterCard}>
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  style={styles.defaulterLeft}
-                  onPress={() =>
-                    navigation.navigate('CustomerDetail', { customer: item })
-                  }
-                >
-                  <View style={styles.defaulterAvatar}>
-                    <Text style={styles.defaulterAvatarText}>
-                      {item.name.substring(0, 2).toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={styles.defaulterInfo}>
-                    <Text style={styles.defaulterName}>{item.name}</Text>
-                    <Text style={styles.defaulterAddress}>{item.address}</Text>
-                  </View>
-                </TouchableOpacity>
-
-                <View style={styles.defaulterRight}>
-                  <Text style={styles.defaulterAmount}>
-                    ₹{item.amount.toLocaleString()}
-                  </Text>
+              {overdueCustomers.map(item => (
+                <View key={item.id} style={styles.defaulterCard}>
                   <TouchableOpacity
                     activeOpacity={0.8}
-                    style={styles.whatsappBtn}
-                    onPress={() => handleSendReminder(item)}
+                    style={styles.defaulterLeft}
+                    onPress={() =>
+                      navigation.navigate('CustomerDetail', { customer: item })
+                    }
                   >
-                    <Ionicons name="logo-whatsapp" size={14} color="#FFFFFF" />
-                    <Text style={styles.whatsappBtnText}>Remind</Text>
+                    <View style={styles.defaulterAvatar}>
+                      <Text style={styles.defaulterAvatarText}>
+                        {item.name.substring(0, 2).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.defaulterInfo}>
+                      <Text style={styles.defaulterName}>{item.name}</Text>
+                      <Text style={styles.defaulterAddress}>{item.address}</Text>
+                    </View>
                   </TouchableOpacity>
+
+                  <View style={styles.defaulterRight}>
+                    <Text style={styles.defaulterAmount}>
+                      ₹{item.amount.toLocaleString()}
+                    </Text>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      style={styles.whatsappBtn}
+                      onPress={() => handleSendReminder(item)}
+                    >
+                      <Ionicons name="logo-whatsapp" size={14} color="#FFFFFF" />
+                      <Text style={styles.whatsappBtnText}>Remind</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              </View>
-            ))}
-          </View>
-        )}
+              ))}
+            </View>
+          )}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -485,13 +495,23 @@ const styles = StyleSheet.create({
     marginLeft: 10,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
     paddingBottom: 40,
   },
-  fixedTopContainer: {
+  heroCardContainer: {
     paddingHorizontal: 16,
     paddingTop: 12,
+    backgroundColor: '#FAF8F5',
+  },
+  stickyHeaderContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 4,
+    backgroundColor: '#FAF8F5',
+    zIndex: 10,
+  },
+  tabContentContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
     backgroundColor: '#FAF8F5',
   },
 
@@ -630,7 +650,10 @@ const styles = StyleSheet.create({
 
   /* Method scroll chips */
   methodScroll: {
-    marginBottom: 14,
+    marginBottom: 10,
+  },
+  methodScrollContent: {
+    paddingRight: 16,
   },
   methodChip: {
     backgroundColor: '#FFFFFF',

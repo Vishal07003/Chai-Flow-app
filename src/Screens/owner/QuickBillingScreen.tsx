@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -9,12 +9,15 @@ import {
   Modal,
   FlatList,
   ActivityIndicator,
+  Platform,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useApp } from '../../context/AppContext';
 import billingService, { BillingCustomer } from '../../services/billing.service';
+import { CustomDialog } from '../../components/common';
 
 const TEA_IMAGES: { [key: string]: string } = {
   'Masala Chai':
@@ -52,6 +55,9 @@ export default function QuickBillingScreen({ navigation }: any) {
   const [cartQuantities, setCartQuantities] = useState<{ [productId: string]: number }>({});
   const [addedOrder, setAddedOrder] = useState<string[]>([]);
 
+  // Scroll ref for keyboard awareness
+  const scrollRef = useRef<any>(null);
+
   // Customer State (Optional selection)
   const [selectedCustomer, setSelectedCustomer] = useState<BillingCustomer | null>(null);
   const [showCustomerModal, setShowCustomerModal] = useState<boolean>(false);
@@ -72,6 +78,27 @@ export default function QuickBillingScreen({ navigation }: any) {
 
   // Toast
   const [toastConfig, setToastConfig] = useState<{ msg: string; isError?: boolean } | null>(null);
+
+  // Custom Popup Dialog State
+  const [dialogConfig, setDialogConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message?: string;
+    type?: 'confirm' | 'success' | 'danger' | 'info';
+    buttons?: Array<{
+      text: string;
+      style?: 'default' | 'cancel' | 'destructive';
+      onPress?: () => void;
+      loading?: boolean;
+    }>;
+  }>({
+    visible: false,
+    title: '',
+  });
+
+  const closeDialog = useCallback(() => {
+    setDialogConfig(prev => ({ ...prev, visible: false }));
+  }, []);
 
   const showToast = useCallback((msg: string, isError: boolean = false) => {
     setToastConfig({ msg, isError });
@@ -189,15 +216,67 @@ export default function QuickBillingScreen({ navigation }: any) {
     [cartQuantities],
   );
 
-  const handleClearCart = () => {
+  const handleClearCart = useCallback(() => {
     setCartQuantities({});
     setAddedOrder([]);
     setSelectedCustomer(null);
-    setReceivedAmount('');
+    setReceivedAmount('0');
+    setPaymentMethod('cash');
+  }, []);
+
+  // Execute Invoice Creation in Django Backend
+  const executeSaveBill = async () => {
+    closeDialog();
+    if (isSaving) return;
+    setIsSaving(true);
+
+    const numericReceived = parseFloat(receivedAmount) || 0;
+
+    try {
+      const payload = {
+        customer_id: selectedCustomer ? selectedCustomer.id : null,
+        customer_name: selectedCustomer ? selectedCustomer.name : 'Walk-in Customer',
+        customer_phone: selectedCustomer ? selectedCustomer.phone : '',
+        items: lineItems.map(item => ({
+          product_name: item.name,
+          unit_price: item.price,
+          quantity: item.qty,
+        })),
+        initial_payment_amount: numericReceived,
+        initial_payment_method: paymentMethod,
+      };
+
+      await billingService.createInvoice(payload);
+
+      // Reset Quick Billing screen immediately for the next customer
+      handleClearCart();
+
+      // Show Custom Success Popup
+      setDialogConfig({
+        visible: true,
+        title: 'Bill Saved Successfully!',
+        message: 'Counter invoice has been permanently recorded in bill history.',
+        type: 'success',
+        buttons: [
+          {
+            text: 'Great',
+            style: 'default',
+            onPress: closeDialog,
+          },
+        ],
+      });
+      showToast('Bill Saved Successfully!');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to save bill in database.', true);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  // Save Bill to Django Backend
-  const handleSaveBill = async () => {
+  // Show Confirmation Popup on the same screen
+  const handleSaveBill = () => {
+    if (isSaving) return;
+
     if (lineItems.length === 0) {
       showToast('Please add at least 1 product to the bill!', true);
       return;
@@ -213,33 +292,26 @@ export default function QuickBillingScreen({ navigation }: any) {
       return;
     }
 
-    setIsSaving(true);
-    try {
-      const payload = {
-        customer_id: selectedCustomer ? selectedCustomer.id : null,
-        customer_name: selectedCustomer ? selectedCustomer.name : 'Walk-in Customer',
-        customer_phone: selectedCustomer ? selectedCustomer.phone : '',
-        items: lineItems.map(item => ({
-          product_name: item.name,
-          unit_price: item.price,
-          quantity: item.qty,
-        })),
-        initial_payment_amount: numericReceived,
-        initial_payment_method: paymentMethod,
-      };
+    const remainingDue = Math.max(0, grandTotal - numericReceived);
 
-      const savedInvoice = await billingService.createInvoice(payload);
-      showToast('Bill saved successfully!');
-      handleClearCart();
-
-      setTimeout(() => {
-        navigation.navigate('InvoiceDetail', { invoice: savedInvoice, invoiceId: savedInvoice.id });
-      }, 700);
-    } catch (err: any) {
-      showToast(err.message || 'Failed to save bill in database.', true);
-    } finally {
-      setIsSaving(false);
-    }
+    setDialogConfig({
+      visible: true,
+      title: 'Confirm Bill?',
+      message: `Grand Total: ₹${grandTotal}\nReceived: ₹${numericReceived}\nRemaining Due: ₹${remainingDue}`,
+      type: 'confirm',
+      buttons: [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: closeDialog,
+        },
+        {
+          text: 'Confirm Bill',
+          style: 'default',
+          onPress: executeSaveBill,
+        },
+      ],
+    });
   };
 
   return (
@@ -283,9 +355,14 @@ export default function QuickBillingScreen({ navigation }: any) {
       )}
 
       <KeyboardAwareScrollView
+        ref={scrollRef}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         enableOnAndroid={true}
+        enableAutomaticScroll={true}
+        extraScrollHeight={Platform.OS === 'android' ? 140 : 100}
+        extraHeight={Platform.OS === 'android' ? 140 : 100}
+        keyboardOpeningTime={0}
         keyboardShouldPersistTaps="handled"
       >
         {/* CUSTOMER SELECTION BAR */}
@@ -475,6 +552,11 @@ export default function QuickBillingScreen({ navigation }: any) {
                   placeholderTextColor="#9CA3AF"
                   value={receivedAmount}
                   onChangeText={setReceivedAmount}
+                  onFocus={() => {
+                    setTimeout(() => {
+                      scrollRef.current?.scrollToEnd({ animated: true });
+                    }, 150);
+                  }}
                 />
               </View>
 
@@ -637,6 +719,16 @@ export default function QuickBillingScreen({ navigation }: any) {
           </View>
         </View>
       </Modal>
+
+      {/* CUSTOM BRANDED POPUP DIALOG */}
+      <CustomDialog
+        visible={dialogConfig.visible}
+        title={dialogConfig.title}
+        message={dialogConfig.message}
+        type={dialogConfig.type}
+        buttons={dialogConfig.buttons}
+        onClose={closeDialog}
+      />
     </SafeAreaView>
   );
 }

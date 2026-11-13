@@ -13,10 +13,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Header from '../../components/common/Header';
+import { CustomDialog } from '../../components/common';
 import { useApp, ProductItem } from '../../context/AppContext';
 
 export default function ProductDetailScreen({ route, navigation }: any) {
-  const { addProduct, updateProductStock, deleteProduct } = useApp();
+  const { addProduct, updateProduct, deleteProduct } = useApp();
 
   // Route parameters: product or mode 'add'
   const isAddMode = route?.params?.mode === 'add';
@@ -47,6 +48,24 @@ export default function ProductDetailScreen({ route, navigation }: any) {
   const [imageUrl] = useState(initialProduct.imageUrl || '');
   const [showToast, setShowToast] = useState(false);
 
+  // Custom Dialog State
+  const [dialogConfig, setDialogConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message?: string;
+    type?: 'confirm' | 'danger' | 'info' | 'warning' | 'success';
+    buttons?: Array<{
+      text: string;
+      style?: 'default' | 'cancel' | 'destructive';
+      onPress?: () => void;
+    }>;
+  }>({
+    visible: false,
+    title: '',
+  });
+
+  const closeDialog = () => setDialogConfig(prev => ({ ...prev, visible: false }));
+
   const handleSaveProduct = () => {
     Keyboard.dismiss();
     const num = parseInt(stockNumber, 10) || 0;
@@ -70,7 +89,15 @@ export default function ProductDetailScreen({ route, navigation }: any) {
     } else {
       // Update existing
       if (initialProduct.id) {
-        updateProductStock(initialProduct.id, num);
+        updateProduct(initialProduct.id, {
+          name,
+          price,
+          description,
+          stockNumber: num,
+          stock: `${num} ${unit || 'kg'}`,
+          isLowStock: isLow,
+          category,
+        });
       }
     }
 
@@ -82,15 +109,18 @@ export default function ProductDetailScreen({ route, navigation }: any) {
   };
 
   const handleDeleteProduct = () => {
-    Alert.alert(
-      'Delete Product',
-      `Are you sure you want to delete "${name || initialProduct.name}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
+    setDialogConfig({
+      visible: true,
+      title: 'Delete Product',
+      message: `Are you sure you want to delete "${name || initialProduct.name}"?`,
+      type: 'danger',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: closeDialog },
         {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            closeDialog();
             if (initialProduct.id) {
               await deleteProduct(initialProduct.id);
               navigation.goBack();
@@ -98,7 +128,7 @@ export default function ProductDetailScreen({ route, navigation }: any) {
           },
         },
       ],
-    );
+    });
   };
 
   return (
@@ -246,6 +276,16 @@ export default function ProductDetailScreen({ route, navigation }: any) {
           </TouchableOpacity>
         )}
       </KeyboardAwareScrollView>
+
+      {/* CUSTOM DIALOG POPUP */}
+      <CustomDialog
+        visible={dialogConfig.visible}
+        title={dialogConfig.title}
+        message={dialogConfig.message}
+        type={dialogConfig.type}
+        buttons={dialogConfig.buttons}
+        onClose={closeDialog}
+      />
     </SafeAreaView>
   );
 }

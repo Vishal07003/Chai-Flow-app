@@ -1,15 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
-  ScrollView,
   View,
   Text,
   TouchableOpacity,
-  Modal,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
-  Keyboard,
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,86 +11,73 @@ import { useNavigation } from '@react-navigation/native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../components/common';
-import {
-  RevenueCard,
-  StatCard,
-  QuickAction,
-  InvoiceCard,
-  ActivityTimeline,
-} from '../../components/owner';
-
+import { InvoiceCard } from '../../components/owner';
 import { useApp } from '../../context/AppContext';
+import { billingService } from '../../services';
+import type { DashboardStats } from '../../services/billing.service';
 
 export default function DashboardScreen() {
   const navigation = useNavigation<any>();
-  const {
-    collectionsTotal,
-    totalOutstanding,
-    invoices,
-    addCustomer,
-    addInvoice,
-  } = useApp();
+  const { invoices } = useApp();
 
-  const [modalVisible, setModalVisible] = useState(false);
-  const [modalType, setModalType] = useState<'lead' | 'invoice'>('lead');
-
-  // Pull to refresh state
   const [refreshing, setRefreshing] = useState(false);
+  const [liveStats, setLiveStats] = useState<DashboardStats | null>(null);
 
-  const onRefresh = React.useCallback(() => {
-    setRefreshing(true);
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 1000);
+  const fetchLiveStats = async () => {
+    try {
+      const stats = await billingService.getDashboardStats();
+      if (stats) {
+        setLiveStats(stats);
+      }
+    } catch (err) {
+      console.log('Error fetching dashboard stats:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchLiveStats();
   }, []);
 
-  // Form states
-  const [nameInput, setNameInput] = useState('');
-  const [addressInput, setAddressInput] = useState('');
-  const [amountInput, setAmountInput] = useState('');
-  const [dueInput, setDueInput] = useState('Due in 3 days');
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    await fetchLiveStats();
+    setRefreshing(false);
+  }, []);
 
-  const formattedCollections = `₹${(collectionsTotal / 1000).toFixed(1)}k`;
-  const formattedOutstanding = `₹${(totalOutstanding / 1000).toFixed(1)}k`;
+  // Financial figures strictly matching requirements:
+  // Today's Sales = invoices created today
+  // Total Received = cash + online received today
+  // Total Pending = actual outstanding balance across invoices
+  const todaySalesNum = liveStats?.total_sales
+    ? parseFloat(liveStats.total_sales)
+    : 0;
 
-  const handleOpenModal = (type: 'lead' | 'invoice') => {
-    setModalType(type);
-    setNameInput('');
-    setAddressInput('');
-    setAmountInput('');
-    setModalVisible(true);
-  };
+  const todayReceivedNum = liveStats?.total_received
+    ? parseFloat(liveStats.total_received)
+    : liveStats?.cash_received && liveStats?.online_received
+    ? parseFloat(liveStats.cash_received) + parseFloat(liveStats.online_received)
+    : 0;
 
-  const handleFormSubmit = () => {
-    if (!nameInput.trim()) return;
+  const totalPendingNum = liveStats?.total_pending
+    ? parseFloat(liveStats.total_pending)
+    : invoices.reduce((sum, item) => {
+        if (item.status !== 'PAID') {
+          return sum + (item.numericAmount || 0);
+        }
+        return sum;
+      }, 0);
 
-    const parsedAmount = parseFloat(amountInput) || 0;
-
-    if (modalType === 'lead') {
-      addCustomer({
-        name: nameInput,
-        address: addressInput || 'Local Market Area',
-        amount: parsedAmount,
-        deliveryStatus: 'Last delivery: Just now',
-        hasDot: true,
-        isOverdue: false,
-      });
-    } else {
-      addInvoice(nameInput, parsedAmount || 1200, dueInput || 'Due in 2 days');
-    }
-
-    setModalVisible(false);
-  };
+  // Recent 5 invoices sorted by id descending
+  const recentInvoices = [...invoices].slice(0, 5);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Header Component */}
-      <Header title="Dashboard" />
+      {/* Header */}
+      <Header title="Chai Flow" showNotification={true} />
 
       <KeyboardAwareScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
         enableOnAndroid={true}
         refreshControl={
           <RefreshControl
@@ -107,222 +88,160 @@ export default function DashboardScreen() {
           />
         }
       >
-        {/* Live Overview + Revenue Card */}
-        <RevenueCard />
+        {/* 1. FINANCIAL KPI SUMMARY BANNER */}
+        <View style={styles.kpiHeroCard}>
+          <View style={styles.kpiTopRow}>
+            <View>
+              <Text style={styles.kpiLabel}>TODAY'S SALES</Text>
+              <Text style={styles.kpiMainValue}>
+                ₹{todaySalesNum.toLocaleString()}
+              </Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={styles.reportsPill}
+              onPress={() => navigation.navigate('Reports')}
+            >
+              <Text style={styles.reportsPillText}>Reports</Text>
+              <Ionicons name="arrow-forward" size={14} color="#F7D3C6" />
+            </TouchableOpacity>
+          </View>
 
-        {/* Financial KPI Cards */}
-        <View style={styles.statsContainer}>
-          <StatCard
-            title="Collections"
-            amount={`₹${collectionsTotal.toLocaleString()}`}
-            subtitle="MTD Received"
-            iconName="wallet-outline"
-            iconColor="#3B82F6"
-            iconBgColor="#EDF4FE"
-            onPress={() => navigation.navigate('Reports')}
-          />
-          <StatCard
-            title="Outstanding"
-            amount={`₹${totalOutstanding.toLocaleString()}`}
-            subtitle="Tap to Collect →"
-            color="#DC2626"
-            iconName="alert-circle-outline"
-            iconColor="#DC2626"
-            iconBgColor="#FEE2E2"
-            onPress={() => navigation.navigate('PendingPayments')}
-          />
+          <View style={styles.kpiDivider} />
+
+          <View style={styles.kpiBottomRow}>
+            <View style={styles.kpiSubCol}>
+              <View style={styles.dotLabelRow}>
+                <View style={[styles.dot, { backgroundColor: '#10B981' }]} />
+                <Text style={styles.kpiSubLabel}>TODAY RECEIVED</Text>
+              </View>
+              <Text style={styles.kpiSubValueGreen}>
+                ₹{todayReceivedNum.toLocaleString()}
+              </Text>
+            </View>
+
+            <View style={styles.verticalDivider} />
+
+            <View style={styles.kpiSubCol}>
+              <View style={styles.dotLabelRow}>
+                <View style={[styles.dot, { backgroundColor: '#F87171' }]} />
+                <Text style={styles.kpiSubLabel}>PENDING DUE</Text>
+              </View>
+              <Text style={styles.kpiSubValueRed}>
+                ₹{totalPendingNum.toLocaleString()}
+              </Text>
+            </View>
+          </View>
         </View>
 
-        {/* Quick Actions */}
-        <Text style={styles.sectionHeader}>QUICK ACTIONS</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.quickActionsScroll}
+        {/* 2. PRIMARY ACTION: QUICK BILLING / NEW COUNTER BILL */}
+        <TouchableOpacity
+          activeOpacity={0.88}
+          style={styles.primaryActionCard}
+          onPress={() => navigation.navigate('QuickBilling')}
         >
-          <QuickAction
-            title="Add Customer"
-            icon="person-add-outline"
-            iconColor="#435585"
-            bgColor="#E7EEFF"
-            onPress={() => navigation.navigate('AddLead')}
-          />
-          <QuickAction
-            title="Quick Bill"
-            icon="cafe-outline"
-            iconColor="#059669"
-            bgColor="#ECFDF5"
-            onPress={() => navigation.navigate('QuickBilling')}
-          />
-          <QuickAction
-            title="Create Order"
-            icon="receipt-outline"
-            iconColor="#4D3880"
-            bgColor="#EFE7FF"
-            onPress={() => navigation.navigate('CreateInvoice')}
-          />
-          <QuickAction
-            title="Add Product"
-            icon="cube-outline"
-            iconColor="#2563EB"
-            bgColor="#EFF6FF"
-            onPress={() => navigation.navigate('ProductDetail', { mode: 'add' })}
-          />
-          <QuickAction
-            title="Collect Payment"
-            icon="cash-outline"
-            iconColor="#DC2626"
-            bgColor="#FEE2E2"
-            onPress={() => navigation.navigate('PendingPayments')}
-          />
-          <QuickAction
-            title="Add Delivery Boy"
-            icon="bicycle-outline"
-            iconColor="#8C331A"
-            bgColor="#FDEBE4"
-            onPress={() => navigation.navigate('AddDeliveryBoy')}
-          />
-          <QuickAction
-            title="Add Schedule"
-            icon="calendar-outline"
-            iconColor="#D97706"
-            bgColor="#FEF3C7"
-            onPress={() => navigation.navigate('AddRouteSchedule')}
-          />
-          <QuickAction
-            title="More"
-            icon="grid-outline"
-            iconColor="#8C331A"
-            bgColor="#FDEBE4"
-            onPress={() => navigation.navigate('More')}
-          />
-        </ScrollView>
+          <View style={styles.primaryActionLeft}>
+            <View style={styles.primaryActionIconBox}>
+              <Ionicons name="flash" size={24} color="#FFFFFF" />
+            </View>
+            <View style={styles.primaryActionTextCol}>
+              <Text style={styles.primaryActionTitle}>New Counter Bill</Text>
+              <Text style={styles.primaryActionSubtitle}>
+                Instant product selection & checkout
+              </Text>
+            </View>
+          </View>
+          <View style={styles.primaryActionBtnPill}>
+            <Text style={styles.primaryActionBtnText}>Open</Text>
+            <Ionicons name="chevron-forward" size={16} color="#FFFFFF" />
+          </View>
+        </TouchableOpacity>
 
-        {/* Pending Invoices */}
+        {/* 3. CORE MODULE SHORTCUTS 4-GRID */}
+        <Text style={styles.sectionHeader}>QUICK SHORTCUTS</Text>
+        <View style={styles.gridContainer}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            style={styles.gridCard}
+            onPress={() => navigation.navigate('Products')}
+          >
+            <View style={[styles.gridIconCircle, { backgroundColor: '#EFF6FF' }]}>
+              <Ionicons name="cube-outline" size={20} color="#2563EB" />
+            </View>
+            <Text style={styles.gridTitle}>Products</Text>
+            <Text style={styles.gridSubtitle}>Catalog & prices</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            activeOpacity={0.8}
+            style={styles.gridCard}
+            onPress={() => navigation.navigate('Invoices')}
+          >
+            <View style={[styles.gridIconCircle, { backgroundColor: '#FDEBE4' }]}>
+              <Ionicons name="receipt-outline" size={20} color="#8C331A" />
+            </View>
+            <Text style={styles.gridTitle}>Invoices</Text>
+            <Text style={styles.gridSubtitle}>A4 PDF & bills</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            activeOpacity={0.8}
+            style={styles.gridCard}
+            onPress={() => navigation.navigate('Customers')}
+          >
+            <View style={[styles.gridIconCircle, { backgroundColor: '#ECFDF5' }]}>
+              <Ionicons name="people-outline" size={20} color="#059669" />
+            </View>
+            <Text style={styles.gridTitle}>Customers</Text>
+            <Text style={styles.gridSubtitle}>Ledger & balances</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            activeOpacity={0.8}
+            style={styles.gridCard}
+            onPress={() => navigation.navigate('Reports')}
+          >
+            <View style={[styles.gridIconCircle, { backgroundColor: '#FFFBEB' }]}>
+              <Ionicons name="bar-chart-outline" size={20} color="#D97706" />
+            </View>
+            <Text style={styles.gridTitle}>Reports</Text>
+            <Text style={styles.gridSubtitle}>Sales audit & MTD</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* 4. RECENT INVOICES SECTION */}
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionHeader}>PENDING INVOICES</Text>
+          <Text style={styles.sectionHeader}>RECENT INVOICES</Text>
           <TouchableOpacity
             activeOpacity={0.7}
-            onPress={() => navigation.navigate('PendingPayments')}
+            onPress={() => navigation.navigate('Invoices')}
           >
             <Text style={styles.viewAllText}>
-              View All ({invoices.filter(i => i.status !== 'PAID').length})
+              View All ({invoices.length})
             </Text>
           </TouchableOpacity>
         </View>
 
-        {invoices.filter(i => i.status !== 'PAID').length === 0 ? (
+        {recentInvoices.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>No pending invoices</Text>
+            <Ionicons name="receipt-outline" size={32} color="#D1C7BD" />
+            <Text style={styles.emptyText}>No invoices recorded yet</Text>
           </View>
         ) : (
-          invoices
-            .filter(i => i.status !== 'PAID')
-            .slice(0, 5)
-            .map(inv => (
-              <InvoiceCard
-                key={inv.id}
-                name={inv.name}
-                amount={inv.amount}
-                due={inv.due}
-                isOverdue={inv.isOverdue}
-                onPress={() => navigation.navigate('PendingPayments')}
-              />
-            ))
+          recentInvoices.map(inv => (
+            <InvoiceCard
+              key={inv.id}
+              name={inv.name}
+              invoiceNo={inv.invoiceNo}
+              amount={inv.amount}
+              due={inv.due}
+              isOverdue={inv.isOverdue}
+              status={inv.status}
+              onPress={() => navigation.navigate('InvoiceDetail', { invoice: inv })}
+            />
+          ))
         )}
-
-        {/* Recent Activity */}
-        <Text style={styles.sectionHeader}>RECENT ACTIVITY</Text>
-        <ActivityTimeline />
       </KeyboardAwareScrollView>
-
-      {/* Add Lead / Add Invoice Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={Keyboard.dismiss}
-          >
-            <TouchableOpacity activeOpacity={1} style={styles.modalContent}>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                bounces={false}
-              >
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>
-                    {modalType === 'lead'
-                      ? 'Add New Customer'
-                      : 'Create Order'}
-                  </Text>
-                  <TouchableOpacity onPress={() => setModalVisible(false)}>
-                    <Ionicons name="close" size={24} color="#666" />
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={styles.inputLabel}>
-                  Full Name / Business Name *
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Ramesh Tea Stall"
-                  placeholderTextColor="#999"
-                  value={nameInput}
-                  onChangeText={setNameInput}
-                />
-
-                <Text style={styles.inputLabel}>
-                  {modalType === 'lead'
-                    ? 'Address / Location Area'
-                    : 'Due Status'}
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder={
-                    modalType === 'lead'
-                      ? 'e.g. Shop 14, Main Market'
-                      : 'e.g. Due in 3 days'
-                  }
-                  placeholderTextColor="#999"
-                  value={modalType === 'lead' ? addressInput : dueInput}
-                  onChangeText={
-                    modalType === 'lead' ? setAddressInput : setDueInput
-                  }
-                />
-
-                <Text style={styles.inputLabel}>Amount (₹)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. 1500"
-                  placeholderTextColor="#999"
-                  keyboardType="numeric"
-                  value={amountInput}
-                  onChangeText={setAmountInput}
-                />
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  style={styles.submitBtn}
-                  onPress={handleFormSubmit}
-                >
-                  <Text style={styles.submitBtnText}>
-                    {modalType === 'lead' ? 'Add Customer' : 'Create Order'}
-                  </Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </KeyboardAvoidingView>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -334,100 +253,231 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 16,
+    paddingTop: 10,
+    paddingBottom: 28,
   },
-  statsContainer: {
+
+  /* 1. KPI Hero Card */
+  kpiHeroCard: {
+    backgroundColor: '#7A2E19',
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 14,
+    elevation: 3,
+    shadowColor: '#7A2E19',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+  },
+  kpiTopRow: {
     flexDirection: 'row',
-    marginHorizontal: -4,
-    marginVertical: 12,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
   },
-  sectionHeader: {
+  kpiLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#F7D3C6',
+    letterSpacing: 0.8,
+  },
+  kpiMainValue: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    marginTop: 2,
+  },
+  reportsPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  reportsPillText: {
+    color: '#F7D3C6',
     fontSize: 12,
     fontWeight: '700',
-    color: '#6E6259',
-    letterSpacing: 0.8,
-    marginTop: 18,
-    marginBottom: 12,
-    textTransform: 'uppercase',
+    marginRight: 4,
   },
+  kpiDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    marginVertical: 14,
+  },
+  kpiBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  kpiSubCol: {
+    flex: 1,
+  },
+  dotLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 3,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 5,
+  },
+  kpiSubLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#F7D3C6',
+    letterSpacing: 0.6,
+  },
+  kpiSubValueGreen: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#D1FAE5',
+  },
+  kpiSubValueRed: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FECACA',
+  },
+  verticalDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    marginHorizontal: 16,
+  },
+
+  /* 2. Primary Action: New Counter Bill */
+  primaryActionCard: {
+    backgroundColor: '#8C331A',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    elevation: 3,
+    shadowColor: '#8C331A',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+  },
+  primaryActionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  primaryActionIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  primaryActionTextCol: {
+    flex: 1,
+  },
+  primaryActionTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  primaryActionSubtitle: {
+    fontSize: 11,
+    color: '#F7D3C6',
+    marginTop: 2,
+  },
+  primaryActionBtnPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    marginLeft: 8,
+  },
+  primaryActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    marginRight: 2,
+  },
+
+  /* 3. Shortcuts 4-Grid */
+  sectionHeader: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#8A7E75',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+    marginLeft: 2,
+  },
+  gridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  gridCard: {
+    width: '48.5%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#EFECE9',
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+  },
+  gridIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  gridTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1F1511',
+  },
+  gridSubtitle: {
+    fontSize: 11,
+    color: '#8A7E75',
+    marginTop: 1,
+  },
+
+  /* 4. Recent Invoices */
   sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 18,
-    marginBottom: 12,
-  },
-  viewAllText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#8C331A',
-  },
-  quickActionsScroll: {
-    paddingVertical: 4,
-  },
-  emptyCard: {
-    backgroundColor: '#FFF',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  emptyText: {
-    color: '#888',
-    fontSize: 14,
-  },
-
-  /* Modal Styles */
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-    elevation: 10,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#8C331A',
-  },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#4A3D36',
-    marginBottom: 6,
-    marginTop: 10,
-  },
-  input: {
-    backgroundColor: '#F7F5F2',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    height: 48,
-    fontSize: 14,
-    color: '#2C201A',
-  },
-  submitBtn: {
-    backgroundColor: '#8C331A',
-    borderRadius: 14,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 24,
     marginBottom: 10,
   },
-  submitBtnText: {
-    color: '#FFF',
+  viewAllText: {
+    fontSize: 12,
     fontWeight: '700',
-    fontSize: 16,
+    color: '#8C331A',
+  },
+  emptyCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EFECE9',
+  },
+  emptyText: {
+    fontSize: 13,
+    color: '#8A7E75',
+    marginTop: 8,
+    fontWeight: '600',
   },
 });

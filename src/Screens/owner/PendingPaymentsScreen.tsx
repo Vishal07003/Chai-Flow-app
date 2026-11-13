@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { Header } from '../../components/common';
+import { Header, CustomDialog } from '../../components/common';
 import { useApp, InvoiceItem } from '../../context/AppContext';
 
 export default function PendingPaymentsScreen({ navigation }: any) {
@@ -23,6 +23,24 @@ export default function PendingPaymentsScreen({ navigation }: any) {
   );
   const [searchQuery, setSearchQuery] = useState('');
   const [toastMessage, setToastMessage] = useState('');
+
+  // Custom Dialog State
+  const [dialogConfig, setDialogConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message?: string;
+    type?: 'confirm' | 'danger' | 'info' | 'warning' | 'success';
+    buttons?: Array<{
+      text: string;
+      style?: 'default' | 'cancel' | 'destructive';
+      onPress?: () => void;
+    }>;
+  }>({
+    visible: false,
+    title: '',
+  });
+
+  const closeDialog = () => setDialogConfig(prev => ({ ...prev, visible: false }));
 
   // Bottom Sheet State
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceItem | null>(
@@ -109,7 +127,13 @@ export default function PendingPaymentsScreen({ navigation }: any) {
     }
     const cleanPhone = phone.replace(/[^0-9+]/g, '');
     Linking.openURL(`tel:${cleanPhone}`).catch(() => {
-      Alert.alert('Call Failed', `Could not initiate call to ${phone}`);
+      setDialogConfig({
+        visible: true,
+        title: 'Call Failed',
+        message: `Could not initiate call to ${phone}`,
+        type: 'warning',
+        buttons: [{ text: 'OK', onPress: closeDialog }],
+      });
     });
   };
 
@@ -125,18 +149,24 @@ export default function PendingPaymentsScreen({ navigation }: any) {
     const paidVal = parseFloat(paidAmountInput.trim());
 
     if (isNaN(paidVal) || paidVal <= 0) {
-      Alert.alert(
-        'Invalid Amount',
-        'Please enter a valid payment amount greater than zero.',
-      );
+      setDialogConfig({
+        visible: true,
+        title: 'Invalid Amount',
+        message: 'Please enter a valid payment amount greater than zero.',
+        type: 'warning',
+        buttons: [{ text: 'OK', onPress: closeDialog }],
+      });
       return;
     }
 
     if (paidVal > currentNumVal) {
-      Alert.alert(
-        'Overpayment Warning',
-        `Entered amount (₹${paidVal}) is greater than invoice balance (₹${currentNumVal}).`,
-      );
+      setDialogConfig({
+        visible: true,
+        title: 'Overpayment Warning',
+        message: `Entered amount (₹${paidVal}) is greater than invoice balance (₹${currentNumVal}).`,
+        type: 'warning',
+        buttons: [{ text: 'OK', onPress: closeDialog }],
+      });
       return;
     }
 
@@ -178,146 +208,151 @@ export default function PendingPaymentsScreen({ navigation }: any) {
         </View>
       )}
 
-      {/* Fixed Top Section: Hero Card, Filter Tabs & Search Bar */}
-      <View style={styles.fixedTopContainer}>
-        {/* Outstanding Total Banner */}
-        <View style={styles.heroCard}>
-          <View style={styles.heroRow}>
-            <View>
-              <Text style={styles.heroSub}>Total Outstanding Due</Text>
-              <Text style={styles.heroValue}>
-                ₹{totalOutstandingSum.toLocaleString()}
-              </Text>
-            </View>
-            <View style={styles.heroBadgeBox}>
-              <Ionicons name="time-outline" size={16} color="#DC2626" />
-              <Text style={styles.heroBadgeText}>
-                {pendingInvoices.length} Pending
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Filter Tabs */}
-        <View style={styles.tabContainer}>
-          {[
-            { id: 'ALL', label: `All Unpaid (${pendingInvoices.length})` },
-            {
-              id: 'PENDING',
-              label: `Regular (${
-                pendingInvoices.filter(i => !i.isOverdue).length
-              })`,
-            },
-            { id: 'OVERDUE', label: `Overdue (${overdueCount})` },
-          ].map(tab => (
-            <TouchableOpacity
-              key={tab.id}
-              activeOpacity={0.8}
-              style={[
-                styles.tabChip,
-                activeTab === tab.id && styles.tabChipActive,
-              ]}
-              onPress={() => setActiveTab(tab.id as any)}
-            >
-              <Text
-                style={[
-                  styles.tabChipText,
-                  activeTab === tab.id && styles.tabChipTextActive,
-                ]}
-              >
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Search Bar */}
-        <View style={styles.searchBox}>
-          <Ionicons
-            name="search-outline"
-            size={18}
-            color="#8A7E75"
-            style={{ marginRight: 8 }}
-          />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search customer, invoice no, or amount..."
-            placeholderTextColor="#A09489"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery !== '' && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={18} color="#8A7E75" />
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
-      {/* Scrollable Pending Invoices List */}
+      {/* Single Vertical ScrollView with Sticky Header (tabs + search) */}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        stickyHeaderIndices={[1]}
       >
-
-        {/* Section Header */}
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>
-            CUSTOMERS WITH PENDING INVOICES
-          </Text>
-          <Text style={styles.countBadge}>
-            {pendingInvoices.length} Invoices
-          </Text>
+        {/* Index 0: Top Summary Section - Scrolls away naturally */}
+        <View style={styles.heroCardContainer}>
+          {/* Outstanding Total Banner */}
+          <View style={styles.heroCard}>
+            <View style={styles.heroRow}>
+              <View>
+                <Text style={styles.heroSub}>Total Outstanding Due</Text>
+                <Text style={styles.heroValue}>
+                  ₹{totalOutstandingSum.toLocaleString()}
+                </Text>
+              </View>
+              <View style={styles.heroBadgeBox}>
+                <Ionicons name="time-outline" size={16} color="#DC2626" />
+                <Text style={styles.heroBadgeText}>
+                  {pendingInvoices.length} Pending
+                </Text>
+              </View>
+            </View>
+          </View>
         </View>
 
-        {/* List of Unpaid Invoices */}
-        {pendingInvoices.length === 0 ? (
-          <View style={styles.emptyContainer}>
+        {/* Index 1: Sticky Header Section (Filter Tabs & Search Input) */}
+        <View style={styles.stickyHeaderContainer}>
+          {/* Filter Tabs */}
+          <View style={styles.tabContainer}>
+            {[
+              { id: 'ALL', label: `All Unpaid (${pendingInvoices.length})` },
+              {
+                id: 'PENDING',
+                label: `Regular (${
+                  pendingInvoices.filter(i => !i.isOverdue).length
+                })`,
+              },
+              { id: 'OVERDUE', label: `Overdue (${overdueCount})` },
+            ].map(tab => (
+              <TouchableOpacity
+                key={tab.id}
+                activeOpacity={0.8}
+                style={[
+                  styles.tabChip,
+                  activeTab === tab.id && styles.tabChipActive,
+                ]}
+                onPress={() => setActiveTab(tab.id as any)}
+              >
+                <Text
+                  style={[
+                    styles.tabChipText,
+                    activeTab === tab.id && styles.tabChipTextActive,
+                  ]}
+                >
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Search Bar */}
+          <View style={styles.searchBox}>
             <Ionicons
-              name="checkmark-done-circle-outline"
-              size={54}
-              color="#10B981"
+              name="search-outline"
+              size={18}
+              color="#8A7E75"
+              style={{ marginRight: 8 }}
             />
-            <Text style={styles.emptyTitle}>No Pending Payments!</Text>
-            <Text style={styles.emptySub}>
-              All customers in this category have cleared their balances.
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search customer, invoice no, or amount..."
+              placeholderTextColor="#A09489"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {searchQuery !== '' && (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Ionicons name="close-circle" size={18} color="#8A7E75" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {/* Index 2: Scrollable Pending Invoices List */}
+        <View style={styles.tabContentContainer}>
+          {/* Section Header */}
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>
+              CUSTOMERS WITH PENDING INVOICES
+            </Text>
+            <Text style={styles.countBadge}>
+              {pendingInvoices.length} Invoices
             </Text>
           </View>
-        ) : (
-          pendingInvoices.map(item => {
-            const isOverdue = item.isOverdue || item.status === 'OVERDUE';
-            const numVal =
-              item.numericAmount !== undefined
-                ? item.numericAmount
-                : parseInt((item.amount || '').replace(/[^0-9]/g, '')) || 0;
 
-            return (
-              <View key={item.id} style={styles.paymentCard}>
-                {/* Card Top Header */}
-                <View style={styles.cardHeaderRow}>
-                  <View style={styles.cardHeaderLeft}>
-                    <View
-                      style={[
-                        styles.avatarBox,
-                        isOverdue
-                          ? styles.avatarBoxRed
-                          : styles.avatarBoxOrange,
-                      ]}
-                    >
-                      <Text
+          {/* List of Unpaid Invoices */}
+          {pendingInvoices.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons
+                name="checkmark-done-circle-outline"
+                size={54}
+                color="#10B981"
+              />
+              <Text style={styles.emptyTitle}>No Pending Payments!</Text>
+              <Text style={styles.emptySub}>
+                All customers in this category have cleared their balances.
+              </Text>
+            </View>
+          ) : (
+            pendingInvoices.map(item => {
+              const isOverdue = item.isOverdue || item.status === 'OVERDUE';
+              const numVal =
+                item.numericAmount !== undefined
+                  ? item.numericAmount
+                  : parseInt((item.amount || '').replace(/[^0-9]/g, '')) || 0;
+
+              return (
+                <View key={item.id} style={styles.paymentCard}>
+                  {/* Card Top Header */}
+                  <View style={styles.cardHeaderRow}>
+                    <View style={styles.cardHeaderLeft}>
+                      <View
                         style={[
-                          styles.avatarText,
+                          styles.avatarBox,
                           isOverdue
-                            ? styles.avatarTextRed
-                            : styles.avatarTextOrange,
+                            ? styles.avatarBoxRed
+                            : styles.avatarBoxOrange,
                         ]}
                       >
-                        {item.name.charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      style={{ flex: 1 }}
-                      activeOpacity={0.7}
+                        <Text
+                          style={[
+                            styles.avatarText,
+                            isOverdue
+                              ? styles.avatarTextRed
+                              : styles.avatarTextOrange,
+                          ]}
+                        >
+                          {item.name.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={{ flex: 1 }}
+                        activeOpacity={0.7}
                       onPress={() => {
                         const matched = customers.find(
                           c => c.name.toLowerCase() === item.name.toLowerCase(),
@@ -416,6 +451,7 @@ export default function PendingPaymentsScreen({ navigation }: any) {
             );
           })
         )}
+        </View>
       </ScrollView>
 
       {/* Payment Collection Bottom Sheet Modal */}
@@ -568,6 +604,16 @@ export default function PendingPaymentsScreen({ navigation }: any) {
           </View>
         </View>
       </Modal>
+
+      {/* CUSTOM DIALOG POPUP */}
+      <CustomDialog
+        visible={dialogConfig.visible}
+        title={dialogConfig.title}
+        message={dialogConfig.message}
+        type={dialogConfig.type}
+        buttons={dialogConfig.buttons}
+        onClose={closeDialog}
+      />
     </SafeAreaView>
   );
 }
@@ -598,13 +644,23 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
     paddingBottom: 40,
   },
-  fixedTopContainer: {
+  heroCardContainer: {
     paddingHorizontal: 16,
     paddingTop: 12,
+    backgroundColor: '#FAF8F5',
+  },
+  stickyHeaderContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 2,
+    backgroundColor: '#FAF8F5',
+    zIndex: 10,
+  },
+  tabContentContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
     backgroundColor: '#FAF8F5',
   },
 

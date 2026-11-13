@@ -12,8 +12,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { Header } from '../../components/common';
+import { Header, CustomDialog } from '../../components/common';
 import { useApp, InvoiceItem, DeliveryBoyItem } from '../../context/AppContext';
+import { pdfService } from '../../services/pdf.service';
 
 export default function InvoiceDetailScreen({ route, navigation }: any) {
   const { invoice } = route.params || {};
@@ -53,6 +54,26 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
   );
 
   const [isPartnerModalVisible, setIsPartnerModalVisible] = useState(false);
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
+  const [pdfActionType, setPdfActionType] = useState<string>('');
+
+  // Custom Dialog State
+  const [dialogConfig, setDialogConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message?: string;
+    type?: 'confirm' | 'danger' | 'info' | 'warning' | 'success';
+    buttons?: Array<{
+      text: string;
+      style?: 'default' | 'cancel' | 'destructive';
+      onPress?: () => void;
+    }>;
+  }>({
+    visible: false,
+    title: '',
+  });
+
+  const closeDialog = () => setDialogConfig(prev => ({ ...prev, visible: false }));
 
   const isAdmin = userRole === 'ADMIN';
 
@@ -72,7 +93,13 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
   const handleCallCustomer = () => {
     const phone = currentOrder.customerPhone || '+919876512345';
     Linking.openURL(`tel:${phone}`).catch(() => {
-      Alert.alert('Error', 'Unable to initiate phone call.');
+      setDialogConfig({
+        visible: true,
+        title: 'Error',
+        message: 'Unable to initiate phone call.',
+        type: 'warning',
+        buttons: [{ text: 'OK', onPress: closeDialog }],
+      });
     });
   };
 
@@ -80,10 +107,14 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
     newStatus: 'Pending' | 'Out for delivery' | 'Delivered',
   ) => {
     if (isAdmin) {
-      Alert.alert(
-        'Access Denied',
-        'Admin can only view the order status and delivery location. Only delivery partners can update the delivery status.',
-      );
+      setDialogConfig({
+        visible: true,
+        title: 'Access Denied',
+        message:
+          'Admin can only view the order status and delivery location. Only delivery partners can update the delivery status.',
+        type: 'warning',
+        buttons: [{ text: 'OK', onPress: closeDialog }],
+      });
       return;
     }
 
@@ -98,6 +129,77 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
           ? 'In Transit (Near Destination)'
           : 'At Central Warehouse',
     }));
+  };
+
+  // PDF Handlers: Download, Share, Print
+  const handleDownloadPdf = async () => {
+    if (isPdfLoading) return;
+    try {
+      setIsPdfLoading(true);
+      setPdfActionType('Downloading PDF...');
+      const cleanId = String(currentOrder.id).replace(/[^0-9]/g, '') || currentOrder.id;
+      const res = await pdfService.downloadInvoicePdf(cleanId, currentOrder.invoiceNo);
+      setDialogConfig({
+        visible: true,
+        title: 'PDF Downloaded ✅',
+        message: `Invoice saved successfully to:\n${res.filePath}`,
+        type: 'success',
+        buttons: [{ text: 'OK', onPress: closeDialog }],
+      });
+    } catch (err: any) {
+      setDialogConfig({
+        visible: true,
+        title: 'Download Failed',
+        message: err.message || 'Unable to download invoice PDF from server.',
+        type: 'warning',
+        buttons: [{ text: 'OK', onPress: closeDialog }],
+      });
+    } finally {
+      setIsPdfLoading(false);
+      setPdfActionType('');
+    }
+  };
+
+  const handleSharePdf = async () => {
+    if (isPdfLoading) return;
+    try {
+      setIsPdfLoading(true);
+      setPdfActionType('Preparing PDF for Sharing...');
+      const cleanId = String(currentOrder.id).replace(/[^0-9]/g, '') || currentOrder.id;
+      await pdfService.shareInvoicePdf(cleanId, currentOrder.invoiceNo);
+    } catch (err: any) {
+      setDialogConfig({
+        visible: true,
+        title: 'Share Failed',
+        message: err.message || 'Unable to share invoice PDF.',
+        type: 'warning',
+        buttons: [{ text: 'OK', onPress: closeDialog }],
+      });
+    } finally {
+      setIsPdfLoading(false);
+      setPdfActionType('');
+    }
+  };
+
+  const handlePrintPdf = async () => {
+    if (isPdfLoading) return;
+    try {
+      setIsPdfLoading(true);
+      setPdfActionType('Opening Print Preview...');
+      const cleanId = String(currentOrder.id).replace(/[^0-9]/g, '') || currentOrder.id;
+      await pdfService.printInvoicePdf(cleanId, currentOrder.invoiceNo);
+    } catch (err: any) {
+      setDialogConfig({
+        visible: true,
+        title: 'Print Failed',
+        message: err.message || 'Unable to open print service.',
+        type: 'warning',
+        buttons: [{ text: 'OK', onPress: closeDialog }],
+      });
+    } finally {
+      setIsPdfLoading(false);
+      setPdfActionType('');
+    }
   };
 
   return (
@@ -173,12 +275,55 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
               onPress={() => {
                 markInvoiceAsPaid(currentOrder.id);
                 setCurrentOrder(prev => ({ ...prev, status: 'PAID', isOverdue: false }));
-                Alert.alert('Payment Completed 🎉', `Payment of ${currentOrder.amount} marked as completed.`);
+                setDialogConfig({
+                  visible: true,
+                  title: 'Payment Completed 🎉',
+                  message: `Payment of ${currentOrder.amount} marked as completed.`,
+                  type: 'success',
+                  buttons: [{ text: 'OK', onPress: closeDialog }],
+                });
               }}
             >
               <Ionicons name="checkmark-done-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
               <Text style={styles.markPaidBtnText}>Mark Payment Completed</Text>
             </TouchableOpacity>
+          )}
+
+          {/* A4 Professional PDF Action Bar */}
+          <View style={styles.pdfActionsRow}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={[styles.pdfBtn, isPdfLoading && styles.pdfBtnDisabled]}
+              onPress={handleDownloadPdf}
+              disabled={isPdfLoading}
+            >
+              <Ionicons name="download-outline" size={17} color="#7A2E19" />
+              <Text style={styles.pdfBtnText}>Download</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={[styles.pdfBtn, isPdfLoading && styles.pdfBtnDisabled]}
+              onPress={handleSharePdf}
+              disabled={isPdfLoading}
+            >
+              <Ionicons name="share-social-outline" size={17} color="#7A2E19" />
+              <Text style={styles.pdfBtnText}>Share</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={[styles.pdfBtn, isPdfLoading && styles.pdfBtnDisabled]}
+              onPress={handlePrintPdf}
+              disabled={isPdfLoading}
+            >
+              <Ionicons name="print-outline" size={17} color="#7A2E19" />
+              <Text style={styles.pdfBtnText}>Print</Text>
+            </TouchableOpacity>
+          </View>
+
+          {isPdfLoading && (
+            <Text style={styles.pdfLoadingText}>⏳ {pdfActionType}</Text>
           )}
         </View>
 
@@ -314,7 +459,13 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
                       assignOrderPartner(currentOrder.id, item.name);
                       setCurrentOrder(prev => ({ ...prev, deliveryPartnerName: item.name }));
                       setIsPartnerModalVisible(false);
-                      Alert.alert('Partner Assigned', `Order assigned to ${item.name}`);
+                      setDialogConfig({
+                        visible: true,
+                        title: 'Partner Assigned',
+                        message: `Order assigned to ${item.name}`,
+                        type: 'success',
+                        buttons: [{ text: 'OK', onPress: closeDialog }],
+                      });
                     }}
                   >
                     <View style={styles.partnerItemAvatar}>
@@ -418,6 +569,16 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
           )}
         </View>
       </ScrollView>
+
+      {/* CUSTOM DIALOG POPUP */}
+      <CustomDialog
+        visible={dialogConfig.visible}
+        title={dialogConfig.title}
+        message={dialogConfig.message}
+        type={dialogConfig.type}
+        buttons={dialogConfig.buttons}
+        onClose={closeDialog}
+      />
     </SafeAreaView>
   );
 }
@@ -477,6 +638,40 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',
+  },
+  pdfActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 14,
+    gap: 8,
+  },
+  pdfBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FAF6F2',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E8DFD7',
+  },
+  pdfBtnDisabled: {
+    opacity: 0.5,
+  },
+  pdfBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#7A2E19',
+    marginLeft: 5,
+  },
+  pdfLoadingText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#8A7A70',
+    marginTop: 8,
   },
   sectionCard: {
     backgroundColor: '#FFFFFF',

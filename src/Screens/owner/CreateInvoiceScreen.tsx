@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { Header } from '../../components/common';
+import { Header, CustomDialog } from '../../components/common';
 import { useApp, ProductItem, Customer, DeliveryBoyItem } from '../../context/AppContext';
 
 export default function CreateInvoiceScreen({ navigation }: any) {
@@ -34,6 +34,24 @@ export default function CreateInvoiceScreen({ navigation }: any) {
   const [quantities, setQuantities] = useState<{ [key: string]: number }>({});
   const [notes, setNotes] = useState('');
   const [toastMessage, setToastMessage] = useState('');
+
+  // Custom Dialog State
+  const [dialogConfig, setDialogConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message?: string;
+    type?: 'confirm' | 'success' | 'danger' | 'info' | 'warning';
+    buttons?: Array<{
+      text: string;
+      style?: 'default' | 'cancel' | 'destructive';
+      onPress?: () => void;
+    }>;
+  }>({
+    visible: false,
+    title: '',
+  });
+
+  const closeDialog = () => setDialogConfig(prev => ({ ...prev, visible: false }));
 
   const triggerToast = (msg: string) => {
     setToastMessage(msg);
@@ -69,12 +87,24 @@ export default function CreateInvoiceScreen({ navigation }: any) {
 
   const handleCreateOrder = async () => {
     if (!selectedCustomer) {
-      Alert.alert('Customer Required', 'Please select a customer for this order.');
+      setDialogConfig({
+        visible: true,
+        title: 'Customer Required',
+        message: 'Please select a customer for this order.',
+        type: 'warning',
+        buttons: [{ text: 'OK', onPress: closeDialog }],
+      });
       return;
     }
 
     if (selectedItemsList.length === 0) {
-      Alert.alert('No Items Selected', 'Please select at least one product quantity.');
+      setDialogConfig({
+        visible: true,
+        title: 'No Items Selected',
+        message: 'Please select at least one product quantity.',
+        type: 'warning',
+        buttons: [{ text: 'OK', onPress: closeDialog }],
+      });
       return;
     }
 
@@ -356,6 +386,16 @@ export default function CreateInvoiceScreen({ navigation }: any) {
           </View>
         </View>
       </Modal>
+
+      {/* CUSTOM DIALOG POPUP */}
+      <CustomDialog
+        visible={dialogConfig.visible}
+        title={dialogConfig.title}
+        message={dialogConfig.message}
+        type={dialogConfig.type}
+        buttons={dialogConfig.buttons}
+        onClose={closeDialog}
+      />
     </SafeAreaView>
   );
 }

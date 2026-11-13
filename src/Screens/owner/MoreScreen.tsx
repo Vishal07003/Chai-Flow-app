@@ -11,105 +11,157 @@ import { useNavigation } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../components/common';
 
+interface ToolItem {
+  id: string;
+  title: string;
+  subtitle: string;
+  icon: string;
+  onPress: () => void;
+}
+
+interface ToolSection {
+  title: string;
+  items: ToolItem[];
+}
+
 export default function MoreScreen() {
   const navigation = useNavigation<any>();
 
-  const tools = [
+  const sections: ToolSection[] = [
     {
-      id: 'quick-billing',
-      title: 'Quick Billing',
-      icon: 'bag-outline',
-      onPress: () => navigation.navigate('QuickBilling'),
+      title: 'BUSINESS & CATALOG',
+      items: [
+        {
+          id: 'products',
+          title: 'Products Catalog',
+          subtitle: 'Manage items, pricing & stock',
+          icon: 'cube-outline',
+          onPress: () => navigation.navigate('Products'),
+        },
+        {
+          id: 'add-product',
+          title: 'Add New Product',
+          subtitle: 'Create a new beverage or snack',
+          icon: 'add-circle-outline',
+          onPress: () => navigation.navigate('ProductDetail', { mode: 'add' }),
+        },
+        {
+          id: 'reports',
+          title: 'Financial Reports',
+          subtitle: 'Audit revenue, MTD & daily collections',
+          icon: 'bar-chart-outline',
+          onPress: () => navigation.navigate('Reports'),
+        },
+        {
+          id: 'pending-payments',
+          title: 'Pending Payments',
+          subtitle: 'Track unpaid invoices & collect due',
+          icon: 'time-outline',
+          onPress: () => navigation.navigate('PendingPayments'),
+        },
+        {
+          id: 'orders',
+          title: 'Advance Orders',
+          subtitle: 'Customer orders and lifecycle',
+          icon: 'receipt-outline',
+          onPress: () => navigation.navigate('Orders'),
+        },
+      ],
     },
     {
-      id: 'add-customer',
-      title: 'Add Customer',
-      icon: 'person-add-outline',
-      onPress: () => navigation.navigate('AddLead'),
+      title: 'FLEET & OPERATIONS',
+      items: [
+        {
+          id: 'delivery-boys',
+          title: 'Delivery Boys',
+          subtitle: 'Fleet status & live dispatch',
+          icon: 'bicycle-outline',
+          onPress: () => navigation.navigate('Delivery'),
+        },
+        {
+          id: 'schedules',
+          title: 'Delivery Schedules',
+          subtitle: 'Daily morning & evening slots',
+          icon: 'calendar-outline',
+          onPress: () => navigation.navigate('Schedule'),
+        },
+        {
+          id: 'add-delivery-boy',
+          title: 'Add Delivery Boy',
+          subtitle: 'Register driver & vehicle info',
+          icon: 'person-add-outline',
+          onPress: () => navigation.navigate('AddDeliveryBoy'),
+        },
+        {
+          id: 'add-schedule',
+          title: 'New Route Schedule',
+          subtitle: 'Assign customer recurring route',
+          icon: 'navigate-outline',
+          onPress: () => navigation.navigate('AddRouteSchedule'),
+        },
+      ],
     },
     {
-      id: 'add-product',
-      title: 'Add Product',
-      icon: 'add-outline',
-      onPress: () => navigation.navigate('ProductDetail', { mode: 'add' }),
-    },
-    {
-      id: 'create-order',
-      title: 'Create Order',
-      icon: 'bag-handle-outline',
-      onPress: () => navigation.navigate('CreateInvoice'),
-    },
-    {
-      id: 'all-orders',
-      title: 'All Orders',
-      icon: 'newspaper-outline',
-      onPress: () => navigation.navigate('Invoices'),
-    },
-    {
-      id: 'pending-payments',
-      title: 'Pending Payments',
-      icon: 'wallet-outline',
-      onPress: () => navigation.navigate('PendingPayments'),
-    },
-    {
-      id: 'invoices',
-      title: 'Invoices',
-      icon: 'newspaper-outline',
-      onPress: () => navigation.navigate('Invoices'),
-    },
-    {
-      id: 'route-dispatch',
-      title: 'Route Dispatch',
-      icon: 'bicycle-outline',
-      onPress: () => navigation.navigate('AddRouteSchedule'),
-    },
-    {
-      id: 'my-profile',
-      title: 'My Profile',
-      icon: 'person-outline',
-      onPress: () => navigation.navigate('Profile'),
-    },
-    {
-      id: 'settings',
-      title: 'Settings',
-      icon: 'settings-outline',
-      onPress: () => navigation.navigate('Settings'),
+      title: 'ACCOUNT & SETTINGS',
+      items: [
+        {
+          id: 'profile',
+          title: 'Shop & Owner Profile',
+          subtitle: 'View store details & identity',
+          icon: 'person-outline',
+          onPress: () => navigation.navigate('Profile'),
+        },
+        {
+          id: 'settings',
+          title: 'Settings',
+          subtitle: 'App preferences & configurations',
+          icon: 'settings-outline',
+          onPress: () => navigation.navigate('Settings'),
+        },
+      ],
     },
   ];
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Header with Title and Back Action (hides profile & drawer icons) */}
-      <Header title="More" showBack={true} showNotification={false} />
+      {/* Header */}
+      <Header title="More Tools" showBack={false} showNotification={true} />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Title Section */}
-        <View style={styles.titleSection}>
-          <Text style={styles.mainTitle}>All tools</Text>
-          <Text style={styles.subTitle}>
-            Every ChaiFlow screen, one tap away.
-          </Text>
-        </View>
-
-        {/* 2-Column Grid */}
-        <View style={styles.gridContainer}>
-          {tools.map(tool => (
-            <TouchableOpacity
-              key={tool.id}
-              activeOpacity={0.8}
-              style={styles.card}
-              onPress={tool.onPress}
-            >
-              <View style={styles.iconCircle}>
-                <Ionicons name={tool.icon} size={22} color="#8C331A" />
-              </View>
-              <Text style={styles.cardTitle}>{tool.title}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {sections.map(section => (
+          <View key={section.title} style={styles.sectionContainer}>
+            <Text style={styles.sectionHeaderTitle}>{section.title}</Text>
+            <View style={styles.sectionCardGroup}>
+              {section.items.map((item, index) => {
+                const isLast = index === section.items.length - 1;
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    activeOpacity={0.7}
+                    style={[styles.rowItem, isLast && styles.rowItemLast]}
+                    onPress={item.onPress}
+                  >
+                    <View style={styles.iconCircle}>
+                      <Ionicons name={item.icon} size={20} color="#8C331A" />
+                    </View>
+                    <View style={styles.itemTextContainer}>
+                      <Text style={styles.itemTitle}>{item.title}</Text>
+                      <Text style={styles.itemSubtitle}>{item.subtitle}</Text>
+                    </View>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={18}
+                      color="#A09489"
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        ))}
       </ScrollView>
     </SafeAreaView>
   );
@@ -123,51 +175,62 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 24,
+    paddingBottom: 36,
   },
-  titleSection: {
-    marginBottom: 16,
+  sectionContainer: {
+    marginBottom: 20,
   },
-  mainTitle: {
-    fontSize: 24,
+  sectionHeaderTitle: {
+    fontSize: 11,
     fontWeight: '800',
-    color: '#1F1511',
-    marginBottom: 4,
+    color: '#8A7E75',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+    marginLeft: 4,
   },
-  subTitle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#7C6E65',
-  },
-  gridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  card: {
-    width: '48%',
+  sectionCardGroup: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#EFECE9',
+    overflow: 'hidden',
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.04,
     shadowRadius: 6,
   },
+  rowItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F6F3EE',
+  },
+  rowItemLast: {
+    borderBottomWidth: 0,
+  },
   iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     backgroundColor: '#FDEBE4',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
+    marginRight: 14,
   },
-  cardTitle: {
+  itemTextContainer: {
+    flex: 1,
+  },
+  itemTitle: {
     fontSize: 14,
     fontWeight: '700',
     color: '#1F1511',
+    marginBottom: 2,
+  },
+  itemSubtitle: {
+    fontSize: 11,
+    color: '#8A7E75',
   },
 });

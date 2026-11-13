@@ -14,6 +14,7 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import Header from '../../components/common/Header';
+import { CustomDialog } from '../../components/common';
 import { useApp } from '../../context/AppContext';
 import { validation } from '../../utils/validation';
 import { AppToast } from '../../utils/toast';
@@ -46,65 +47,92 @@ export default function AddDeliveryBoyScreen({ navigation }: any) {
   const [status, setStatus] = useState<'READY' | 'BUSY' | 'OFFLINE'>('READY');
   const [showToast, setShowToast] = useState(false);
 
+  // Custom Dialog State
+  const [dialogConfig, setDialogConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message?: string;
+    type?: 'confirm' | 'danger' | 'info' | 'warning' | 'success';
+    buttons?: Array<{
+      text: string;
+      style?: 'default' | 'cancel' | 'destructive';
+      onPress?: () => void;
+    }>;
+  }>({
+    visible: false,
+    title: '',
+  });
+
+  const closeDialog = () => setDialogConfig(prev => ({ ...prev, visible: false }));
+
   /* Image Pickers (Camera / Device Gallery) */
   const handlePickPhoto = (target: 'profile' | 'numberPlate' | 'license') => {
-    Alert.alert('Upload Photo', 'Choose photo source:', [
-      {
-        text: 'Take Photo (Camera)',
-        onPress: async () => {
-          try {
-            const result = await launchCamera({
-              mediaType: 'photo',
-              quality: 0.8,
-              saveToPhotos: true,
-            });
-            if (
-              !result.didCancel &&
-              result.assets &&
-              result.assets.length > 0
-            ) {
-              const uri = result.assets[0].uri;
-              if (uri) {
-                if (target === 'profile') setProfilePhotoUri(uri);
-                if (target === 'numberPlate') setNumberPlatePhotoUri(uri);
-                if (target === 'license') setLicensePhotoUri(uri);
+    setDialogConfig({
+      visible: true,
+      title: 'Upload Photo',
+      message: 'Choose photo source:',
+      type: 'confirm',
+      buttons: [
+        {
+          text: 'Take Photo (Camera)',
+          onPress: async () => {
+            closeDialog();
+            try {
+              const result = await launchCamera({
+                mediaType: 'photo',
+                quality: 0.8,
+                saveToPhotos: true,
+              });
+              if (
+                !result.didCancel &&
+                result.assets &&
+                result.assets.length > 0
+              ) {
+                const uri = result.assets[0].uri;
+                if (uri) {
+                  if (target === 'profile') setProfilePhotoUri(uri);
+                  if (target === 'numberPlate') setNumberPlatePhotoUri(uri);
+                  if (target === 'license') setLicensePhotoUri(uri);
+                }
               }
+            } catch (error) {
+              console.log('Error launching camera:', error);
             }
-          } catch (error) {
-            console.log('Error launching camera:', error);
-          }
+          },
         },
-      },
-      {
-        text: 'Choose from Device',
-        onPress: async () => {
-          try {
-            const result = await launchImageLibrary({
-              mediaType: 'photo',
-              quality: 0.8,
-            });
-            if (
-              !result.didCancel &&
-              result.assets &&
-              result.assets.length > 0
-            ) {
-              const uri = result.assets[0].uri;
-              if (uri) {
-                if (target === 'profile') setProfilePhotoUri(uri);
-                if (target === 'numberPlate') setNumberPlatePhotoUri(uri);
-                if (target === 'license') setLicensePhotoUri(uri);
+        {
+          text: 'Choose from Device',
+          onPress: async () => {
+            closeDialog();
+            try {
+              const result = await launchImageLibrary({
+                mediaType: 'photo',
+                quality: 0.8,
+              });
+              if (
+                !result.didCancel &&
+                result.assets &&
+                result.assets.length > 0
+              ) {
+                const uri = result.assets[0].uri;
+                if (uri) {
+                  if (target === 'profile') setProfilePhotoUri(uri);
+                  if (target === 'numberPlate') setNumberPlatePhotoUri(uri);
+                  if (target === 'license') setLicensePhotoUri(uri);
+                }
               }
+            } catch (error) {
+              console.log('Error launching gallery:', error);
             }
-          } catch (error) {
-            console.log('Error launching gallery:', error);
-          }
+          },
         },
-      },
-      {
-        text: 'Cancel',
-        style: 'cancel',
-      },
-    ]);
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: closeDialog,
+        },
+      ],
+    });
   };
 
   const handleSaveDeliveryBoy = () => {
@@ -431,6 +459,16 @@ export default function AddDeliveryBoyScreen({ navigation }: any) {
           <Text style={styles.submitBtnText}>Register Partner to Fleet</Text>
         </TouchableOpacity>
       </KeyboardAwareScrollView>
+
+      {/* CUSTOM DIALOG POPUP */}
+      <CustomDialog
+        visible={dialogConfig.visible}
+        title={dialogConfig.title}
+        message={dialogConfig.message}
+        type={dialogConfig.type}
+        buttons={dialogConfig.buttons}
+        onClose={closeDialog}
+      />
     </SafeAreaView>
   );
 }
