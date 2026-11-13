@@ -6,10 +6,10 @@ import { useApp } from '../context/AppContext';
 
 // Owner Screens
 import DashboardScreen from '../Screens/owner/DashboardScreen';
+import QuickBillingScreen from '../Screens/owner/QuickBillingScreen';
+import InvoicesScreen from '../Screens/owner/InvoicesScreen';
 import CustomersScreen from '../Screens/owner/CustomersScreen';
-import ProductsScreen from '../Screens/owner/ProductsScreen';
-import DeliveryScreen from '../Screens/owner/DeliveryScreen';
-import ScheduleScreen from '../Screens/owner/ScheduleScreen';
+import MoreScreen from '../Screens/owner/MoreScreen';
 
 // Delivery Partner Screens
 import HomeScreen from '../Screens/delivery/HomeScreen';
@@ -64,17 +64,17 @@ export default function BottomTabs() {
             case 'Dashboard':
               iconName = focused ? 'grid' : 'grid-outline';
               break;
+            case 'Billing':
+              iconName = focused ? 'flash' : 'flash-outline';
+              break;
+            case 'Invoices':
+              iconName = focused ? 'receipt' : 'receipt-outline';
+              break;
             case 'Customers':
               iconName = focused ? 'people' : 'people-outline';
               break;
-            case 'Products':
-              iconName = focused ? 'cube' : 'cube-outline';
-              break;
-            case 'Delivery':
-              iconName = focused ? 'bicycle' : 'bicycle-outline';
-              break;
-            case 'Schedule':
-              iconName = focused ? 'calendar' : 'calendar-outline';
+            case 'More':
+              iconName = focused ? 'ellipsis-horizontal-circle' : 'ellipsis-horizontal-circle-outline';
               break;
           }
 
@@ -114,7 +114,17 @@ export default function BottomTabs() {
           <Tab.Screen
             name="Dashboard"
             component={DashboardScreen}
-            options={{ tabBarLabel: 'DASHBOARD' }}
+            options={{ tabBarLabel: 'HOME' }}
+          />
+          <Tab.Screen
+            name="Billing"
+            component={QuickBillingScreen}
+            options={{ tabBarLabel: 'BILLING' }}
+          />
+          <Tab.Screen
+            name="Invoices"
+            component={InvoicesScreen}
+            options={{ tabBarLabel: 'INVOICES' }}
           />
           <Tab.Screen
             name="Customers"
@@ -122,19 +132,9 @@ export default function BottomTabs() {
             options={{ tabBarLabel: 'CUSTOMERS' }}
           />
           <Tab.Screen
-            name="Products"
-            component={ProductsScreen}
-            options={{ tabBarLabel: 'PRODUCTS' }}
-          />
-          <Tab.Screen
-            name="Delivery"
-            component={DeliveryScreen}
-            options={{ tabBarLabel: 'BOYS' }}
-          />
-          <Tab.Screen
-            name="Schedule"
-            component={ScheduleScreen}
-            options={{ tabBarLabel: 'SCHEDULE' }}
+            name="More"
+            component={MoreScreen}
+            options={{ tabBarLabel: 'MORE' }}
           />
         </>
       )}
