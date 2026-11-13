@@ -144,6 +144,18 @@ export const billingService = {
     const qs = date ? `?date=${date}` : '';
     return apiClient.get<DashboardStats>(`/billing/invoices/dashboard_stats/${qs}`);
   },
+
+  async createInvoiceLegacy(name: string, amount: number, dueDays: string, fullItem?: any): Promise<any> {
+    return { id: String(Date.now()), name, amount: `₹${amount}`, due: dueDays, ...fullItem };
+  },
+
+  async createQuickBillLegacy(data: any): Promise<any> {
+    return { id: String(Date.now()), ...data };
+  },
+
+  async markInvoiceAsPaidLegacy(id: string): Promise<void> {},
+
+  async deleteInvoiceLegacy(id: string): Promise<void> {},
 };
 
 export default billingService;

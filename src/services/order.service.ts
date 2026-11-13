@@ -13,31 +13,89 @@ export interface BackendOrder {
   id: number;
   customer: number;
   customer_name: string;
+  company?: number | null;
+  company_name?: string | null;
   status: 'pending' | 'accepted' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
   total_amount: string;
   delivery_address: string;
   notes?: string;
+  has_invoice?: boolean;
+  invoice_number?: string | null;
   created_at: string;
   updated_at: string;
   items: OrderItemDetail[];
 }
 
 export interface CreateOrderPayload {
+  company_id?: number | null;
   delivery_address: string;
   notes?: string;
   items: Array<{
     product_id: number;
     quantity: number;
+    requested_price?: number | string;
+    discount_reason?: string;
   }>;
+}
+
+export interface InvoicePreviewItem {
+  product_id: number;
+  product_name: string;
+  ordered_quantity: number;
+  delivered_quantity: number;
+  has_discrepancy: boolean;
+  standard_rate: string;
+  approved_discount_per_unit: string;
+  effective_rate: string;
+  recommended_quantity: number;
+  line_total: string;
+}
+
+export interface OrderInvoicePreview {
+  order_id: number;
+  company: {
+    id: number | null;
+    name: string;
+    phone: string;
+  };
+  has_existing_invoice: boolean;
+  existing_invoice_number?: string | null;
+  delivery_status: string;
+  items: InvoicePreviewItem[];
+  subtotal: string;
+  discount_total: string;
+  grand_total: string;
+}
+
+export interface PriceOverrideRequest {
+  id: number;
+  order: number;
+  order_item: number;
+  product: number;
+  product_name: string;
+  standard_price: string;
+  requested_price: string;
+  discount_amount: string;
+  quantity: number;
+  reason: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  requested_by_name: string;
+  reviewed_by_name?: string | null;
+  decision_timestamp?: string | null;
+  review_notes?: string;
+  created_at: string;
 }
 
 export const orderService = {
   /**
    * Fetch orders (scoped by role in backend)
    */
-  async getOrders(params?: { status?: string }): Promise<BackendOrder[]> {
-    const qs = params?.status ? `?status=${params.status}` : '';
-    return apiClient.get<BackendOrder[]>(`/orders/${qs}`);
+  async getOrders(params?: { status?: string; company?: number | string }): Promise<BackendOrder[]> {
+    const query = new URLSearchParams();
+    if (params?.status) query.append('status', params.status);
+    if (params?.company) query.append('company', String(params.company));
+    const qs = query.toString();
+    return apiClient.get<BackendOrder[]>(`/orders/${qs ? `?${qs}` : ''}`);
   },
 
   /**
@@ -55,119 +113,51 @@ export const orderService = {
   },
 
   /**
-   * Update order status
-   * - Customer: can only set status to 'cancelled' if order is 'pending'
-   * - Owner: progresses lifecycle ('accepted' -> 'preparing' -> 'out_for_delivery' -> 'delivered')
+   * Update order status following state machine
    */
-  async updateOrderStatus(id: number | string, status: BackendOrder['status']): Promise<BackendOrder> {
-    return apiClient.patch<BackendOrder>(`/orders/${id}/`, { status });
+  async updateOrderStatus(
+    orderId: number | string,
+    status: BackendOrder['status'],
+  ): Promise<BackendOrder> {
+    return apiClient.patch<BackendOrder>(`/orders/${orderId}/`, { status });
   },
 
   /**
-   * Delete order (Owner only)
+   * Owner invoice preview showing ordered vs. delivered discrepancies and resolved rates
    */
-  async deleteOrder(id: number | string): Promise<void> {
-    return apiClient.delete<void>(`/orders/${id}/`);
+  async getInvoicePreview(orderId: number | string): Promise<OrderInvoicePreview> {
+    return apiClient.get<OrderInvoicePreview>(`/orders/${orderId}/invoice-preview/`);
   },
 
-  // Legacy/Compatibility methods for offline AppContext invoice management
-  async getInvoices(initialData?: any[]): Promise<any[]> {
-    return apiClient.get<any[]>('/orders/invoices', initialData || []);
-  },
-
-  async createInvoice(
-    name: string,
-    amount: number,
-    dueDays: string,
-    fullItem?: any,
+  /**
+   * Manual Owner Invoice Confirmation (Never called automatically)
+   */
+  async generateManualInvoice(
+    orderId: number | string,
+    payload?: {
+      items?: Array<{ product_id: number; quantity: number }>;
+      notes?: string;
+    },
   ): Promise<any> {
-    const invId = fullItem?.id || `inv-${Date.now()}`;
-    const invNo =
-      fullItem?.invoiceNo ||
-      `INV-2026-${Math.floor(100 + Math.random() * 900)}`;
-
-    const newInv = {
-      id: invId,
-      invoiceNo: invNo,
-      name,
-      customerAddress: fullItem?.customerAddress || 'Local Market Area',
-      customerPhone: fullItem?.customerPhone || '+91 98765 00000',
-      amount: `₹${amount.toLocaleString()}`,
-      numericAmount: amount,
-      due: dueDays,
-      date: fullItem?.date || 'Today',
-      isOverdue: dueDays.toLowerCase().includes('overdue'),
-      status: dueDays.toLowerCase().includes('overdue') ? 'OVERDUE' : 'PENDING',
-      items: fullItem?.items || [
-        { id: '1', name: 'Chai Supplies Bundle', qty: 1, price: amount },
-      ],
-      subtotal: fullItem?.subtotal || amount,
-      tax: fullItem?.tax || 0,
-      notes: fullItem?.notes || 'Thank you for your business with ChaiFlow!',
-    };
-
-    return apiClient.post<any>('/orders/invoices', newInv, newInv);
+    return apiClient.post(`/orders/${orderId}/generate-invoice/`, payload || {});
   },
 
-  async createQuickBill(billData: any): Promise<any> {
-    const invId = `inv-${Date.now()}`;
-    let invNo = `QBILL-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    try {
-      const itemsPayload = (billData.items || []).map((it: any) => ({
-        product_name: it.name || 'Tea Item',
-        unit_price: Number(it.price) || 0,
-        quantity: Number(it.qty) || 1,
-      }));
-
-      const res = await apiClient.post<any>('/billing/invoices/', {
-        customer_name: billData.name || 'Walk-in Customer',
-        customer_phone: billData.customerPhone || '+91 9999999999',
-        notes: billData.notes || 'Counter Quick Bill',
-        items: itemsPayload.length > 0 ? itemsPayload : [{ product_name: 'Chai Supplies', unit_price: billData.numericAmount || 100, quantity: 1 }],
-        initial_payment_amount: billData.status === 'PAID' ? billData.numericAmount : 0,
-        initial_payment_method: 'cash',
-      });
-
-      if (res?.invoice_number) {
-        invNo = res.invoice_number;
-      }
-    } catch (e) {
-      console.log('QuickBill backend API sync fallback:', e);
-    }
-
-    const newInv = {
-      id: invId,
-      invoiceNo: invNo,
-      name: billData.name || 'Walk-in Customer',
-      customerAddress: billData.customerAddress || 'Counter Walk-in',
-      customerPhone: billData.customerPhone || '',
-      amount: `₹${(billData.numericAmount || 0).toLocaleString()}`,
-      numericAmount: billData.numericAmount || 0,
-      due: billData.due || 'Paid on Spot',
-      date: billData.date || 'Today',
-      isOverdue: false,
-      status: billData.status || 'PAID',
-      items: billData.items || [],
-      subtotal: billData.subtotal || billData.numericAmount || 0,
-      tax: billData.tax || 0,
-      notes: billData.notes || 'Counter Quick Bill',
-    };
-
-    return newInv;
+  /**
+   * List price override requests
+   */
+  async getPriceOverrides(status?: string): Promise<PriceOverrideRequest[]> {
+    const qs = status ? `?status=${status}` : '';
+    return apiClient.get<PriceOverrideRequest[]>(`/orders/price-overrides/${qs}`);
   },
 
-  async markInvoiceAsPaid(id: string): Promise<{ success: boolean; id: string }> {
-    return apiClient.put(`/orders/invoices/${id}/pay`, {}, {
-      success: true,
-      id,
-    });
-  },
-
-  async deleteInvoice(id: string): Promise<{ success: boolean }> {
-    return apiClient.delete<{ success: boolean }>(`/orders/invoices/${id}`, {
-      success: true,
-    });
+  /**
+   * Owner approve or reject price override request
+   */
+  async reviewPriceOverride(
+    requestId: number | string,
+    data: { decision: 'APPROVED' | 'REJECTED'; notes?: string },
+  ): Promise<PriceOverrideRequest> {
+    return apiClient.post<PriceOverrideRequest>(`/orders/price-overrides/${requestId}/review/`, data);
   },
 };
 
