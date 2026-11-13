@@ -2,26 +2,14 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
+import { useApp } from '../../context/AppContext';
 
 export default function RevenueCard() {
   const navigation = useNavigation<any>();
+  const { totalRevenue, revenueGrowth } = useApp();
 
   return (
     <View style={styles.container}>
-      <View style={styles.overviewHeader}>
-        <View style={styles.liveTagRow}>
-          <View style={styles.dot} />
-          <Text style={styles.liveText}>LIVE OVERVIEW</Text>
-        </View>
-        <Text style={styles.greetingTitle}>Good Morning, Admin</Text>
-        <Text style={styles.greetingSub}>
-          Your chai delivery network is humming. Here's the pulse for today.
-        </Text>
-        <View style={styles.watermarkContainer}>
-          <Ionicons name="cafe-outline" size={72} color="#F2E6DD" />
-        </View>
-      </View>
-
       <TouchableOpacity
         activeOpacity={0.9}
         style={styles.card}
@@ -29,9 +17,9 @@ export default function RevenueCard() {
       >
         <Text style={styles.cardTitle}>TOTAL REVENUE (MTD)</Text>
         <View style={styles.cardValueRow}>
-          <Text style={styles.amount}>₹42,850</Text>
+          <Text style={styles.amount}>₹{totalRevenue.toLocaleString()}</Text>
           <View style={styles.badge}>
-            <Text style={styles.badgeText}>+12%</Text>
+            <Text style={styles.badgeText}>{revenueGrowth}</Text>
           </View>
 
           <View style={styles.reportBtnLink}>
@@ -48,46 +36,6 @@ export default function RevenueCard() {
 const styles = StyleSheet.create({
   container: {
     marginBottom: 16,
-  },
-  overviewHeader: {
-    position: 'relative',
-    marginBottom: 16,
-    paddingRight: 60,
-  },
-  liveTagRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  dot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#963819',
-    marginRight: 6,
-  },
-  liveText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#8C331A',
-    letterSpacing: 0.8,
-  },
-  greetingTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#2C201A',
-    marginBottom: 4,
-  },
-  greetingSub: {
-    fontSize: 13,
-    color: '#7C6E65',
-    lineHeight: 18,
-  },
-  watermarkContainer: {
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    opacity: 0.8,
   },
   card: {
     backgroundColor: '#963819',

@@ -5,8 +5,10 @@ export interface InvoiceCardProps {
   name: string;
   amount: string;
   due: string;
+  invoiceNo?: string;
   initials?: string;
   isOverdue?: boolean;
+  status?: string;
   onPress?: () => void;
 }
 
@@ -14,8 +16,10 @@ export default function InvoiceCard({
   name,
   amount,
   due,
+  invoiceNo,
   initials,
   isOverdue = false,
+  status,
   onPress,
 }: InvoiceCardProps) {
   const displayInitials =
@@ -27,18 +31,21 @@ export default function InvoiceCard({
       .toUpperCase()
       .slice(0, 2);
 
-  const overdue = isOverdue || due.toLowerCase().includes('overdue');
+  const isPaid = status === 'PAID' || status === 'paid';
+  const overdue = !isPaid && (isOverdue || due.toLowerCase().includes('overdue'));
+
+  const subtitleText = invoiceNo ? `${invoiceNo} • ${due}` : due;
 
   return (
     <Card
       title={name}
-      subtitle={due}
+      subtitle={subtitleText}
       initials={displayInitials}
       amount={amount}
-      amountColor="#602816"
-      badge={overdue ? 'OVERDUE' : undefined}
-      badgeBgColor="#FEE2E2"
-      badgeTextColor="#A62B2B"
+      amountColor={isPaid ? '#059669' : '#8C331A'}
+      badge={isPaid ? 'PAID' : overdue ? 'OVERDUE' : 'PENDING'}
+      badgeBgColor={isPaid ? '#ECFDF5' : overdue ? '#FEE2E2' : '#FFFBEB'}
+      badgeTextColor={isPaid ? '#059669' : overdue ? '#DC2626' : '#D97706'}
       onPress={onPress}
     />
   );

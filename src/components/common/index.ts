@@ -9,3 +9,4 @@ export { default as Loader } from './Loader';
 export { default as ScreenStateView, type ScreenState } from './ScreenStateView';
 export { default as SearchBar, type SearchBarProps } from './SearchBar';
 export { default as CustomModal, default as Modal, type CustomModalProps } from './CustomModal';
+export { default as CustomDialog, type CustomDialogProps, type DialogButton, type DialogType } from './CustomDialog';
