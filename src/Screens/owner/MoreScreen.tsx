@@ -46,6 +46,20 @@ export default function MoreScreen() {
           onPress: () => navigation.navigate('ProductDetail', { mode: 'add' }),
         },
         {
+          id: 'invoices',
+          title: 'Invoice History & PDFs',
+          subtitle: 'All daily invoices, receipts & A4 downloads',
+          icon: 'receipt-outline',
+          onPress: () => navigation.navigate('Invoices'),
+        },
+        {
+          id: 'customers',
+          title: 'Retail & Walk-in Customers',
+          subtitle: 'Direct customer contact list & credit sales',
+          icon: 'people-outline',
+          onPress: () => navigation.navigate('Customers'),
+        },
+        {
           id: 'reports',
           title: 'Financial Reports',
           subtitle: 'Audit revenue, MTD & daily collections',

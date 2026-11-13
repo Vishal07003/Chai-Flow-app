@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   View,
@@ -7,272 +7,318 @@ import {
   FlatList,
   TextInput,
   RefreshControl,
+  ActivityIndicator,
+  Modal,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header, EmptyState } from '../../components/common';
-import { useApp, InvoiceItem } from '../../context/AppContext';
+import orderService, { BackendOrder, OrderInvoicePreview } from '../../services/order.service';
+
+const tabs = ['ALL', 'PENDING', 'ACCEPTED', 'OUT_FOR_DELIVERY', 'DELIVERED'];
 
 export default function OrdersScreen({ navigation }: any) {
-  const { invoices, customers } = useApp();
+  const [orders, setOrders] = useState<BackendOrder[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<string>('ALL');
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'ALL' | 'PENDING' | 'DELIVERED'>(
-    'ALL',
-  );
-  const [refreshing, setRefreshing] = useState(false);
+  // Manual Invoice Preview & Generation State
+  const [selectedOrder, setSelectedOrder] = useState<BackendOrder | null>(null);
+  const [previewLoading, setPreviewLoading] = useState<boolean>(false);
+  const [invoicePreview, setInvoicePreview] = useState<OrderInvoicePreview | null>(null);
+  const [previewModalVisible, setPreviewModalVisible] = useState<boolean>(false);
+  const [generating, setGenerating] = useState<boolean>(false);
 
-  const onRefresh = React.useCallback(() => {
-    setRefreshing(true);
-    setTimeout(() => {
+  const fetchOrders = useCallback(async () => {
+    try {
+      const data = await orderService.getOrders();
+      setOrders(data || []);
+    } catch (err: any) {
+      console.log('Error fetching orders:', err);
+    } finally {
+      setLoading(false);
       setRefreshing(false);
-    }, 1000);
+    }
   }, []);
 
-  // Filtered list
+  useEffect(() => {
+    fetchOrders();
+  }, [fetchOrders]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchOrders();
+  }, [fetchOrders]);
+
   const filteredOrders = useMemo(() => {
-    let list = [...invoices];
+    return orders.filter(o => {
+      const matchesTab =
+        activeTab === 'ALL' || o.status.toUpperCase() === activeTab;
+      const q = searchQuery.toLowerCase().trim();
+      const matchesQuery =
+        !q ||
+        o.customer_name?.toLowerCase().includes(q) ||
+        o.company_name?.toLowerCase().includes(q) ||
+        String(o.id).includes(q) ||
+        o.delivery_address?.toLowerCase().includes(q);
 
-    if (activeTab === 'PENDING') {
-      list = list.filter(i => (i.deliveryStatus || 'Pending') !== 'Delivered');
-    } else if (activeTab === 'DELIVERED') {
-      list = list.filter(i => i.deliveryStatus === 'Delivered');
+      return matchesTab && matchesQuery;
+    });
+  }, [orders, activeTab, searchQuery]);
+
+  // Open Invoice Preview Modal (Owner review before generating official invoice)
+  const handleOpenInvoicePreview = async (order: BackendOrder) => {
+    try {
+      setSelectedOrder(order);
+      setPreviewLoading(true);
+      setPreviewModalVisible(true);
+      const preview = await orderService.getInvoicePreview(order.id);
+      setInvoicePreview(preview);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to load invoice preview.');
+      setPreviewModalVisible(false);
+    } finally {
+      setPreviewLoading(false);
     }
+  };
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(
-        i =>
-          i.name.toLowerCase().includes(q) ||
-          i.amount.toLowerCase().includes(q) ||
-          (i.invoiceNo && i.invoiceNo.toLowerCase().includes(q)) ||
-          (i.deliveryPartnerName &&
-            i.deliveryPartnerName.toLowerCase().includes(q)),
+  // Confirm manual invoice generation
+  const handleConfirmGenerateInvoice = async () => {
+    if (!selectedOrder) return;
+
+    try {
+      setGenerating(true);
+      const result = await orderService.generateManualInvoice(selectedOrder.id);
+      setPreviewModalVisible(false);
+      fetchOrders();
+      Alert.alert(
+        'Invoice Created',
+        `Official Invoice #${result.invoice_number || 'Generated'} has been issued and debited to company ledger.`,
       );
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to generate invoice.');
+    } finally {
+      setGenerating(false);
     }
+  };
 
-    return list;
-  }, [invoices, activeTab, searchQuery]);
-
-  // Order statistics: "X open · Y unpaid"
-  const openOrdersCount = useMemo(() => {
-    return invoices.filter(i => (i.deliveryStatus || 'Pending') !== 'Delivered')
-      .length;
-  }, [invoices]);
-
-  const unpaidOrdersCount = useMemo(() => {
-    return invoices.filter(i => i.status !== 'PAID').length;
-  }, [invoices]);
-
-  const renderOrderItem = ({ item }: { item: InvoiceItem }) => {
-    const isPaid = item.status === 'PAID';
-    const isOverdue = item.isOverdue || item.status === 'OVERDUE';
-    const delStatus =
-      item.deliveryStatus || (item.status === 'PAID' ? 'Delivered' : 'Pending');
-    const partnerName = item.deliveryPartnerName || 'Rahul Sharma';
-    const orderIdDisplay = item.invoiceNo || `ORD-${item.id}`;
+  const renderOrderItem = ({ item }: { item: BackendOrder }) => {
+    const totalNum = parseFloat(item.total_amount) || 0;
+    const hasInvoice = item.has_invoice;
+    const isDelivered = item.status === 'delivered';
 
     return (
-      <TouchableOpacity
-        activeOpacity={0.88}
-        style={styles.card}
-        onPress={() => navigation.navigate('InvoiceDetail', { invoice: item })}
-      >
-        {/* Card Header Row */}
+      <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <View style={styles.orderIdBadge}>
-            <Ionicons name="receipt-outline" size={14} color="#A52A0A" />
-            <Text style={styles.orderIdText}>{orderIdDisplay}</Text>
+          <View>
+            <Text style={styles.orderIdText}>Order #{item.id}</Text>
+            <Text style={styles.clientName}>
+              {item.company_name || item.customer_name}
+            </Text>
           </View>
-          <Ionicons name="chevron-forward" size={18} color="#A09489" />
+          <View style={styles.statusPill}>
+            <Text style={styles.statusPillText}>{item.status.toUpperCase()}</Text>
+          </View>
         </View>
 
-        {/* Customer & Partner Info */}
         <View style={styles.cardBody}>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => {
-              const matched = customers.find(
-                c => c.name.toLowerCase() === item.name.toLowerCase(),
-              ) || {
-                id: `c_${item.id}`,
-                name: item.name,
-                address: item.customerAddress || 'Local Market Area',
-                amount: item.numericAmount || 0,
-                deliveryStatus: 'Active Customer',
-                hasDot: true,
-                isOverdue: item.isOverdue || false,
-              };
-              navigation.navigate('CustomerDetail', { customer: matched });
-            }}
-          >
-            <Text style={styles.customerName}>{item.name}</Text>
-          </TouchableOpacity>
-          <View style={styles.partnerRow}>
-            <Ionicons name="bicycle-outline" size={14} color="#6E6259" />
-            <Text style={styles.partnerText}>Partner: {partnerName}</Text>
-          </View>
+          <Text style={styles.addressText} numberOfLines={1}>
+            <Ionicons name="location-outline" size={13} color="#8E8278" />{' '}
+            {item.delivery_address || 'Shop delivery'}
+          </Text>
+          <Text style={styles.itemsSummary}>
+            {item.items && item.items.length > 0
+              ? item.items.map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`).join(' • ')
+              : 'Supply Delivery'}
+          </Text>
         </View>
 
-        {/* Badges and Price Footer */}
         <View style={styles.cardFooter}>
-          <View style={styles.badgesRow}>
-            {/* Delivery Status Badge */}
-            <View
-              style={[
-                styles.badge,
-                delStatus === 'Delivered'
-                  ? styles.badgeDelivered
-                  : delStatus === 'Out for delivery'
-                  ? styles.badgeTransit
-                  : styles.badgePending,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.badgeText,
-                  delStatus === 'Delivered'
-                    ? styles.badgeTextDelivered
-                    : delStatus === 'Out for delivery'
-                    ? styles.badgeTextTransit
-                    : styles.badgeTextPending,
-                ]}
-              >
-                {delStatus}
-              </Text>
-            </View>
-
-            {/* Payment Status Badge */}
-            <View
-              style={[
-                styles.badge,
-                isPaid
-                  ? styles.badgePaid
-                  : isOverdue
-                  ? styles.badgeOverdue
-                  : styles.badgeUnpaid,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.badgeText,
-                  isPaid
-                    ? styles.badgeTextPaid
-                    : isOverdue
-                    ? styles.badgeTextOverdue
-                    : styles.badgeTextUnpaid,
-                ]}
-              >
-                {isPaid ? 'Paid' : isOverdue ? 'Overdue' : 'Unpaid'}
-              </Text>
-            </View>
+          <View>
+            <Text style={styles.amountLabel}>Total Billable</Text>
+            <Text style={styles.amountValue}>₹{totalNum.toLocaleString()}</Text>
           </View>
 
-          <Text style={styles.totalAmount}>{item.amount}</Text>
+          {hasInvoice ? (
+            <View style={styles.invoicedBadge}>
+              <Ionicons name="checkmark-done" size={14} color="#059669" />
+              <Text style={styles.invoicedBadgeText}>
+                {item.invoice_number || 'INVOICED'}
+              </Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.generateBtn}
+              onPress={() => handleOpenInvoicePreview(item)}
+            >
+              <Ionicons name="receipt-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+              <Text style={styles.generateBtnText}>Generate Invoice</Text>
+            </TouchableOpacity>
+          )}
         </View>
-      </TouchableOpacity>
+      </View>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Header */}
-      <Header title="Orders" showBack={false} showNotification={false} />
-
-      {/* Hero Stats & Create Order Action Bar */}
-      <View style={styles.statsBar}>
-        <View>
-          <Text style={styles.statsSubtitle}>TOTAL STATS</Text>
-          <Text style={styles.statsText}>
-            {openOrdersCount} open · {unpaidOrdersCount} unpaid
-          </Text>
-        </View>
-
-        <TouchableOpacity
-          activeOpacity={0.85}
-          style={styles.createBtn}
-          onPress={() => navigation.navigate('CreateInvoice')}
-        >
-          <Ionicons name="add-circle" size={18} color="#FFFFFF" />
-          <Text style={styles.createBtnText}>Create Order</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Filter Tabs */}
-      <View style={styles.tabsRow}>
-        {[
-          { id: 'ALL', label: `All (${invoices.length})` },
-          { id: 'PENDING', label: `Open (${openOrdersCount})` },
-          {
-            id: 'DELIVERED',
-            label: `Delivered (${invoices.length - openOrdersCount})`,
-          },
-        ].map(tab => (
-          <TouchableOpacity
-            key={tab.id}
-            activeOpacity={0.8}
-            style={[
-              styles.tabChip,
-              activeTab === tab.id && styles.tabChipActive,
-            ]}
-            onPress={() => setActiveTab(tab.id as any)}
-          >
-            <Text
-              style={[
-                styles.tabChipText,
-                activeTab === tab.id && styles.tabChipTextActive,
-              ]}
-            >
-              {tab.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <Header
+        title="Commercial Orders"
+        showBack={false}
+      />
 
       {/* Search Input */}
-      <View style={styles.searchBox}>
-        <Ionicons
-          name="search-outline"
-          size={18}
-          color="#8A7A70"
-          style={styles.searchIcon}
-        />
+      <View style={styles.searchBar}>
+        <Ionicons name="search-outline" size={18} color="#8E8278" style={{ marginRight: 8 }} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search customer, order ID, or partner..."
-          placeholderTextColor="#A09489"
+          placeholder="Search by order ID, company, customer or address..."
+          placeholderTextColor="#8E8278"
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
-        {searchQuery !== '' && (
+        {searchQuery ? (
           <TouchableOpacity onPress={() => setSearchQuery('')}>
-            <Ionicons name="close-circle" size={18} color="#999" />
+            <Ionicons name="close-circle" size={18} color="#8E8278" />
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
 
-      {/* Orders List with FlatList */}
-      <FlatList
-        data={filteredOrders}
-        keyExtractor={item => item.id}
-        renderItem={renderOrderItem}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="#A52A0A"
-            colors={['#A52A0A']}
-          />
-        }
-        ListEmptyComponent={
-          <EmptyState
-            title="No Orders Found"
-            subtitle="No orders match your current search or filter query."
-          />
-        }
-      />
+      {/* Filter Tabs */}
+      <View style={styles.tabContainer}>
+        <FlatList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          data={tabs}
+          keyExtractor={t => t}
+          renderItem={({ item: tab }) => (
+            <TouchableOpacity
+              style={[styles.tabChip, activeTab === tab && styles.tabChipActive]}
+              onPress={() => setActiveTab(tab)}
+            >
+              <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
+                {tab.replace(/_/g, ' ')}
+              </Text>
+            </TouchableOpacity>
+          )}
+        />
+      </View>
+
+      {/* Orders List */}
+      {loading ? (
+        <View style={styles.centerBox}>
+          <ActivityIndicator size="large" color="#8C331A" />
+        </View>
+      ) : filteredOrders.length === 0 ? (
+        <EmptyState
+          title="No Orders Found"
+          subtitle={searchQuery ? "No orders match your search." : "No orders in this category."}
+        />
+      ) : (
+        <FlatList
+          data={filteredOrders}
+          keyExtractor={item => String(item.id)}
+          renderItem={renderOrderItem}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#8C331A']} />
+          }
+        />
+      )}
+
+      {/* Manual Invoice Review Modal */}
+      <Modal visible={previewModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Manual Invoice Review</Text>
+                <Text style={styles.modalSubtitle}>Order #{selectedOrder?.id} • {selectedOrder?.company_name || selectedOrder?.customer_name}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setPreviewModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#2A2421" />
+              </TouchableOpacity>
+            </View>
+
+            {previewLoading ? (
+              <View style={[styles.centerBox, { height: 200 }]}>
+                <ActivityIndicator size="large" color="#8C331A" />
+                <Text style={{ marginTop: 10, color: '#8E8278' }}>Resolving company pricing & delivery actuals...</Text>
+              </View>
+            ) : invoicePreview ? (
+              <View style={styles.previewContent}>
+                <View style={styles.auditNotice}>
+                  <Ionicons name="shield-checkmark" size={16} color="#059669" style={{ marginRight: 6 }} />
+                  <Text style={styles.auditNoticeText}>Backend resolved rates and delivery discrepancies applied.</Text>
+                </View>
+
+                {/* Items Discrepancy Breakdown */}
+                <FlatList
+                  data={invoicePreview.items}
+                  keyExtractor={it => String(it.product_id)}
+                  style={{ maxHeight: 220, marginVertical: 10 }}
+                  renderItem={({ item: it }) => (
+                    <View style={styles.previewItemRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.previewItemName}>{it.product_name}</Text>
+                        <Text style={styles.previewItemQty}>
+                          Ordered: {it.ordered_quantity} • Delivered: {it.delivered_quantity}
+                        </Text>
+                        {it.has_discrepancy && (
+                          <Text style={styles.discrepancyAlert}>
+                            ⚠️ Discrepancy: Invoicing confirmed actuals ({it.recommended_quantity} units)
+                          </Text>
+                        )}
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={styles.previewItemPrice}>₹{it.line_total}</Text>
+                        <Text style={styles.previewItemRate}>@ ₹{it.effective_rate}/ea</Text>
+                      </View>
+                    </View>
+                  )}
+                />
+
+                {/* Financial Summary */}
+                <View style={styles.financialSummaryBox}>
+                  <View style={styles.sumRow}>
+                    <Text style={styles.sumLabel}>Subtotal</Text>
+                    <Text style={styles.sumValue}>₹{invoicePreview.subtotal}</Text>
+                  </View>
+                  {parseFloat(invoicePreview.discount_total) > 0 && (
+                    <View style={styles.sumRow}>
+                      <Text style={[styles.sumLabel, { color: '#059669' }]}>Approved Discount</Text>
+                      <Text style={[styles.sumValue, { color: '#059669' }]}>- ₹{invoicePreview.discount_total}</Text>
+                    </View>
+                  )}
+                  <View style={[styles.sumRow, { borderTopWidth: 1, borderTopColor: '#EFEAE4', paddingTop: 6, marginTop: 4 }]}>
+                    <Text style={styles.grandLabel}>Final Invoiced Total</Text>
+                    <Text style={styles.grandValue}>₹{invoicePreview.grand_total}</Text>
+                  </View>
+                </View>
+
+                {/* Confirm Button */}
+                <TouchableOpacity
+                  style={styles.confirmGenerateBtn}
+                  onPress={handleConfirmGenerateInvoice}
+                  disabled={generating}
+                >
+                  {generating ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.confirmGenerateBtnText}>Confirm & Issue Official Invoice</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -282,153 +328,104 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FAF8F5',
   },
-  statsBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 8,
-    padding: 16,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#EFECE9',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-  },
-  statsSubtitle: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#8A7A70',
-    letterSpacing: 0.8,
-  },
-  statsText: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#1F1511',
-    marginTop: 2,
-  },
-  createBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#A52A0A',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 14,
-    elevation: 2,
-  },
-  createBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
-    marginLeft: 6,
-  },
-  tabsRow: {
-    flexDirection: 'row',
-    marginHorizontal: 16,
-    marginVertical: 4,
-  },
-  tabChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    marginRight: 8,
-    borderWidth: 1,
-    borderColor: '#EFECE9',
-  },
-  tabChipActive: {
-    backgroundColor: '#A52A0A',
-    borderColor: '#A52A0A',
-  },
-  tabChipText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#6E6259',
-  },
-  tabChipTextActive: {
-    color: '#FFFFFF',
-  },
-  searchBox: {
+  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
-    marginVertical: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 14,
+    marginVertical: 10,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 44,
     borderWidth: 1,
-    borderColor: '#EFECE9',
-  },
-  searchIcon: {
-    marginRight: 8,
+    borderColor: '#EFEAE4',
   },
   searchInput: {
     flex: 1,
     fontSize: 13,
-    color: '#1F1511',
+    color: '#2A2421',
+  },
+  tabContainer: {
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  tabChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  tabChipActive: {
+    backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
+  },
+  tabText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8E8278',
+  },
+  tabTextActive: {
+    color: '#FFFFFF',
+  },
+  centerBox: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 90,
-    paddingTop: 4,
+    paddingBottom: 80,
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#EFECE9',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    borderColor: '#EFEAE4',
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  orderIdBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FDEBE4',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
+    alignItems: 'flex-start',
   },
   orderIdText: {
     fontSize: 12,
+    color: '#8E8278',
+    fontWeight: '700',
+  },
+  clientName: {
+    fontSize: 15,
     fontWeight: '800',
-    color: '#A52A0A',
-    marginLeft: 4,
+    color: '#2A2421',
+    marginTop: 2,
+  },
+  statusPill: {
+    backgroundColor: '#F5EBE6',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  statusPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#8C331A',
   },
   cardBody: {
-    marginBottom: 12,
+    marginVertical: 10,
   },
-  customerName: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#1F1511',
-  },
-  partnerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  partnerText: {
+  addressText: {
     fontSize: 12,
-    color: '#6E6259',
-    fontWeight: '600',
-    marginLeft: 4,
+    color: '#8E8278',
+    marginBottom: 4,
+  },
+  itemsSummary: {
+    fontSize: 13,
+    color: '#4B3F38',
+    fontWeight: '500',
   },
   cardFooter: {
     flexDirection: 'row',
@@ -436,61 +433,167 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#F3EFEA',
+    borderTopColor: '#FAF8F5',
   },
-  badgesRow: {
+  amountLabel: {
+    fontSize: 10,
+    color: '#8E8278',
+    textTransform: 'uppercase',
+  },
+  amountValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#2A2421',
+    marginTop: 1,
+  },
+  invoicedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  badge: {
+    backgroundColor: '#ECFDF5',
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderRadius: 8,
-    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
   },
-  badgePending: {
-    backgroundColor: '#FEF3C7',
-  },
-  badgeTransit: {
-    backgroundColor: '#E0F2FE',
-  },
-  badgeDelivered: {
-    backgroundColor: '#ECFDF5',
-  },
-  badgePaid: {
-    backgroundColor: '#ECFDF5',
-  },
-  badgeUnpaid: {
-    backgroundColor: '#FFFBEB',
-  },
-  badgeOverdue: {
-    backgroundColor: '#FEE2E2',
-  },
-  badgeText: {
+  invoicedBadgeText: {
     fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
+    marginLeft: 4,
+  },
+  generateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#8C331A',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  generateBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '85%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 18,
     fontWeight: '800',
+    color: '#2A2421',
   },
-  badgeTextPending: {
-    color: '#D97706',
+  modalSubtitle: {
+    fontSize: 12,
+    color: '#8E8278',
+    marginTop: 2,
   },
-  badgeTextTransit: {
-    color: '#0284C7',
+  previewContent: {
+    marginTop: 4,
   },
-  badgeTextDelivered: {
-    color: '#059669',
+  auditNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 8,
   },
-  badgeTextPaid: {
-    color: '#059669',
+  auditNoticeText: {
+    fontSize: 11,
+    color: '#065F46',
+    fontWeight: '600',
+    flex: 1,
   },
-  badgeTextUnpaid: {
-    color: '#B45309',
+  previewItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#FAF8F5',
   },
-  badgeTextOverdue: {
+  previewItemName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  previewItemQty: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  discrepancyAlert: {
+    fontSize: 11,
     color: '#DC2626',
+    fontWeight: '600',
+    marginTop: 2,
   },
-  totalAmount: {
+  previewItemPrice: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  previewItemRate: {
+    fontSize: 10,
+    color: '#8E8278',
+  },
+  financialSummaryBox: {
+    backgroundColor: '#FAF8F5',
+    borderRadius: 12,
+    padding: 12,
+    marginVertical: 12,
+  },
+  sumRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  sumLabel: {
+    fontSize: 12,
+    color: '#8E8278',
+  },
+  sumValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  grandLabel: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  grandValue: {
     fontSize: 16,
-    fontWeight: '900',
-    color: '#A52A0A',
+    fontWeight: '800',
+    color: '#8C331A',
+  },
+  confirmGenerateBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#8C331A',
+    borderRadius: 12,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  confirmGenerateBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
   },
 });
