@@ -22,7 +22,7 @@ export default function PaymentScreen() {
   });
 
   const closeDialog = () => setDialogConfig(prev => ({ ...prev, visible: false }));
-  const payments: DeliveryPayment[] = [
+  const payments: DeliveryPayment[] = []; // const mockDisabled = [
     {
       id: 'p1',
       customerName: 'Commercial Street Store',

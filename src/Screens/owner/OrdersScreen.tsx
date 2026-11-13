@@ -10,11 +10,14 @@ import {
   ActivityIndicator,
   Modal,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { Header, EmptyState } from '../../components/common';
+import { Header, EmptyState, FloatingButton } from '../../components/common';
 import orderService, { BackendOrder, OrderInvoicePreview } from '../../services/order.service';
+import companyService, { Company } from '../../services/company.service';
+import productService, { BackendProduct } from '../../services/product.service';
 
 const tabs = ['ALL', 'PENDING', 'ACCEPTED', 'OUT_FOR_DELIVERY', 'DELIVERED'];
 
@@ -32,6 +35,16 @@ export default function OrdersScreen({ navigation }: any) {
   const [previewModalVisible, setPreviewModalVisible] = useState<boolean>(false);
   const [generating, setGenerating] = useState<boolean>(false);
 
+  // New Commercial Order Creation State
+  const [createModalVisible, setCreateModalVisible] = useState<boolean>(false);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
+  const [products, setProducts] = useState<BackendProduct[]>([]);
+  const [deliveryAddress, setDeliveryAddress] = useState<string>('');
+  const [orderNotes, setOrderNotes] = useState<string>('');
+  const [selectedItems, setSelectedItems] = useState<{ [productId: number]: number }>({});
+  const [creatingOrder, setCreatingOrder] = useState<boolean>(false);
+
   const fetchOrders = useCallback(async () => {
     try {
       const data = await orderService.getOrders();
@@ -41,6 +54,33 @@ export default function OrdersScreen({ navigation }: any) {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  }, []);
+
+  const loadCreationData = useCallback(async () => {
+    try {
+      const [compList, prodList] = await Promise.all([
+        companyService.getCompanies(),
+        productService.getProductsList(),
+      ]);
+      setCompanies(compList || []);
+      // Map to backend products format
+      const mappedProds: BackendProduct[] = (prodList || []).map((p: any) => ({
+        id: Number(p.id),
+        name: p.name,
+        price: String(p.price || '0').replace(/[^0-9.]/g, ''),
+        description: p.description,
+        is_available: true,
+        category: p.category || 1,
+        created_at: p.created_at || new Date().toISOString(),
+      }));
+      setProducts(mappedProds);
+      if (compList && compList.length > 0) {
+        setSelectedCompanyId(compList[0].id);
+        setDeliveryAddress(compList[0].billing_address || '');
+      }
+    } catch (err) {
+      console.log('Error loading company/product data for order creation:', err);
     }
   }, []);
 
@@ -105,10 +145,65 @@ export default function OrdersScreen({ navigation }: any) {
     }
   };
 
+  // Open Order Creation Modal
+  const handleOpenCreateModal = () => {
+    loadCreationData();
+    setSelectedItems({});
+    setOrderNotes('');
+    setCreateModalVisible(true);
+  };
+
+  const handleItemQtyChange = (productId: number, delta: number) => {
+    setSelectedItems(prev => {
+      const current = prev[productId] || 0;
+      const next = Math.max(0, current + delta);
+      if (next === 0) {
+        const copy = { ...prev };
+        delete copy[productId];
+        return copy;
+      }
+      return { ...prev, [productId]: next };
+    });
+  };
+
+  const handleSelectCompany = (comp: Company) => {
+    setSelectedCompanyId(comp.id);
+    setDeliveryAddress(comp.billing_address || '');
+  };
+
+  const handleSubmitNewOrder = async () => {
+    const itemsPayload = Object.entries(selectedItems).map(([pid, qty]) => ({
+      product_id: Number(pid),
+      quantity: qty,
+    }));
+
+    if (itemsPayload.length === 0) {
+      Alert.alert('Empty Order', 'Please select at least one product quantity.');
+      return;
+    }
+
+    try {
+      setCreatingOrder(true);
+      await orderService.createOrder({
+        company_id: selectedCompanyId,
+        delivery_address: deliveryAddress.trim() || 'Direct Company Delivery',
+        notes: orderNotes.trim(),
+        items: itemsPayload,
+      });
+
+      setCreateModalVisible(false);
+      fetchOrders();
+      Alert.alert('Success', 'Commercial order created successfully. Applicable volume pricing resolved on backend.');
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to submit order.');
+    } finally {
+      setCreatingOrder(false);
+    }
+  };
+
   const renderOrderItem = ({ item }: { item: BackendOrder }) => {
     const totalNum = parseFloat(item.total_amount) || 0;
     const hasInvoice = item.has_invoice;
-    const isDelivered = item.status === 'delivered';
 
     return (
       <View style={styles.card}>
@@ -165,10 +260,7 @@ export default function OrdersScreen({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <Header
-        title="Commercial Orders"
-        showBack={false}
-      />
+      <Header title="Commercial Orders" showBack={false} />
 
       {/* Search Input */}
       <View style={styles.searchBar}>
@@ -228,6 +320,101 @@ export default function OrdersScreen({ navigation }: any) {
           }
         />
       )}
+
+      {/* Floating Button for New Commercial Order */}
+      <FloatingButton onPress={handleOpenCreateModal} />
+
+      {/* Commercial Order Creation Modal */}
+      <Modal visible={createModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>New Company Order</Text>
+              <TouchableOpacity onPress={() => setCreateModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#2A2421" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {/* Company Picker */}
+              <Text style={styles.fieldSectionLabel}>SELECT TARGET COMPANY</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                {companies.map(c => (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={[styles.compChip, selectedCompanyId === c.id && styles.compChipActive]}
+                    onPress={() => handleSelectCompany(c)}
+                  >
+                    <Text style={[styles.compChipText, selectedCompanyId === c.id && styles.compChipTextActive]}>
+                      {c.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Delivery Address *"
+                placeholderTextColor="#8E8278"
+                value={deliveryAddress}
+                onChangeText={setDeliveryAddress}
+              />
+
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Order Instructions / Notes (Optional)"
+                placeholderTextColor="#8E8278"
+                value={orderNotes}
+                onChangeText={setOrderNotes}
+              />
+
+              {/* Product Selection with Quantity Adjusters */}
+              <Text style={styles.fieldSectionLabel}>SELECT PRODUCTS & QUANTITIES</Text>
+              {products.map(p => {
+                const qty = selectedItems[p.id] || 0;
+                return (
+                  <View key={p.id} style={styles.prodRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.prodName}>{p.name}</Text>
+                      <Text style={styles.prodBaseRate}>Catalog Rate: ₹{p.price} (volume slab resolved on submit)</Text>
+                    </View>
+                    <View style={styles.qtyControl}>
+                      <TouchableOpacity
+                        style={styles.qtyBtn}
+                        onPress={() => handleItemQtyChange(p.id, -1)}
+                      >
+                        <Text style={styles.qtyBtnText}>-</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.qtyText}>{qty}</Text>
+                      <TouchableOpacity
+                        style={styles.qtyBtn}
+                        onPress={() => handleItemQtyChange(p.id, 1)}
+                      >
+                        <Text style={styles.qtyBtnText}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })}
+
+              <TouchableOpacity
+                style={styles.confirmGenerateBtn}
+                onPress={handleSubmitNewOrder}
+                disabled={creatingOrder}
+              >
+                {creatingOrder ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="cart" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.confirmGenerateBtnText}>Create Order (Auto-Calculate Pricing)</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Manual Invoice Review Modal */}
       <Modal visible={previewModalVisible} transparent animationType="slide">
@@ -503,6 +690,92 @@ const styles = StyleSheet.create({
     color: '#8E8278',
     marginTop: 2,
   },
+  fieldSectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#8E8278',
+    marginTop: 8,
+    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  compChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    marginRight: 6,
+  },
+  compChipActive: {
+    backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
+  },
+  compChipText: {
+    fontSize: 12,
+    color: '#8E8278',
+    fontWeight: '600',
+  },
+  compChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  modalInput: {
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 44,
+    marginBottom: 8,
+    fontSize: 13,
+    color: '#2A2421',
+  },
+  prodRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#FAF8F5',
+  },
+  prodName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  prodBaseRate: {
+    fontSize: 10,
+    color: '#8E8278',
+    marginTop: 1,
+  },
+  qtyControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  qtyBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  qtyBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  qtyText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#2A2421',
+    marginHorizontal: 10,
+    minWidth: 16,
+    textAlign: 'center',
+  },
   previewContent: {
     marginTop: 4,
   },
@@ -589,7 +862,8 @@ const styles = StyleSheet.create({
     height: 48,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 6,
+    marginTop: 12,
+    marginBottom: 16,
   },
   confirmGenerateBtnText: {
     color: '#FFFFFF',
