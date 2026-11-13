@@ -6,7 +6,6 @@ import ProfileScreen from '../Screens/owner/ProfileScreen';
 import CustomerDetailScreen from '../Screens/owner/CustomerDetailScreen';
 import AddLeadScreen from '../Screens/owner/AddLeadScreen';
 import InvoicesScreen from '../Screens/owner/InvoicesScreen';
-import CreateInvoiceScreen from '../Screens/owner/CreateInvoiceScreen';
 import QuickBillingScreen from '../Screens/owner/QuickBillingScreen';
 import InvoiceDetailScreen from '../Screens/owner/InvoiceDetailScreen';
 import ProductDetailScreen from '../Screens/owner/ProductDetailScreen';
@@ -99,7 +98,7 @@ export default function OwnerNavigator() {
       <Stack.Screen name="AddLead" component={AddLeadScreen} />
       <Stack.Screen name="Invoices" component={InvoicesScreen} />
       <Stack.Screen name="PendingPayments" component={PendingPaymentsScreen} />
-      <Stack.Screen name="CreateInvoice" component={CreateInvoiceScreen} />
+      <Stack.Screen name="CreateInvoice" component={QuickBillingScreen} />
       <Stack.Screen name="QuickBilling" component={QuickBillingScreen} />
       <Stack.Screen name="InvoiceDetail" component={InvoiceDetailScreen} />
       <Stack.Screen name="Products" component={ProductsScreen} />

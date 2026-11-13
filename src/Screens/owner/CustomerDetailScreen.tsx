@@ -1,432 +1,379 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   View,
   Text,
   TouchableOpacity,
-  Image,
   ScrollView,
-  Linking,
+  FlatList,
   Modal,
   TextInput,
-  KeyboardAvoidingView,
-  Platform,
-  Keyboard,
+  ActivityIndicator,
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Header from '../../components/common/Header';
-import { useApp, Customer } from '../../context/AppContext';
+import companyService, { Company, MonthlyLedgerStatement } from '../../services/company.service';
+import billingService, { BackendInvoice } from '../../services/billing.service';
 
 export default function CustomerDetailScreen({ route, navigation }: any) {
-  const { customers, collectPayment } = useApp();
+  const companyId = route.params?.companyId || route.params?.company?.id;
 
-  // Get passed customer or default to first customer
-  const passedCustomer: Customer | undefined = route.params?.customer;
-  const customerId = route.params?.customerId || passedCustomer?.id || '1';
+  const [company, setCompany] = useState<Company | null>(route.params?.company || null);
+  const [loading, setLoading] = useState<boolean>(!route.params?.company);
+  const [activeTab, setActiveTab] = useState<'Ledger' | 'Invoices' | 'Pricing' | 'Info'>('Ledger');
 
-  const customer =
-    customers.find(c => c.id === customerId) || passedCustomer || customers[0];
+  // Ledger Statement State
+  const [ledgerStatement, setLedgerStatement] = useState<MonthlyLedgerStatement | null>(null);
+  const [ledgerLoading, setLedgerLoading] = useState<boolean>(false);
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
-  const [activeTab, setActiveTab] = useState<'Orders' | 'Invoices' | 'Contact'>(
-    'Orders',
-  );
+  // Invoices List State
+  const [invoices, setInvoices] = useState<BackendInvoice[]>([]);
+  const [invoicesLoading, setInvoicesLoading] = useState<boolean>(false);
 
-  // Collect Payment Modal state
-  const [collectModalVisible, setCollectModalVisible] = useState(false);
-  const [collectAmount, setCollectAmount] = useState(
-    customer.amount.toString(),
-  );
-  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'UPI' | 'GPay' | 'PhonePe'>('UPI');
-  const [showToast, setShowToast] = useState(false);
+  // Payment Collection Modal
+  const [collectModalVisible, setCollectModalVisible] = useState<boolean>(false);
+  const [collectAmount, setCollectAmount] = useState<string>('');
+  const [paymentMethod, setPaymentMethod] = useState<string>('bank_transfer');
+  const [refNumber, setRefNumber] = useState<string>('');
+  const [submittingPayment, setSubmittingPayment] = useState<boolean>(false);
 
-  const initials =
-    customer.initials ||
-    customer.name
-      .split(' ')
-      .map(n => n[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
+  const fetchCompanyDetails = useCallback(async () => {
+    if (!companyId) return;
+    try {
+      setLoading(true);
+      const data = await companyService.getCompanyById(companyId);
+      setCompany(data);
+      setCollectAmount(data.current_outstanding || '0');
+    } catch (err: any) {
+      console.log('Error fetching company:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [companyId]);
 
-  // Mock Orders Data
-  const orders = [
-    {
-      id: 'ORD-2041',
-      items: 'Masala Chai · 40 cups',
-      date: '27 Jul, 07:10 AM',
-      amount: '₹480',
-      status: 'DELIVERED',
-    },
-    {
-      id: 'ORD-2032',
-      items: 'Masala Chai · 40 cups',
-      date: '26 Jul, 07:05 AM',
-      amount: '₹480',
-      status: 'DELIVERED',
-    },
-    {
-      id: 'ORD-2020',
-      items: 'Ginger Chai · 35 cups',
-      date: '25 Jul, 07:20 AM',
-      amount: '₹420',
-      status: 'DELIVERED',
-    },
-  ];
+  const fetchLedger = useCallback(async () => {
+    if (!companyId) return;
+    try {
+      setLedgerLoading(true);
+      const stmt = await companyService.getMonthlyLedger(companyId, selectedYear, selectedMonth);
+      setLedgerStatement(stmt);
+    } catch (err: any) {
+      console.log('Error fetching ledger statement:', err);
+    } finally {
+      setLedgerLoading(false);
+    }
+  }, [companyId, selectedYear, selectedMonth]);
 
-  const handleCall = () => {
-    Linking.openURL('tel:+919876543210');
-  };
+  const fetchInvoices = useCallback(async () => {
+    if (!companyId) return;
+    try {
+      setInvoicesLoading(true);
+      const invs = await billingService.getInvoices();
+      // Filter for this company
+      setInvoices(invs.filter(i => (i as any).company === companyId));
+    } catch (err: any) {
+      console.log('Error fetching invoices:', err);
+    } finally {
+      setInvoicesLoading(false);
+    }
+  }, [companyId]);
 
-  const handleMessage = () => {
-    const text = `Hello ${customer.name}, your ChaiFlow pending bill balance is ₹${customer.amount.toLocaleString()}. Please clear it at your earliest convenience. Thank you!`;
-    const encoded = encodeURIComponent(text);
-    const whatsappUrl = `whatsapp://send?phone=+919876543210&text=${encoded}`;
+  useEffect(() => {
+    fetchCompanyDetails();
+  }, [fetchCompanyDetails]);
 
-    Linking.canOpenURL(whatsappUrl)
-      .then(supported => {
-        if (supported) {
-          Linking.openURL(whatsappUrl);
-        } else {
-          Linking.openURL(`sms:+919876543210?body=${encoded}`);
-        }
-      })
-      .catch(() => {
-        Linking.openURL(`sms:+919876543210?body=${encoded}`);
+  useEffect(() => {
+    if (activeTab === 'Ledger') fetchLedger();
+    if (activeTab === 'Invoices') fetchInvoices();
+  }, [activeTab, fetchLedger, fetchInvoices]);
+
+  const handleCollectPayment = async () => {
+    const amt = parseFloat(collectAmount);
+    if (!amt || amt <= 0) {
+      Alert.alert('Invalid Amount', 'Please enter a valid payment amount greater than zero.');
+      return;
+    }
+
+    try {
+      setSubmittingPayment(true);
+      const res = await companyService.collectPayment(companyId, {
+        amount: amt,
+        method: paymentMethod,
+        reference_number: refNumber.trim(),
       });
+
+      setCollectModalVisible(false);
+      setRefNumber('');
+      fetchCompanyDetails();
+      fetchLedger();
+      Alert.alert(
+        'Payment Recorded',
+        `₹${res.allocated_to_invoices} allocated to invoices via FIFO.\nAdvance Credit: ₹${res.unallocated_advance_credit}`,
+      );
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to record payment.');
+    } finally {
+      setSubmittingPayment(false);
+    }
   };
 
-  const handleCollectSubmit = () => {
-    const amt = parseFloat(collectAmount) || customer.amount;
-    if (amt <= 0) return;
+  if (loading || !company) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Header title="Company Details" showBack />
+        <View style={styles.centerBox}>
+          <ActivityIndicator size="large" color="#8C331A" />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
-    collectPayment(customer.id, amt);
-    setCollectModalVisible(false);
-    setShowToast(true);
-
-    setTimeout(() => {
-      setShowToast(false);
-    }, 3000);
-  };
+  const outstandingNum = parseFloat(company.current_outstanding) || 0;
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Top Header */}
-      <Header title="Customer" showBack={true} />
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <Header title={company.name} showBack />
 
-      {/* Success Toast */}
-      {showToast && (
-        <View style={styles.toast}>
-          <Ionicons name="checkmark-circle" size={20} color="#FFFFFF" />
-          <Text style={styles.toastText}>
-            Payment of ₹{collectAmount} collected successfully!
-          </Text>
+      {/* Top Company Profile Card */}
+      <View style={styles.profileCard}>
+        <View style={styles.avatarRow}>
+          <View style={styles.avatarCircle}>
+            <Text style={styles.avatarText}>{company.name.substring(0, 2).toUpperCase()}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.companyTitle}>{company.name}</Text>
+            <Text style={styles.companySub}>{company.phone} • {company.billing_cycle} CYCLE</Text>
+            {company.gstin ? <Text style={styles.gstinText}>GSTIN: {company.gstin}</Text> : null}
+          </View>
+        </View>
+
+        {/* Financial KPI Row */}
+        <View style={styles.kpiRow}>
+          <View style={styles.kpiCol}>
+            <Text style={styles.kpiLabel}>Total Billed</Text>
+            <Text style={styles.kpiVal}>₹{parseFloat(company.total_billed || '0').toLocaleString()}</Text>
+          </View>
+          <View style={styles.kpiCol}>
+            <Text style={styles.kpiLabel}>Total Paid</Text>
+            <Text style={[styles.kpiVal, { color: '#059669' }]}>
+              ₹{parseFloat(company.total_paid || '0').toLocaleString()}
+            </Text>
+          </View>
+          <View style={styles.kpiCol}>
+            <Text style={styles.kpiLabel}>Current Outstanding</Text>
+            <Text style={[styles.kpiVal, { color: outstandingNum > 0 ? '#DC2626' : '#059669' }]}>
+              ₹{outstandingNum.toLocaleString()}
+            </Text>
+          </View>
+        </View>
+
+        <TouchableOpacity
+          style={styles.collectBtn}
+          onPress={() => setCollectModalVisible(true)}
+        >
+          <Ionicons name="card-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+          <Text style={styles.collectBtnText}>Collect Payment (FIFO Allocation)</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Segmented Tabs */}
+      <View style={styles.tabRow}>
+        {(['Ledger', 'Invoices', 'Pricing', 'Info'] as const).map(t => (
+          <TouchableOpacity
+            key={t}
+            style={[styles.tabBtn, activeTab === t && styles.tabBtnActive]}
+            onPress={() => setActiveTab(t)}
+          >
+            <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>{t}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Tab Contents */}
+      {activeTab === 'Ledger' && (
+        <View style={{ flex: 1, paddingHorizontal: 16 }}>
+          {ledgerLoading ? (
+            <View style={styles.centerBox}>
+              <ActivityIndicator size="large" color="#8C331A" />
+            </View>
+          ) : ledgerStatement ? (
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+              {/* Passbook Month Summary Banner */}
+              <View style={styles.statementBox}>
+                <View style={styles.stmtHeader}>
+                  <Text style={styles.stmtTitle}>MONTHLY PASSBOOK LEDGER</Text>
+                  <Text style={styles.stmtPeriod}>{ledgerStatement.period.start_date} to {ledgerStatement.period.end_date}</Text>
+                </View>
+                <View style={styles.stmtRow}>
+                  <Text style={styles.stmtLabel}>Opening Balance B/F</Text>
+                  <Text style={styles.stmtVal}>₹{ledgerStatement.summary.opening_balance}</Text>
+                </View>
+                <View style={styles.stmtRow}>
+                  <Text style={styles.stmtLabel}>Total Invoiced (Debits)</Text>
+                  <Text style={[styles.stmtVal, { color: '#DC2626' }]}>+ ₹{ledgerStatement.summary.total_debit}</Text>
+                </View>
+                <View style={styles.stmtRow}>
+                  <Text style={styles.stmtLabel}>Total Collections (Credits)</Text>
+                  <Text style={[styles.stmtVal, { color: '#059669' }]}>- ₹{ledgerStatement.summary.total_credit}</Text>
+                </View>
+                <View style={[styles.stmtRow, { borderTopWidth: 1, borderTopColor: '#EFEAE4', paddingTop: 6, marginTop: 4 }]}>
+                  <Text style={styles.stmtClosingLabel}>Closing Balance</Text>
+                  <Text style={styles.stmtClosingVal}>₹{ledgerStatement.summary.closing_balance}</Text>
+                </View>
+              </View>
+
+              {/* Chronological Passbook Transactions */}
+              <Text style={styles.sectionHeader}>TRANSACTION TIMELINE</Text>
+              {ledgerStatement.transactions.length === 0 ? (
+                <Text style={styles.emptyNote}>No ledger transactions recorded in this period.</Text>
+              ) : (
+                ledgerStatement.transactions.map((tx, idx) => {
+                  const isDebit = parseFloat(tx.debit) > 0;
+                  return (
+                    <View key={idx} style={styles.txRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.txRef}>{tx.reference_no}</Text>
+                        <Text style={styles.txDesc}>{tx.description}</Text>
+                        <Text style={styles.txDate}>{new Date(tx.date).toLocaleDateString()}</Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={[styles.txAmount, isDebit ? styles.txDebit : styles.txCredit]}>
+                          {isDebit ? `+ ₹${tx.debit}` : `- ₹${tx.credit}`}
+                        </Text>
+                        <Text style={styles.runningBal}>Bal: ₹{tx.running_balance}</Text>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+          ) : null}
         </View>
       )}
 
-      <KeyboardAwareScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Top Dark Red Customer Banner Card */}
-        <View style={styles.bannerCard}>
-          {/* Top Row: Avatar + Name + Address */}
-          <View style={styles.bannerTopRow}>
-            {customer.avatarUrl ? (
-              <Image
-                source={{ uri: customer.avatarUrl }}
-                style={styles.avatarImg}
-              />
-            ) : (
-              <View style={styles.avatarFallback}>
-                <Text style={styles.avatarText}>{initials}</Text>
-              </View>
-            )}
-
-            <View style={styles.bannerInfo}>
-              <Text style={styles.customerName}>{customer.name}</Text>
-              <Text style={styles.customerAddress} numberOfLines={1}>
-                {customer.address}
-              </Text>
+      {activeTab === 'Invoices' && (
+        <View style={{ flex: 1, paddingHorizontal: 16 }}>
+          {invoicesLoading ? (
+            <View style={styles.centerBox}>
+              <ActivityIndicator size="large" color="#8C331A" />
             </View>
-          </View>
-
-          {/* 3 Stat Boxes */}
-          <View style={styles.statsRow}>
-            <View style={styles.statBox}>
-              <Text style={styles.statLabel}>DUE</Text>
-              <Text style={styles.statValue}>
-                ₹{customer.amount.toLocaleString()}
-              </Text>
-            </View>
-
-            <View style={styles.statBox}>
-              <Text style={styles.statLabel}>CUPS/DAY</Text>
-              <Text style={styles.statValue}>40</Text>
-            </View>
-
-            <View style={styles.statBox}>
-              <Text style={styles.statLabel}>ORDERS</Text>
-              <Text style={styles.statValue}>3</Text>
-            </View>
-          </View>
-
-          {/* Action Buttons Row */}
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={styles.callBtn}
-              onPress={handleCall}
-            >
-              <Ionicons
-                name="call-outline"
-                size={18}
-                color="#8C331A"
-                style={{ marginRight: 6 }}
-              />
-              <Text style={styles.callText}>Call</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={styles.msgBtn}
-              onPress={handleMessage}
-            >
-              <Ionicons
-                name="chatbubble-outline"
-                size={18}
-                color="#FFFFFF"
-                style={{ marginRight: 6 }}
-              />
-              <Text style={styles.msgText}>Message</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Sub-Navigation Pill Tabs */}
-        <View style={styles.tabContainer}>
-          {(['Orders', 'Invoices', 'Contact'] as const).map(tab => {
-            const isActive = tab === activeTab;
-            return (
-              <TouchableOpacity
-                key={tab}
-                activeOpacity={0.8}
-                onPress={() => setActiveTab(tab)}
-                style={[
-                  styles.tabItem,
-                  isActive ? styles.activeTabItem : styles.inactiveTabItem,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.tabText,
-                    isActive ? styles.activeTabText : styles.inactiveTabText,
-                  ]}
-                >
-                  {tab}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* Tab Content */}
-        {activeTab === 'Orders' && (
-          <View style={styles.listSection}>
-            {orders.map(ord => (
-              <View key={ord.id} style={styles.orderCard}>
-                <View style={styles.orderHeaderRow}>
-                  <Text style={styles.orderId}>{ord.id}</Text>
-                  <Text style={styles.orderAmount}>{ord.amount}</Text>
-                </View>
-
-                <Text style={styles.orderItems}>{ord.items}</Text>
-
-                <View style={styles.orderFooterRow}>
-                  <View style={styles.dateRow}>
-                    <Ionicons
-                      name="calendar-outline"
-                      size={14}
-                      color="#8A7E75"
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={styles.dateText}>{ord.date}</Text>
+          ) : (
+            <FlatList
+              data={invoices}
+              keyExtractor={i => String(i.id)}
+              renderItem={({ item }) => (
+                <View style={styles.invoiceItemCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.invNumber}>{item.invoice_number}</Text>
+                    <Text style={styles.invDate}>{new Date(item.created_at).toLocaleDateString()}</Text>
                   </View>
-
-                  <View style={styles.deliveredBadge}>
-                    <Text style={styles.deliveredText}>{ord.status}</Text>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.invAmount}>₹{parseFloat(item.grand_total).toLocaleString()}</Text>
+                    <Text style={[styles.invStatus, { color: item.status === 'paid' ? '#059669' : '#DC2626' }]}>
+                      {item.status.toUpperCase()}
+                    </Text>
                   </View>
                 </View>
+              )}
+              ListEmptyComponent={<Text style={styles.emptyNote}>No invoices generated for this company.</Text>}
+            />
+          )}
+        </View>
+      )}
+
+      {activeTab === 'Pricing' && (
+        <ScrollView style={{ flex: 1, paddingHorizontal: 16 }}>
+          <Text style={styles.sectionHeader}>CONTRACTED QUANTITY SLABS</Text>
+          {company.contracted_prices && company.contracted_prices.length > 0 ? (
+            company.contracted_prices.map(p => (
+              <View key={p.id} style={styles.priceRow}>
+                <View>
+                  <Text style={styles.priceProdName}>{p.product_name}</Text>
+                  <Text style={styles.priceSlabText}>Min quantity slab: {p.min_quantity} units</Text>
+                </View>
+                <Text style={styles.contractPriceVal}>₹{p.custom_price} / unit</Text>
               </View>
-            ))}
+            ))
+          ) : (
+            <Text style={styles.emptyNote}>Standard catalog rates apply. No custom volume slabs configured.</Text>
+          )}
+        </ScrollView>
+      )}
+
+      {activeTab === 'Info' && (
+        <ScrollView style={{ flex: 1, paddingHorizontal: 16 }}>
+          <View style={styles.infoCard}>
+            <Text style={styles.infoLabel}>Billing Address</Text>
+            <Text style={styles.infoVal}>{company.billing_address || 'Not provided'}</Text>
+            <Text style={styles.infoLabel}>GSTIN</Text>
+            <Text style={styles.infoVal}>{company.gstin || 'Unregistered'}</Text>
+            <Text style={styles.infoLabel}>Payment Terms</Text>
+            <Text style={styles.infoVal}>{company.payment_terms_days} days</Text>
+            <Text style={styles.infoLabel}>Credit Limit</Text>
+            <Text style={styles.infoVal}>₹{parseFloat(company.credit_limit || '0').toLocaleString()}</Text>
           </View>
-        )}
-
-        {activeTab === 'Invoices' && (
-          <View style={styles.listSection}>
-            <View style={styles.orderCard}>
-              <View style={styles.orderHeaderRow}>
-                <Text style={styles.orderId}>INV-8901</Text>
-                <Text style={styles.orderAmount}>
-                  ₹{customer.amount.toLocaleString()}
-                </Text>
-              </View>
-
-              <Text style={styles.orderItems}>Current Pending Balance</Text>
-
-              <View style={styles.orderFooterRow}>
-                <View style={styles.dateRow}>
-                  <Ionicons
-                    name="alert-circle-outline"
-                    size={15}
-                    color="#D9381E"
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={{ color: '#D9381E', fontWeight: '700', fontSize: 13 }}>
-                    {customer.amount > 0 ? 'Due for Payment' : 'Paid in Full'}
-                  </Text>
-                </View>
-
-                {customer.amount > 0 && (
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    style={styles.payNowBtn}
-                    onPress={() => {
-                      setCollectAmount(customer.amount.toString());
-                      setCollectModalVisible(true);
-                    }}
-                  >
-                    <Text style={styles.payNowText}>Collect Payment</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-          </View>
-        )}
-
-        {activeTab === 'Contact' && (
-          <View style={styles.listSection}>
-            <View style={styles.contactCard}>
-              <TouchableOpacity style={styles.contactItem} onPress={handleCall}>
-                <Ionicons name="call-outline" size={18} color="#8C331A" />
-                <View style={styles.contactTextGroup}>
-                  <Text style={styles.contactLabel}>PHONE NUMBER</Text>
-                  <Text style={styles.contactValue}>+91 98765 43210</Text>
-                </View>
-              </TouchableOpacity>
-
-              <View style={styles.contactItem}>
-                <Ionicons name="location-outline" size={18} color="#8C331A" />
-                <View style={styles.contactTextGroup}>
-                  <Text style={styles.contactLabel}>DELIVERY ADDRESS</Text>
-                  <Text style={styles.contactValue}>{customer.address}</Text>
-                </View>
-              </View>
-
-              <View style={styles.contactItem}>
-                <Ionicons name="time-outline" size={18} color="#8C331A" />
-                <View style={styles.contactTextGroup}>
-                  <Text style={styles.contactLabel}>PREFERRED TIME</Text>
-                  <Text style={styles.contactValue}>07:00 AM - 08:00 AM</Text>
-                </View>
-              </View>
-
-              {/* Message Quick Button inside Contact Tab */}
-              <TouchableOpacity
-                style={styles.whatsappCardBtn}
-                onPress={handleMessage}
-              >
-                <Ionicons name="logo-whatsapp" size={18} color="#FFFFFF" />
-                <Text style={styles.whatsappBtnText}>Send WhatsApp Reminder</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-      </KeyboardAwareScrollView>
+        </ScrollView>
+      )}
 
       {/* Collect Payment Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={collectModalVisible}
-        onRequestClose={() => setCollectModalVisible(false)}
-      >
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={Keyboard.dismiss}
-          >
-            <TouchableOpacity activeOpacity={1} style={styles.modalContent}>
-              <ScrollView keyboardShouldPersistTaps="handled">
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Collect Payment</Text>
-                  <TouchableOpacity onPress={() => setCollectModalVisible(false)}>
-                    <Ionicons name="close" size={24} color="#666" />
-                  </TouchableOpacity>
-                </View>
+      <Modal visible={collectModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Collect Payment</Text>
+            <Text style={styles.modalSubtitle}>Auto-allocated to oldest invoices (FIFO) • Excess recorded as advance</Text>
 
-                <View style={styles.paymentCustomerBanner}>
-                  <Text style={styles.paymentCustomerName}>
-                    {customer.name}
-                  </Text>
-                  <Text style={styles.paymentDueText}>
-                    Total Due: ₹{customer.amount.toLocaleString()}
-                  </Text>
-                </View>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Amount to Collect *"
+              placeholderTextColor="#8E8278"
+              keyboardType="numeric"
+              value={collectAmount}
+              onChangeText={setCollectAmount}
+            />
 
-                <Text style={styles.inputLabel}>Collection Amount (₹)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter amount"
-                  placeholderTextColor="#999"
-                  keyboardType="numeric"
-                  value={collectAmount}
-                  onChangeText={setCollectAmount}
-                />
+            <TextInput
+              style={styles.modalInput}
+              placeholder="UTR / Cheque / Ref Number"
+              placeholderTextColor="#8E8278"
+              value={refNumber}
+              onChangeText={setRefNumber}
+            />
 
-                <Text style={styles.inputLabel}>Payment Method</Text>
-                <View style={styles.paymentMethodsRow}>
-                  {(['UPI', 'Cash', 'GPay', 'PhonePe'] as const).map(m => (
-                    <TouchableOpacity
-                      key={m}
-                      style={[
-                        styles.methodChip,
-                        paymentMethod === m && styles.methodChipActive,
-                      ]}
-                      onPress={() => setPaymentMethod(m)}
-                    >
-                      <Text
-                        style={[
-                          styles.methodText,
-                          paymentMethod === m && styles.methodTextActive,
-                        ]}
-                      >
-                        {m}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
+            <View style={styles.methodRow}>
+              {(['bank_transfer', 'online', 'cash', 'upi'] as const).map(m => (
                 <TouchableOpacity
-                  activeOpacity={0.8}
-                  style={styles.submitBtn}
-                  onPress={handleCollectSubmit}
+                  key={m}
+                  style={[styles.methodChip, paymentMethod === m && styles.methodChipActive]}
+                  onPress={() => setPaymentMethod(m)}
                 >
-                  <Text style={styles.submitBtnText}>
-                    Collect ₹{collectAmount || '0'}
+                  <Text style={[styles.methodText, paymentMethod === m && styles.methodTextActive]}>
+                    {m.replace('_', ' ').toUpperCase()}
                   </Text>
                 </TouchableOpacity>
-              </ScrollView>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              style={styles.confirmBtn}
+              onPress={handleCollectPayment}
+              disabled={submittingPayment}
+            >
+              {submittingPayment ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.confirmBtnText}>Record & Allocate Payment</Text>
+              )}
             </TouchableOpacity>
-          </TouchableOpacity>
-        </KeyboardAvoidingView>
+
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setCollectModalVisible(false)}>
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -437,405 +384,361 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FAF8F5',
   },
-  toast: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
-    right: 20,
-    backgroundColor: '#10B981',
-    borderRadius: 12,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    zIndex: 999,
-    elevation: 6,
-  },
-  toastText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
-    marginLeft: 10,
-  },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 4,
-    paddingBottom: 40,
-  },
-  backLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 8,
-  },
-  backText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#8C331A',
-  },
-
-  /* Banner Card */
-  bannerCard: {
-    backgroundColor: '#7A2E19',
-    borderRadius: 24,
-    padding: 20,
-    marginVertical: 6,
-    elevation: 4,
-    shadowColor: '#7A2E19',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
-  bannerTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 18,
-  },
-  avatarImg: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    borderWidth: 2,
-    borderColor: '#FFA085',
-    marginRight: 14,
-  },
-  avatarFallback: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: '#6B2310',
+  centerBox: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#FFA085',
-    marginRight: 14,
+  },
+  profileCard: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 16,
+    marginVertical: 10,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  avatarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatarCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#F5EBE6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
   avatarText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 20,
-  },
-  bannerInfo: {
-    flex: 1,
-  },
-  customerName: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  customerAddress: {
-    fontSize: 13,
-    color: '#F7D3C6',
-    fontWeight: '400',
-  },
-
-  /* Stats Row */
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 18,
-  },
-  statBox: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    borderRadius: 16,
-    paddingVertical: 10,
-    alignItems: 'center',
-    marginHorizontal: 4,
-  },
-  statLabel: {
-    fontSize: 10,
+    color: '#8C331A',
     fontWeight: '800',
-    color: '#F7D3C6',
-    letterSpacing: 0.6,
-    marginBottom: 4,
+    fontSize: 18,
   },
-  statValue: {
+  companyTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: '#2A2421',
   },
-
-  /* Action Buttons */
-  actionRow: {
+  companySub: {
+    fontSize: 12,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  gstinText: {
+    fontSize: 11,
+    color: '#8C331A',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  kpiRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    backgroundColor: '#FAF8F5',
+    borderRadius: 12,
+    padding: 12,
+    marginVertical: 12,
   },
-  callBtn: {
-    flex: 1,
-    height: 44,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    flexDirection: 'row',
-    justifyContent: 'center',
+  kpiCol: {
     alignItems: 'center',
-    marginRight: 8,
   },
-  callText: {
-    color: '#8C331A',
-    fontWeight: '700',
+  kpiLabel: {
+    fontSize: 10,
+    color: '#8E8278',
+    textTransform: 'uppercase',
+  },
+  kpiVal: {
     fontSize: 15,
+    fontWeight: '800',
+    color: '#2A2421',
+    marginTop: 2,
   },
-  msgBtn: {
-    flex: 1,
-    height: 44,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    borderRadius: 22,
+  collectBtn: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  msgText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-
-  /* Sub-Navigation Pill Tabs */
-  tabContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#EFECE9',
-    borderRadius: 24,
-    padding: 4,
-    marginVertical: 14,
-  },
-  tabItem: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderRadius: 20,
-  },
-  activeTabItem: {
     backgroundColor: '#8C331A',
+    borderRadius: 10,
+    height: 42,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  inactiveTabItem: {
-    backgroundColor: 'transparent',
+  collectBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  tabRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  tabBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabBtnActive: {
+    borderBottomColor: '#8C331A',
   },
   tabText: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 13,
+    color: '#8E8278',
+    fontWeight: '600',
   },
-  activeTabText: {
-    color: '#FFFFFF',
-  },
-  inactiveTabText: {
-    color: '#6E6259',
-  },
-
-  /* List Section Cards */
-  listSection: {
-    marginTop: 4,
-  },
-  orderCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-  },
-  orderHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  orderId: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#2C201A',
-  },
-  orderAmount: {
-    fontSize: 16,
-    fontWeight: '700',
+  tabTextActive: {
     color: '#8C331A',
-  },
-  orderItems: {
-    fontSize: 14,
-    color: '#7C6E65',
-    marginBottom: 12,
-    fontWeight: '500',
-  },
-  orderFooterRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  dateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  dateText: {
-    fontSize: 12,
-    color: '#8A7E75',
-    fontWeight: '500',
-  },
-  deliveredBadge: {
-    backgroundColor: '#E6F7F0',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  deliveredText: {
-    fontSize: 10,
     fontWeight: '800',
-    color: '#10B981',
+  },
+  statementBox: {
+    backgroundColor: '#7A2E19',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+  },
+  stmtHeader: {
+    marginBottom: 8,
+  },
+  stmtTitle: {
+    fontSize: 11,
+    color: '#FBBF24',
+    fontWeight: '800',
     letterSpacing: 0.5,
   },
-  payNowBtn: {
-    backgroundColor: '#8C331A',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
+  stmtPeriod: {
+    fontSize: 11,
+    color: '#E5D6D0',
+    marginTop: 2,
   },
-  payNowText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-
-  /* Contact Card */
-  contactCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 18,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-  },
-  contactItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  contactTextGroup: {
-    marginLeft: 14,
-  },
-  contactLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#8A7E75',
-    letterSpacing: 0.6,
-    marginBottom: 2,
-  },
-  contactValue: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#2C201A',
-  },
-  whatsappCardBtn: {
-    backgroundColor: '#25D366',
-    borderRadius: 14,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  whatsappBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
-    marginLeft: 8,
-  },
-
-  /* Modal Styles */
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: '80%',
-  },
-  modalHeader: {
+  stmtRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
+    marginVertical: 2,
+  },
+  stmtLabel: {
+    fontSize: 12,
+    color: '#E5D6D0',
+  },
+  stmtVal: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  stmtClosingLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  stmtClosingVal: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FBBF24',
+  },
+  sectionHeader: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#8E8278',
+    marginBottom: 8,
+    letterSpacing: 0.5,
+  },
+  txRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  txRef: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  txDesc: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  txDate: {
+    fontSize: 10,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  txAmount: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  txDebit: {
+    color: '#DC2626',
+  },
+  txCredit: {
+    color: '#059669',
+  },
+  runningBal: {
+    fontSize: 10,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  invoiceItemCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  invNumber: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  invDate: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  invAmount: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  invStatus: {
+    fontSize: 10,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  priceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  priceProdName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  priceSlabText: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  contractPriceVal: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#8C331A',
+  },
+  infoCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  infoLabel: {
+    fontSize: 11,
+    color: '#8E8278',
+    fontWeight: '600',
+    marginTop: 8,
+  },
+  infoVal: {
+    fontSize: 13,
+    color: '#2A2421',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  emptyNote: {
+    fontSize: 12,
+    color: '#8E8278',
+    textAlign: 'center',
+    marginVertical: 16,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
   },
   modalTitle: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#333',
+    fontWeight: '800',
+    color: '#2A2421',
   },
-  paymentCustomerBanner: {
-    backgroundColor: '#FFF4F0',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 16,
+  modalSubtitle: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginVertical: 6,
   },
-  paymentCustomerName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#8C331A',
-  },
-  paymentDueText: {
-    fontSize: 13,
-    color: '#666',
-    marginTop: 2,
-  },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#444',
-    marginBottom: 6,
-  },
-  input: {
-    backgroundColor: '#F5F5F5',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: '#333',
-    marginBottom: 14,
+  modalInput: {
+    backgroundColor: '#FAF8F5',
     borderWidth: 1,
-    borderColor: '#DDD',
+    borderColor: '#EFEAE4',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 44,
+    marginBottom: 10,
+    fontSize: 14,
+    color: '#2A2421',
   },
-  paymentMethodsRow: {
+  methodRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 20,
+    marginBottom: 14,
   },
   methodChip: {
-    flex: 1,
-    paddingVertical: 10,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 10,
-    alignItems: 'center',
-    marginHorizontal: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    marginRight: 6,
   },
   methodChipActive: {
     backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
   },
   methodText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#555',
+    fontSize: 10,
+    color: '#8E8278',
+    fontWeight: '700',
   },
   methodTextActive: {
     color: '#FFFFFF',
   },
-  submitBtn: {
+  confirmBtn: {
     backgroundColor: '#8C331A',
     borderRadius: 12,
-    paddingVertical: 14,
+    height: 46,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  submitBtnText: {
+  confirmBtnText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '700',
+  },
+  cancelBtn: {
+    marginTop: 8,
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cancelBtnText: {
+    color: '#8E8278',
+    fontSize: 13,
   },
 });
