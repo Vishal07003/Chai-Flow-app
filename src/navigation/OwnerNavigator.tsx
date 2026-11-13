@@ -19,6 +19,8 @@ import NotificationsScreen from '../Screens/NotificationsScreen';
 import PendingPaymentsScreen from '../Screens/owner/PendingPaymentsScreen';
 import MoreScreen from '../Screens/owner/MoreScreen';
 import OrdersScreen from '../Screens/owner/OrdersScreen';
+import CompaniesScreen from '../Screens/owner/CompaniesScreen';
+import CustomersScreen from '../Screens/owner/CustomersScreen';
 import ProductsScreen from '../Screens/owner/ProductsScreen';
 import DeliveryScreen from '../Screens/owner/DeliveryScreen';
 import ScheduleScreen from '../Screens/owner/ScheduleScreen';
@@ -46,6 +48,8 @@ export type OwnerStackParamList = {
   RouteBoys: undefined;
   Notifications: undefined;
   More: undefined;
+  Companies: undefined;
+  Customers: undefined;
 };
 
 const Stack = createNativeStackNavigator<OwnerStackParamList>();
@@ -109,6 +113,8 @@ export default function OwnerNavigator() {
       <Stack.Screen name="Notifications" component={NotificationsScreen} />
       <Stack.Screen name="More" component={MoreScreen} />
       <Stack.Screen name="Orders" component={OrdersScreen} />
+      <Stack.Screen name="Companies" component={CompaniesScreen} />
+      <Stack.Screen name="Customers" component={CustomersScreen} />
     </Stack.Navigator>
   );
 }
