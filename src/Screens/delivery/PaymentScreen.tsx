@@ -1,10 +1,27 @@
-import React from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import React, { useState } from 'react';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import PaymentCard, { DeliveryPayment } from '../../components/delivery/PaymentCard';
+import { CustomDialog } from '../../components/common';
 
 export default function PaymentScreen() {
+  const [dialogConfig, setDialogConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message?: string;
+    type?: 'confirm' | 'danger' | 'info' | 'warning' | 'success';
+    buttons?: Array<{
+      text: string;
+      style?: 'default' | 'cancel' | 'destructive';
+      onPress?: () => void;
+    }>;
+  }>({
+    visible: false,
+    title: '',
+  });
+
+  const closeDialog = () => setDialogConfig(prev => ({ ...prev, visible: false }));
   const payments: DeliveryPayment[] = [
     {
       id: 'p1',
@@ -37,7 +54,13 @@ export default function PaymentScreen() {
     .reduce((sum, p) => sum + p.amount, 0);
 
   const handleDepositToHub = () => {
-    Alert.alert('Cash Handover', 'Requested cash handover confirmation from Hub Manager.');
+    setDialogConfig({
+      visible: true,
+      title: 'Cash Handover',
+      message: 'Requested cash handover confirmation from Hub Manager.',
+      type: 'info',
+      buttons: [{ text: 'OK', onPress: closeDialog }],
+    });
   };
 
   return (
@@ -60,6 +83,16 @@ export default function PaymentScreen() {
           <PaymentCard key={payment.id} payment={payment} />
         ))}
       </ScrollView>
+
+      {/* CUSTOM DIALOG POPUP */}
+      <CustomDialog
+        visible={dialogConfig.visible}
+        title={dialogConfig.title}
+        message={dialogConfig.message}
+        type={dialogConfig.type}
+        buttons={dialogConfig.buttons}
+        onClose={closeDialog}
+      />
     </SafeAreaView>
   );
 }
