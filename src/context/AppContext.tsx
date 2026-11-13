@@ -15,6 +15,8 @@ import {
   profileService,
   authService,
   notificationService,
+  apiClient,
+  billingService,
 } from '../services';
 
 export interface Customer {
@@ -213,6 +215,10 @@ export interface AppContextType {
   /* Products & Inventory */
   products: ProductItem[];
   addProduct: (product: Omit<ProductItem, 'id'>) => Promise<void> | void;
+  updateProduct: (
+    productId: string,
+    updates: Partial<ProductItem>,
+  ) => Promise<void> | void;
   updateProductStock: (
     productId: string,
     newStockNumber: number,
@@ -893,7 +899,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   /* -------------------------------------------------------------
    *  AsyncStorage Local Device Persistence Engine
    * ------------------------------------------------------------- */
-  // 1. Load persisted data from AsyncStorage on app boot
+  // 1. Load persisted data and verify active JWT session on app boot
   useEffect(() => {
     const loadPersistedData = async () => {
       try {
@@ -921,10 +927,96 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
             setCollectionsTotal(parsed.collectionsTotal);
           if (parsed.userProfile) setUserProfile(parsed.userProfile);
           if (parsed.notifications) setNotifications(parsed.notifications);
-          if (parsed.isAuthenticated !== undefined)
-            setIsAuthenticated(parsed.isAuthenticated);
           if (parsed.userMobile) setUserMobile(parsed.userMobile);
           if (parsed.userRole) setUserRole(parsed.userRole);
+        }
+
+        // Live JWT session check with backend & initial dynamic data fetch
+        const token = await apiClient.getAccessToken();
+        if (token) {
+          try {
+            const currentUser = await authService.getCurrentUser();
+            if (currentUser) {
+              const role = currentUser?.profile?.role || 'customer';
+              const phone = currentUser?.profile?.phone || userMobile;
+              const formattedPhone = phone?.startsWith('+91') ? phone : `+91 ${phone}`;
+
+              if (role === 'delivery') {
+                setUserRole('DELIVERY_PARTNER');
+              } else {
+                setUserRole('ADMIN');
+              }
+              setUserMobile(formattedPhone);
+              setIsAuthenticated(true);
+
+              // Dynamically fetch live data from Django Backend
+              try {
+                const [liveCustomers, liveProducts, livePartners, liveSchedules] = await Promise.all([
+                  customerService.getCustomers(),
+                  productService.getProductsList(),
+                  deliveryService.getDeliveryBoys(),
+                  scheduleService.getSchedules(),
+                ]);
+
+                if (liveCustomers && liveCustomers.length > 0) setCustomers(liveCustomers);
+                if (liveProducts && liveProducts.length > 0) setProducts(liveProducts);
+                if (livePartners && livePartners.length > 0) setDeliveryBoys(livePartners);
+                if (liveSchedules && liveSchedules.length > 0) setSchedules(liveSchedules);
+
+                // Fetch live invoices & dashboard stats
+                const liveInvoices = await billingService.getInvoices();
+                if (Array.isArray(liveInvoices) && liveInvoices.length > 0) {
+                  const mappedInvoices: InvoiceItem[] = liveInvoices.map(inv => {
+                    const grandNum = parseFloat(inv.grand_total) || 0;
+                    const pendingNum = parseFloat(inv.pending_amount) || 0;
+                    const isPaid = inv.status === 'paid' || pendingNum <= 0;
+                    return {
+                      id: String(inv.id),
+                      invoiceNo: inv.invoice_number,
+                      name: inv.customer_name || 'Walk-in Customer',
+                      customerAddress: 'Counter Sale',
+                      customerPhone: inv.customer_phone || '',
+                      amount: `₹${grandNum.toLocaleString()}`,
+                      numericAmount: grandNum,
+                      due: isPaid ? 'Paid in Full' : `₹${pendingNum.toLocaleString()} due`,
+                      date: inv.created_at ? new Date(inv.created_at).toLocaleDateString() : 'Today',
+                      isOverdue: !isPaid,
+                      status: isPaid ? 'PAID' : 'PENDING',
+                      deliveryPartnerName: 'Rahul Sharma',
+                      deliveryStatus: isPaid ? 'Delivered' : 'Pending',
+                      items: (inv.items || []).map(it => ({
+                        id: String(it.id),
+                        name: it.product_name,
+                        qty: it.quantity,
+                        price: parseFloat(it.unit_price) || 0,
+                      })),
+                      subtotal: parseFloat(inv.subtotal) || grandNum,
+                      tax: 0,
+                    };
+                  });
+                  setInvoices(mappedInvoices);
+                }
+
+                const liveStats = await billingService.getDashboardStats();
+                if (liveStats && liveStats.total_received) {
+                  const recNum = parseFloat(liveStats.total_received) || 0;
+                  setCollectionsTotal(recNum);
+                }
+              } catch (fetchErr) {
+                console.log('Error refreshing live backend data:', fetchErr);
+              }
+            }
+          } catch (sessionErr) {
+            console.log('Session verification expired or unreachable:', sessionErr);
+            // If token invalid, clear tokens
+            const refreshToken = await apiClient.getRefreshToken();
+            if (!refreshToken) {
+              await apiClient.clearTokens();
+              setIsAuthenticated(false);
+            }
+          }
+        } else {
+          setIsAuthenticated(false);
         }
       } catch (err) {
         console.log('Error loading data from AsyncStorage:', err);
@@ -980,7 +1072,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     userRole,
   ]);
 
-  const totalRevenue = 42850;
+  const totalRevenue = useMemo(() => {
+    return invoices.reduce((sum, item) => sum + (item.numericAmount || 0), 0);
+  }, [invoices]);
   const revenueGrowth = '+12%';
 
   /* Calculated Customer Stats */
@@ -1472,6 +1566,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     ]);
   };
 
+  const updateProduct = async (
+    productId: string,
+    updates: Partial<ProductItem>,
+  ) => {
+    await productService.updateProductItem(productId, updates);
+    setProducts(prev =>
+      prev.map(prod => (prod.id === productId ? { ...prod, ...updates } : prod)),
+    );
+  };
+
   const updateProductStock = async (
     productId: string,
     newStockNumber: number,
@@ -1771,6 +1875,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
         products,
         addProduct,
+        updateProduct,
         updateProductStock,
         updateProductPrice,
         updateProductImage,
