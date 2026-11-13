@@ -82,44 +82,137 @@ export const productService = {
     return apiClient.delete<void>(`/products/items/${id}/`);
   },
 
-  // Compatibility methods for AppContext ProductItem operations
+  // Live Django Backend Methods for AppContext ProductItem operations
+  async getProductsList(initialData?: any[]): Promise<any[]> {
+    try {
+      const backendProducts = await this.getProducts();
+      if (Array.isArray(backendProducts) && backendProducts.length > 0) {
+        return backendProducts.map(bp => {
+          const rawPrice = parseFloat(bp.price) || 0;
+          return {
+            id: String(bp.id),
+            name: bp.name,
+            price: `₹${rawPrice}`,
+            unit: 'unit',
+            description: bp.description || 'Store inventory item',
+            stock: bp.is_available ? '100 units' : 'Out of stock',
+            stockNumber: bp.is_available ? 100 : 0,
+            maxStock: 200,
+            category: bp.category_name || 'Masala Chai',
+            isLowStock: !bp.is_available,
+            imageUrl:
+              bp.image_url ||
+              'https://images.unsplash.com/photo-1576092768241-dec231879fc3?auto=format&fit=crop&w=600&q=80',
+          };
+        });
+      }
+    } catch (e) {
+      console.log('Using local fallback for products:', e);
+    }
+    return initialData || [];
+  },
+
   async addProduct(product: any): Promise<any> {
-    const id = Date.now().toString();
-    const newProduct = {
-      ...product,
+    const rawPrice =
+      typeof product.price === 'string'
+        ? parseFloat(product.price.replace(/[^0-9.]/g, '')) || 100
+        : Number(product.price) || 100;
+
+    try {
+      const res = await this.createProduct({
+        name: product.name,
+        price: rawPrice,
+        description: product.description || 'Premium store item',
+        image_url: product.imageUrl,
+        is_available: product.stockNumber !== undefined ? product.stockNumber > 0 : true,
+      });
+
+      return {
+        ...product,
+        id: String(res.id),
+        price: `₹${rawPrice}`,
+      };
+    } catch (e) {
+      console.log('Backend createProduct error, falling back locally:', e);
+      const id = Date.now().toString();
+      return {
+        ...product,
+        id,
+      };
+    }
+  },
+
+  async updateProductItem(id: string, updates: any): Promise<any> {
+    try {
+      const payload: any = {};
+      if (updates.name) payload.name = updates.name;
+      if (updates.description) payload.description = updates.description;
+      if (updates.imageUrl) payload.image_url = updates.imageUrl;
+      if (updates.price !== undefined) {
+        payload.price =
+          typeof updates.price === 'string'
+            ? parseFloat(updates.price.replace(/[^0-9.]/g, '')) || 0
+            : updates.price;
+      }
+      if (updates.stockNumber !== undefined) {
+        payload.is_available = updates.stockNumber > 0;
+      }
+      if (Object.keys(payload).length > 0) {
+        await this.updateProduct(id, payload);
+      }
+    } catch (e) {
+      console.log('Backend updateProduct error:', e);
+    }
+    return {
       id,
+      ...updates,
     };
-    return apiClient.post<any>('/products', product, newProduct);
   },
 
   async updateStock(
     productId: string,
     newStockNumber: number,
   ): Promise<{ productId: string; newStockNumber: number }> {
-    return apiClient.put(`/products/${productId}/stock`, { newStockNumber }, {
+    try {
+      await this.updateProduct(productId, { is_available: newStockNumber > 0 });
+    } catch (e) {
+      console.log('Update stock fallback:', e);
+    }
+    return {
       productId,
       newStockNumber,
-    });
+    };
   },
 
   async updateImage(
     productId: string,
     imageUrl: string,
   ): Promise<{ productId: string; imageUrl: string }> {
-    return apiClient.put(`/products/${productId}/image`, { imageUrl }, {
+    try {
+      await this.updateProduct(productId, { image_url: imageUrl });
+    } catch (e) {
+      console.log('Update image fallback:', e);
+    }
+    return {
       productId,
       imageUrl,
-    });
+    };
   },
 
   async updatePrice(
     productId: string,
     newPrice: string,
   ): Promise<{ productId: string; newPrice: string }> {
-    return apiClient.put(`/products/${productId}/price`, { newPrice }, {
+    try {
+      const priceNum = parseFloat(newPrice.replace(/[^0-9.]/g, '')) || 0;
+      await this.updateProduct(productId, { price: priceNum });
+    } catch (e) {
+      console.log('Update price fallback:', e);
+    }
+    return {
       productId,
       newPrice,
-    });
+    };
   },
 };
 

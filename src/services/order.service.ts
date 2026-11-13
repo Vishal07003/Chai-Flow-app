@@ -111,7 +111,30 @@ export const orderService = {
 
   async createQuickBill(billData: any): Promise<any> {
     const invId = `inv-${Date.now()}`;
-    const invNo = `QBILL-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    let invNo = `QBILL-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    try {
+      const itemsPayload = (billData.items || []).map((it: any) => ({
+        product_name: it.name || 'Tea Item',
+        unit_price: Number(it.price) || 0,
+        quantity: Number(it.qty) || 1,
+      }));
+
+      const res = await apiClient.post<any>('/billing/invoices/', {
+        customer_name: billData.name || 'Walk-in Customer',
+        customer_phone: billData.customerPhone || '+91 9999999999',
+        notes: billData.notes || 'Counter Quick Bill',
+        items: itemsPayload.length > 0 ? itemsPayload : [{ product_name: 'Chai Supplies', unit_price: billData.numericAmount || 100, quantity: 1 }],
+        initial_payment_amount: billData.status === 'PAID' ? billData.numericAmount : 0,
+        initial_payment_method: 'cash',
+      });
+
+      if (res?.invoice_number) {
+        invNo = res.invoice_number;
+      }
+    } catch (e) {
+      console.log('QuickBill backend API sync fallback:', e);
+    }
 
     const newInv = {
       id: invId,
@@ -131,7 +154,7 @@ export const orderService = {
       notes: billData.notes || 'Counter Quick Bill',
     };
 
-    return apiClient.post<any>('/orders/quick-bill', newInv, newInv);
+    return newInv;
   },
 
   async markInvoiceAsPaid(id: string): Promise<{ success: boolean; id: string }> {
