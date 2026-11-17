@@ -6,9 +6,12 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
+  StatusBar,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import ChaiFlowHeader from '../../components/common/ChaiFlowHeader';
 import { useApp } from '../../context/AppContext';
@@ -39,23 +42,25 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
 
     setIsLoading(true);
     try {
-      const res = await authService.sendOtp(cleanDigits);
+      // Backend verifies registration and dispatches 6-digit OTP strictly via SMS
+      const res = await authService.requestOtp(cleanDigits);
       if (res.success && res.session_id) {
-        AppToast.success('OTP Sent', res.message || `Verification code sent to ${formatted}`);
+        AppToast.success('OTP Sent via SMS', res.message || `Verification code sent via SMS to ${formatted}`);
         if (navigation) {
           navigation.navigate('VerifyOtp', {
             phone: cleanDigits,
             sessionId: res.session_id,
             cooldownSeconds: res.cooldown_seconds || 60,
-            userExists: res.user_exists,
           });
         }
       } else {
-        AppToast.error('OTP Failed', res.message || 'Unable to send OTP. Please try again.');
+        AppToast.error('SMS Delivery Failed', res.message || 'Unable to deliver OTP via SMS. Please retry after cooldown.');
       }
     } catch (err: any) {
-      const errorMsg = err?.message || 'Network error occurred while requesting OTP.';
-      AppToast.error('Request Failed', errorMsg);
+      const errorMsg =
+        err?.message ||
+        'Account not found or SMS delivery failed. Please verify your registered number.';
+      AppToast.error('SMS Request Failed', errorMsg);
     } finally {
       setIsLoading(false);
     }
@@ -63,83 +68,85 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <KeyboardAwareScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        enableOnAndroid={true}
-        extraScrollHeight={20}
-        keyboardShouldPersistTaps="handled"
+      <StatusBar barStyle="dark-content" backgroundColor="#FAF8F5" />
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoiding}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {/* Top Brand Header */}
-        <ChaiFlowHeader />
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}
+        >
+          {/* 1. Top Brand Header */}
+          <ChaiFlowHeader />
 
-        {/* Section Tag */}
-        <View style={styles.tagContainer}>
-          <Text style={styles.tagDot}>•</Text>
-          <Text style={styles.tagText}>SIGN IN</Text>
-        </View>
-
-        {/* Unified Main Title & Subtitle */}
-        <Text style={styles.mainTitle}>Welcome to ChaiFlow</Text>
-        <Text style={styles.subTitle}>
-          Sign in with your mobile number to access your operations, inventory,
-          and deliveries.
-        </Text>
-
-        {/* Form Card */}
-        <View style={styles.card}>
-          <Text style={styles.inputLabel}>MOBILE NUMBER</Text>
-
-          <View style={styles.inputWrapper}>
-            <Ionicons
-              name="call-outline"
-              size={18}
-              color="#7A6A60"
-              style={styles.phoneIcon}
-            />
-            <Text style={styles.countryCode}>+91</Text>
-            <TextInput
-              style={styles.input}
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-              maxLength={10}
-              placeholder="Enter 10-digit mobile number"
-              placeholderTextColor="#A09085"
-              editable={!isLoading}
-            />
+          {/* 2. Welcome Back Heading & Subtitle (Compact, top-aligned) */}
+          <View style={styles.heroSection}>
+            <Text style={styles.mainTitle}>Welcome Back</Text>
+            <Text style={styles.subTitle}>
+              Sign in with your registered mobile number.
+            </Text>
           </View>
 
-          <TouchableOpacity
-            style={[styles.sendButton, isLoading ? styles.sendButtonDisabled : null]}
-            activeOpacity={0.8}
-            onPress={handleSendOtp}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <>
-                <Text style={styles.buttonText}>Send OTP</Text>
-                <Ionicons
-                  name="arrow-forward"
-                  size={18}
-                  color="#FFFFFF"
-                  style={styles.arrowIcon}
-                />
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
+          {/* 3. Mobile Number Input Card immediately below heading */}
+          <View style={styles.card}>
+            <Text style={styles.inputLabel}>MOBILE NUMBER</Text>
 
-        {/* Bottom Security Footer */}
-        <View style={styles.footer}>
-          <Ionicons name="shield-checkmark-outline" size={16} color="#8C7C72" />
-          <Text style={styles.footerText}>
-            Protected by end-to-end encrypted OTP authentication
-          </Text>
-        </View>
-      </KeyboardAwareScrollView>
+            <View style={styles.inputWrapper}>
+              <Ionicons
+                name="call-outline"
+                size={18}
+                color="#7A6A60"
+                style={styles.phoneIcon}
+              />
+              <Text style={styles.countryCode}>+91</Text>
+              <TextInput
+                style={styles.input}
+                value={phone}
+                onChangeText={setPhone}
+                keyboardType="phone-pad"
+                textContentType="telephoneNumber"
+                autoComplete="tel"
+                maxLength={10}
+                placeholder="Enter 10-digit mobile number"
+                placeholderTextColor="#A09085"
+                editable={!isLoading}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.continueButton, isLoading && styles.continueButtonDisabled]}
+              activeOpacity={0.8}
+              onPress={handleSendOtp}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <>
+                  <Text style={styles.buttonText}>Continue</Text>
+                  <Ionicons
+                    name="arrow-forward"
+                    size={18}
+                    color="#FFFFFF"
+                    style={styles.arrowIcon}
+                  />
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* 4. Security Information directly below form */}
+          <View style={styles.footer}>
+            <Ionicons name="shield-checkmark-outline" size={15} color="#8C7C72" />
+            <Text style={styles.footerText}>
+              Secure OTP verification
+            </Text>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -147,63 +154,50 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#FAF4ED',
+    backgroundColor: '#FAF8F5',
+  },
+  keyboardAvoiding: {
+    flex: 1,
   },
   scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 12,
+    paddingHorizontal: 20,
+    paddingTop: 8,
     paddingBottom: 24,
-    justifyContent: 'space-between',
   },
-  tagContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  tagDot: {
-    color: '#8C331A',
-    fontSize: 16,
-    marginRight: 6,
-    fontWeight: '900',
-  },
-  tagText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#8C331A',
-    letterSpacing: 1.5,
+  heroSection: {
+    marginTop: 4,
+    marginBottom: 16,
   },
   mainTitle: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: '#2C1E18',
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#1F2937',
     letterSpacing: -0.5,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   subTitle: {
     fontSize: 14,
-    color: '#7A6A60',
+    color: '#6B7280',
     lineHeight: 20,
-    marginBottom: 24,
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 24,
+    borderRadius: 18,
+    padding: 20,
     shadowColor: '#8C331A',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
     elevation: 3,
     borderWidth: 1,
-    borderColor: '#F0E6DE',
+    borderColor: '#EFEAE4',
   },
   inputLabel: {
     fontSize: 11,
     fontWeight: '800',
     color: '#5C4A3E',
-    letterSpacing: 1,
-    marginBottom: 10,
+    letterSpacing: 0.8,
+    marginBottom: 8,
   },
   inputWrapper: {
     flexDirection: 'row',
@@ -211,19 +205,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#FAF7F4',
     borderWidth: 1.5,
     borderColor: '#E8DED6',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    height: 52,
-    marginBottom: 20,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 48,
+    marginBottom: 16,
   },
   phoneIcon: {
-    marginRight: 8,
+    marginRight: 6,
   },
   countryCode: {
     fontSize: 15,
     fontWeight: '700',
     color: '#2C1E18',
-    marginRight: 10,
+    marginRight: 8,
   },
   input: {
     flex: 1,
@@ -232,25 +226,25 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     padding: 0,
   },
-  sendButton: {
+  continueButton: {
     backgroundColor: '#8C331A',
-    borderRadius: 14,
-    height: 52,
+    borderRadius: 12,
+    height: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#8C331A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
   },
-  sendButtonDisabled: {
+  continueButtonDisabled: {
     backgroundColor: '#C5A496',
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     letterSpacing: 0.5,
   },
@@ -261,7 +255,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 24,
+    marginTop: 18,
   },
   footerText: {
     fontSize: 12,

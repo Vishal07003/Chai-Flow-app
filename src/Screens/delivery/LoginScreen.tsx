@@ -1,18 +1,36 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, Text, TextInput, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useApp } from '../../context/AppContext';
+import { authService } from '../../services/auth.service';
+import { AppToast } from '../../utils/toast';
 
 export default function LoginScreen({ navigation }: any) {
-  const { login } = useApp();
-  const [mobile, setMobile] = useState('');
+  const { loginWithVerifiedUser } = useApp();
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleLogin = () => {
-    login('DELIVERY_PARTNER');
-    navigation.replace('Home');
+  const handleLogin = async () => {
+    if (!username.trim() || !password.trim()) {
+      AppToast.error('Missing Credentials', 'Please enter your partner username and password.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await authService.login(username.trim(), password, 'delivery');
+      if (res?.user) {
+        await loginWithVerifiedUser(res.user);
+        AppToast.success('Welcome', 'Delivery partner logged in successfully.');
+      }
+    } catch (err: any) {
+      AppToast.error('Login Failed', err?.message || 'Invalid delivery partner credentials.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -26,32 +44,43 @@ export default function LoginScreen({ navigation }: any) {
             <Ionicons name="bicycle" size={40} color="#059669" />
           </View>
           <Text style={styles.title}>Delivery Partner Login</Text>
-          <Text style={styles.subtitle}>Sign in to manage your daily runs & earnings</Text>
+          <Text style={styles.subtitle}>Sign in to manage your daily runs & assignments</Text>
         </View>
 
         <View style={styles.formBox}>
-          <Text style={styles.label}>Mobile Number</Text>
+          <Text style={styles.label}>Partner Username</Text>
           <TextInput
             style={styles.input}
-            placeholder="Enter 10-digit mobile number"
+            placeholder="Enter username"
             placeholderTextColor="#9CA3AF"
-            keyboardType="phone-pad"
-            value={mobile}
-            onChangeText={setMobile}
+            autoCapitalize="none"
+            value={username}
+            onChangeText={setUsername}
+            editable={!isLoading}
           />
 
-          <Text style={styles.label}>Passcode / PIN</Text>
+          <Text style={styles.label}>Password</Text>
           <TextInput
             style={styles.input}
-            placeholder="Enter PIN"
+            placeholder="Enter password"
             placeholderTextColor="#9CA3AF"
             secureTextEntry
             value={password}
             onChangeText={setPassword}
+            editable={!isLoading}
           />
 
-          <TouchableOpacity activeOpacity={0.8} style={styles.loginBtn} onPress={handleLogin}>
-            <Text style={styles.loginBtnText}>Login to Partner Portal</Text>
+          <TouchableOpacity
+            style={[styles.button, isLoading && styles.buttonDisabled]}
+            activeOpacity={0.8}
+            onPress={handleLogin}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.buttonText}>Sign In</Text>
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAwareScrollView>
@@ -65,25 +94,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#FAF8F5',
   },
   scrollContent: {
-    paddingHorizontal: 24,
-    paddingTop: 40,
-    paddingBottom: 24,
+    padding: 24,
+    flexGrow: 1,
+    justifyContent: 'center',
   },
   headerBox: {
     alignItems: 'center',
     marginBottom: 32,
   },
   iconCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: '#ECFDF5',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
   },
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '800',
     color: '#111827',
   },
@@ -95,45 +126,42 @@ const styles = StyleSheet.create({
   },
   formBox: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
+    borderRadius: 16,
     padding: 20,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
     borderWidth: 1,
     borderColor: '#EFECE8',
   },
   label: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: '#374151',
     marginBottom: 6,
-    marginTop: 8,
+    marginTop: 10,
   },
   input: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 14,
+    backgroundColor: '#FAF8F5',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#EFEAE4',
+    borderRadius: 10,
     paddingHorizontal: 14,
     height: 48,
     fontSize: 14,
-    color: '#111827',
-    marginBottom: 12,
+    color: '#1F2937',
   },
-  loginBtn: {
+  button: {
     backgroundColor: '#059669',
-    borderRadius: 14,
-    height: 50,
-    justifyContent: 'center',
+    borderRadius: 10,
+    height: 48,
     alignItems: 'center',
-    marginTop: 16,
+    justifyContent: 'center',
+    marginTop: 20,
   },
-  loginBtnText: {
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  buttonText: {
     color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 15,
+    fontSize: 14,
+    fontWeight: '800',
   },
 });
