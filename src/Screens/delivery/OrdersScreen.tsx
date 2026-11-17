@@ -16,6 +16,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import { EmptyState } from '../../components/common';
 import deliveryService, { BackendDelivery } from '../../services/delivery.service';
+import locationTrackingService from '../../services/location.service';
 
 const tabs = ['ALL', 'ASSIGNED', 'ACCEPTED', 'PICKED_UP', 'ON_THE_WAY', 'DELIVERED'];
 
@@ -62,6 +63,14 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
     try {
       setActionInProgress(true);
       await deliveryService.updateStatus(delivery.id, targetStatus);
+
+      // Start/Stop location tracking depending on state
+      if (targetStatus === 'on_the_way') {
+        await locationTrackingService.startTrackingForDelivery(delivery.id);
+      } else if (targetStatus === 'delivered' || targetStatus === 'failed') {
+        locationTrackingService.stopTracking();
+      }
+
       fetchDeliveries();
       Alert.alert('Status Updated', `Delivery is now '${targetStatus.toUpperCase()}'.`);
     } catch (err: any) {
@@ -109,6 +118,7 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
 
       // 2. Mark delivery as DELIVERED
       await deliveryService.updateStatus(selectedDelivery.id, 'delivered', discrepancyNotes.trim());
+      locationTrackingService.stopTracking();
 
       setRecordModalVisible(false);
       fetchDeliveries();
