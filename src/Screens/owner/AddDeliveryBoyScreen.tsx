@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   Image,
   Keyboard,
-  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
@@ -22,32 +22,13 @@ import { AppToast } from '../../utils/toast';
 export default function AddDeliveryBoyScreen({ navigation }: any) {
   const { addDeliveryBoy } = useApp();
 
-  /* Personal Details */
+  /* 3 Fields Only: Full Name, Mobile Number, Profile Photo (Optional) */
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
-  const [emergencyPhone, setEmergencyPhone] = useState('');
-  const [licenseNumber, setLicenseNumber] = useState('');
-
-  /* Vehicle Choice & Registration */
-  const [vehicleType, setVehicleType] = useState<
-    'Scooter' | 'E-Bike' | 'Auto Cargo' | 'Mini Van'
-  >('Scooter');
-  const [vehicleModel, setVehicleModel] = useState('');
-  const [numberPlate, setNumberPlate] = useState('');
-
-  /* Photos */
   const [profilePhotoUri, setProfilePhotoUri] = useState<string | null>(null);
-  const [numberPlatePhotoUri, setNumberPlatePhotoUri] = useState<string | null>(
-    null,
-  );
-  const [licensePhotoUri, setLicensePhotoUri] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  /* Status & Location */
-  const [location, setLocation] = useState('');
-  const [status, setStatus] = useState<'READY' | 'BUSY' | 'OFFLINE'>('READY');
-  const [showToast, setShowToast] = useState(false);
-
-  // Custom Dialog State
+  // Dialog State for Camera / Gallery Selection
   const [dialogConfig, setDialogConfig] = useState<{
     visible: boolean;
     title: string;
@@ -65,11 +46,11 @@ export default function AddDeliveryBoyScreen({ navigation }: any) {
 
   const closeDialog = () => setDialogConfig(prev => ({ ...prev, visible: false }));
 
-  /* Image Pickers (Camera / Device Gallery) */
-  const handlePickPhoto = (target: 'profile' | 'numberPlate' | 'license') => {
+  /* Image Picker: Camera or Gallery */
+  const handlePickPhoto = () => {
     setDialogConfig({
       visible: true,
-      title: 'Upload Photo',
+      title: 'Profile Photo (Optional)',
       message: 'Choose photo source:',
       type: 'confirm',
       buttons: [
@@ -81,19 +62,11 @@ export default function AddDeliveryBoyScreen({ navigation }: any) {
               const result = await launchCamera({
                 mediaType: 'photo',
                 quality: 0.8,
-                saveToPhotos: true,
+                saveToPhotos: false,
               });
-              if (
-                !result.didCancel &&
-                result.assets &&
-                result.assets.length > 0
-              ) {
+              if (!result.didCancel && result.assets && result.assets.length > 0) {
                 const uri = result.assets[0].uri;
-                if (uri) {
-                  if (target === 'profile') setProfilePhotoUri(uri);
-                  if (target === 'numberPlate') setNumberPlatePhotoUri(uri);
-                  if (target === 'license') setLicensePhotoUri(uri);
-                }
+                if (uri) setProfilePhotoUri(uri);
               }
             } catch (error) {
               console.log('Error launching camera:', error);
@@ -101,7 +74,7 @@ export default function AddDeliveryBoyScreen({ navigation }: any) {
           },
         },
         {
-          text: 'Choose from Device',
+          text: 'Choose from Gallery',
           onPress: async () => {
             closeDialog();
             try {
@@ -109,17 +82,9 @@ export default function AddDeliveryBoyScreen({ navigation }: any) {
                 mediaType: 'photo',
                 quality: 0.8,
               });
-              if (
-                !result.didCancel &&
-                result.assets &&
-                result.assets.length > 0
-              ) {
+              if (!result.didCancel && result.assets && result.assets.length > 0) {
                 const uri = result.assets[0].uri;
-                if (uri) {
-                  if (target === 'profile') setProfilePhotoUri(uri);
-                  if (target === 'numberPlate') setNumberPlatePhotoUri(uri);
-                  if (target === 'license') setLicensePhotoUri(uri);
-                }
+                if (uri) setProfilePhotoUri(uri);
               }
             } catch (error) {
               console.log('Error launching gallery:', error);
@@ -135,86 +100,80 @@ export default function AddDeliveryBoyScreen({ navigation }: any) {
     });
   };
 
-  const handleSaveDeliveryBoy = () => {
+  const handleSaveDeliveryBoy = async () => {
     Keyboard.dismiss();
 
-    if (!validation.isNotEmpty(name)) {
+    const trimmedName = name.trim();
+    if (!validation.isNotEmpty(trimmedName)) {
       AppToast.error('Validation Error', 'Please enter partner full name.');
       return;
     }
 
-    if (!validation.isValidPhone(phone)) {
-      AppToast.error(
-        'Validation Error',
-        'Please enter a valid 10-digit mobile number.',
-      );
+    const trimmedPhone = phone.trim();
+    if (!validation.isValidPhone(trimmedPhone)) {
+      AppToast.error('Validation Error', 'Please enter a valid 10-digit mobile number.');
       return;
     }
 
-    addDeliveryBoy({
-      name: name.trim(),
-      phone: phone.trim(),
-      emergencyContact: emergencyPhone.trim() || '+91 98765 00000',
-      licenseNumber: licenseNumber.trim() || 'DL-99202688',
-      vehicleType,
-      vehicleModel:
-        vehicleModel.trim() ||
-        (vehicleType === 'Scooter' ? 'Honda Activa 6G' : 'Hero E-Bike'),
-      numberPlate: numberPlate.trim() || 'DL 01 AB 1234',
-      numberPlatePhotoUri: numberPlatePhotoUri || undefined,
-      licensePhotoUri: licensePhotoUri || undefined,
-      status: status,
-      location: location.trim() || 'Assigned to Hub Central',
-      distance: '0 km away',
-      avatarUrl:
-        profilePhotoUri ||
-        `https://ui-avatars.com/api/?name=${encodeURIComponent(
-          name,
-        )}&background=8C331A&color=FFF`,
-      progress: status === 'BUSY' ? 30 : 0,
-    });
+    const cleanMobile = trimmedPhone.replace(/\D/g, '').slice(-10);
 
-    AppToast.success('Success', 'Delivery partner registered!');
+    setIsSubmitting(true);
+    try {
+      await addDeliveryBoy({
+        name: trimmedName,
+        phone: cleanMobile,
+        status: 'READY',
+        location: 'Assigned to Fleet',
+        avatarUrl:
+          profilePhotoUri ||
+          `https://ui-avatars.com/api/?name=${encodeURIComponent(
+            trimmedName,
+          )}&background=8C331A&color=FFF`,
+      });
 
-    setTimeout(() => {
-      navigation.goBack();
-    }, 1200);
+      AppToast.success(
+        'Partner Registered',
+        `${trimmedName} added. They can verify and log in via Mobile OTP.`,
+      );
+
+      setTimeout(() => {
+        navigation.goBack();
+      }, 800);
+    } catch (err: any) {
+      const errorMsg =
+        err?.response?.data?.phone ||
+        err?.response?.data?.name ||
+        err?.message ||
+        'Failed to register delivery partner.';
+      AppToast.error('Registration Failed', Array.isArray(errorMsg) ? errorMsg[0] : errorMsg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <Header title="Add Delivery Partner" showBack={true} />
 
-      {showToast && (
-        <View style={styles.toast}>
-          <Ionicons name="checkmark-circle" size={20} color="#FFFFFF" />
-          <Text style={styles.toastText}>
-            Delivery partner & vehicle details registered!
-          </Text>
-        </View>
-      )}
-
       <KeyboardAwareScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         enableOnAndroid={true}
+        bounces={false}
       >
-        {/* Profile Avatar Selector */}
+        {/* 1. Optional Profile Photo */}
         <View style={styles.avatarSection}>
           <TouchableOpacity
             activeOpacity={0.85}
             style={styles.avatarWrapper}
-            onPress={() => handlePickPhoto('profile')}
+            onPress={handlePickPhoto}
           >
             {profilePhotoUri ? (
-              <Image
-                source={{ uri: profilePhotoUri }}
-                style={styles.avatarImg}
-              />
+              <Image source={{ uri: profilePhotoUri }} style={styles.avatarImg} />
             ) : (
               <View style={styles.avatarPlaceholder}>
-                <Ionicons name="person-add-outline" size={36} color="#8C331A" />
+                <Ionicons name="person-outline" size={38} color="#8C331A" />
               </View>
             )}
 
@@ -223,244 +182,72 @@ export default function AddDeliveryBoyScreen({ navigation }: any) {
             </View>
           </TouchableOpacity>
           <Text style={styles.avatarHelpText}>
-            Tap to upload partner profile picture
+            {profilePhotoUri ? 'Tap to change photo' : 'Add Photo (Optional)'}
           </Text>
         </View>
 
-        {/* SECTION 1: Personal Details */}
-        <View style={styles.sectionHeaderRow}>
-          <Ionicons name="person" size={18} color="#8C331A" />
-          <Text style={styles.sectionTitle}>1. Personal Information</Text>
-        </View>
-
-        <Text style={styles.label}>Full Name *</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Suresh Patel"
-          placeholderTextColor="#B5AAA2"
-          value={name}
-          onChangeText={setName}
-        />
-
-        <View style={styles.rowTwoInputs}>
-          <View style={{ flex: 1, marginRight: 6 }}>
-            <Text style={styles.label}>Mobile Phone</Text>
+        {/* Input Card Container */}
+        <View style={styles.card}>
+          {/* 2. Full Name Input */}
+          <Text style={styles.label}>FULL NAME *</Text>
+          <View style={styles.inputWrapper}>
+            <Ionicons name="person-outline" size={18} color="#7A6A60" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
-              placeholder="+91 98765 43210"
-              placeholderTextColor="#B5AAA2"
+              placeholder="e.g. Suresh Patel"
+              placeholderTextColor="#A09085"
+              value={name}
+              onChangeText={setName}
+              autoCapitalize="words"
+              editable={!isSubmitting}
+            />
+          </View>
+
+          {/* 3. Mobile Number Input (+91 prefix) */}
+          <Text style={[styles.label, { marginTop: 14 }]}>MOBILE NUMBER *</Text>
+          <View style={styles.inputWrapper}>
+            <Ionicons name="call-outline" size={18} color="#7A6A60" style={styles.inputIcon} />
+            <Text style={styles.countryCode}>+91</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="10-digit mobile number"
+              placeholderTextColor="#A09085"
               keyboardType="phone-pad"
+              maxLength={10}
               value={phone}
               onChangeText={setPhone}
+              editable={!isSubmitting}
             />
           </View>
 
-          <View style={{ flex: 1, marginLeft: 6 }}>
-            <Text style={styles.label}>Emergency Phone</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="+91 98112 00000"
-              placeholderTextColor="#B5AAA2"
-              keyboardType="phone-pad"
-              value={emergencyPhone}
-              onChangeText={setEmergencyPhone}
-            />
-          </View>
-        </View>
-
-        <Text style={styles.label}>Driving License / ID Number</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. DL-042023001829"
-          placeholderTextColor="#B5AAA2"
-          value={licenseNumber}
-          onChangeText={setLicenseNumber}
-        />
-
-        {/* SECTION 2: Vehicle Choice & Number Plate */}
-        <View style={[styles.sectionHeaderRow, { marginTop: 20 }]}>
-          <Ionicons name="bicycle" size={18} color="#8C331A" />
-          <Text style={styles.sectionTitle}>2. Vehicle Choice & Details</Text>
-        </View>
-
-        <Text style={styles.label}>Vehicle Type</Text>
-        <View style={styles.vehicleGrid}>
-          {[
-            { id: 'Scooter', label: 'Scooter / Bike', icon: 'bicycle-outline' },
-            { id: 'E-Bike', label: 'Electric E-Bike', icon: 'flash-outline' },
-            { id: 'Auto Cargo', label: 'Auto Cargo', icon: 'bus-outline' },
-            { id: 'Mini Van', label: 'Mini Van', icon: 'car-outline' },
-          ].map(v => {
-            const isSelected = vehicleType === v.id;
-            return (
-              <TouchableOpacity
-                key={v.id}
-                activeOpacity={0.8}
-                style={[
-                  styles.vehicleCard,
-                  isSelected && styles.vehicleCardActive,
-                ]}
-                onPress={() => setVehicleType(v.id as any)}
-              >
-                <Ionicons
-                  name={v.icon}
-                  size={20}
-                  color={isSelected ? '#FFF' : '#8C331A'}
-                />
-                <Text
-                  style={[
-                    styles.vehicleText,
-                    isSelected && styles.vehicleTextActive,
-                  ]}
-                >
-                  {v.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        <View style={styles.rowTwoInputs}>
-          <View style={{ flex: 1, marginRight: 6 }}>
-            <Text style={styles.label}>Vehicle Brand & Model</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. Honda Activa 6G"
-              placeholderTextColor="#B5AAA2"
-              value={vehicleModel}
-              onChangeText={setVehicleModel}
-            />
+          {/* Helper notice */}
+          <View style={styles.noticeBox}>
+            <Ionicons name="information-circle-outline" size={16} color="#059669" />
+            <Text style={styles.noticeText}>
+              Delivery partner will verify this mobile number using SMS OTP during their first login.
+            </Text>
           </View>
 
-          <View style={{ flex: 1, marginLeft: 6 }}>
-            <Text style={styles.label}>Number Plate (RC)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. DL 01 AB 1234"
-              placeholderTextColor="#B5AAA2"
-              autoCapitalize="characters"
-              value={numberPlate}
-              onChangeText={setNumberPlate}
-            />
-          </View>
-        </View>
-
-        {/* SECTION 3: Document Photo Uploads */}
-        <View style={[styles.sectionHeaderRow, { marginTop: 20 }]}>
-          <Ionicons name="camera" size={18} color="#8C331A" />
-          <Text style={styles.sectionTitle}>3. Document & Vehicle Photos</Text>
-        </View>
-
-        <View style={styles.photoUploadRow}>
-          {/* Number Plate Photo Upload */}
+          {/* Submit Button */}
           <TouchableOpacity
             activeOpacity={0.8}
-            style={styles.photoUploadCard}
-            onPress={() => handlePickPhoto('numberPlate')}
+            style={[styles.submitBtn, isSubmitting && styles.submitBtnDisabled]}
+            onPress={handleSaveDeliveryBoy}
+            disabled={isSubmitting}
           >
-            {numberPlatePhotoUri ? (
-              <Image
-                source={{ uri: numberPlatePhotoUri }}
-                style={styles.uploadPreview}
-              />
+            {isSubmitting ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
-              <View style={styles.uploadPlaceholder}>
-                <Ionicons name="image-outline" size={24} color="#8C331A" />
-                <Text style={styles.uploadLabel}>Number Plate Photo</Text>
-                <Text style={styles.uploadSub}>Tap to upload</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-
-          {/* License Photo Upload */}
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.photoUploadCard}
-            onPress={() => handlePickPhoto('license')}
-          >
-            {licensePhotoUri ? (
-              <Image
-                source={{ uri: licensePhotoUri }}
-                style={styles.uploadPreview}
-              />
-            ) : (
-              <View style={styles.uploadPlaceholder}>
-                <Ionicons name="card-outline" size={24} color="#8C331A" />
-                <Text style={styles.uploadLabel}>Driving License</Text>
-                <Text style={styles.uploadSub}>Tap to upload</Text>
-              </View>
+              <>
+                <Text style={styles.submitBtnText}>Create Delivery Partner</Text>
+                <Ionicons name="arrow-forward" size={18} color="#FFFFFF" style={styles.btnIcon} />
+              </>
             )}
           </TouchableOpacity>
         </View>
-
-        {/* SECTION 4: Route & Duty */}
-        <Text style={styles.label}>Assigned Route / Delivery Hub Sector</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Commercial Street & Sector 14"
-          placeholderTextColor="#B5AAA2"
-          value={location}
-          onChangeText={setLocation}
-        />
-
-        <Text style={styles.label}>Initial Duty Status</Text>
-        <View style={styles.statusRow}>
-          {(['READY', 'BUSY', 'OFFLINE'] as const).map(st => {
-            const isActive = status === st;
-            const activeBg =
-              st === 'READY'
-                ? '#059669'
-                : st === 'BUSY'
-                ? '#2563EB'
-                : '#DC2626';
-            return (
-              <TouchableOpacity
-                key={st}
-                activeOpacity={0.8}
-                onPress={() => setStatus(st)}
-                style={[
-                  styles.statusChip,
-                  isActive
-                    ? { backgroundColor: activeBg, borderColor: activeBg }
-                    : styles.inactiveStatusChip,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.statusChipText,
-                    isActive
-                      ? styles.activeStatusChipText
-                      : styles.inactiveStatusChipText,
-                  ]}
-                >
-                  {st === 'READY'
-                    ? '🟢 On Duty'
-                    : st === 'BUSY'
-                    ? '🚚 On Delivery'
-                    : '🔴 Off Duty'}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* Submit Button */}
-        <TouchableOpacity
-          activeOpacity={0.8}
-          style={styles.submitBtn}
-          onPress={handleSaveDeliveryBoy}
-        >
-          <Ionicons
-            name="checkmark-circle"
-            size={20}
-            color="#FFFFFF"
-            style={{ marginRight: 8 }}
-          />
-          <Text style={styles.submitBtnText}>Register Partner to Fleet</Text>
-        </TouchableOpacity>
       </KeyboardAwareScrollView>
 
-      {/* CUSTOM DIALOG POPUP */}
+      {/* Dialog for Photo Selection */}
       <CustomDialog
         visible={dialogConfig.visible}
         title={dialogConfig.title}
@@ -478,29 +265,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FAF8F5',
   },
-  toast: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
-    right: 20,
-    backgroundColor: '#8C331A',
-    borderRadius: 14,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    zIndex: 999,
-    elevation: 6,
-  },
-  toastText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
-    marginLeft: 10,
-  },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 40,
+    paddingTop: 8,
+    paddingBottom: 32,
   },
   avatarSection: {
     alignItems: 'center',
@@ -510,14 +278,14 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   avatarImg: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
   },
   avatarPlaceholder: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     backgroundColor: '#FDEEEB',
     justifyContent: 'center',
     alignItems: 'center',
@@ -527,8 +295,8 @@ const styles = StyleSheet.create({
   },
   cameraIconCircle: {
     position: 'absolute',
-    bottom: 2,
-    right: 2,
+    bottom: 0,
+    right: 0,
     backgroundColor: '#8C331A',
     width: 28,
     height: 28,
@@ -540,156 +308,98 @@ const styles = StyleSheet.create({
   },
   avatarHelpText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#7C6E65',
     marginTop: 8,
   },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#8C331A',
-    marginLeft: 6,
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    shadowColor: '#8C331A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 3,
+    marginTop: 6,
   },
   label: {
-    fontSize: 12,
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#5C4A3E',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF7F4',
+    borderWidth: 1.5,
+    borderColor: '#E8DED6',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 48,
+  },
+  inputIcon: {
+    marginRight: 8,
+  },
+  countryCode: {
+    fontSize: 15,
     fontWeight: '700',
-    color: '#2C201A',
-    marginBottom: 6,
-    marginTop: 8,
+    color: '#2C1E18',
+    marginRight: 8,
   },
   input: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#EFECE9',
-    paddingHorizontal: 14,
-    height: 48,
+    flex: 1,
     fontSize: 14,
-    color: '#2C201A',
-    marginBottom: 6,
+    color: '#2C1E18',
+    fontWeight: '600',
+    padding: 0,
   },
-  rowTwoInputs: {
-    flexDirection: 'row',
-  },
-  vehicleGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  vehicleCard: {
-    width: '48%',
+  noticeBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#EFECE9',
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    marginBottom: 8,
-  },
-  vehicleCardActive: {
-    backgroundColor: '#8C331A',
-    borderColor: '#8C331A',
-  },
-  vehicleText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#2C201A',
-    marginLeft: 8,
-  },
-  vehicleTextActive: {
-    color: '#FFFFFF',
-  },
-  photoUploadRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  photoUploadCard: {
-    width: '48%',
-    height: 100,
-    borderRadius: 16,
-    overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#EFECE9',
-    borderStyle: 'dashed',
-  },
-  uploadPlaceholder: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 8,
-  },
-  uploadLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#2C201A',
-    marginTop: 4,
-  },
-  uploadSub: {
-    fontSize: 10,
-    color: '#7C6E65',
-  },
-  uploadPreview: {
-    width: '100%',
-    height: '100%',
-  },
-  statusRow: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
-  statusChip: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 14,
-    alignItems: 'center',
-    marginRight: 6,
+    backgroundColor: '#ECFDF5',
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 16,
     borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 8,
   },
-  activeStatusChip: {
-    backgroundColor: '#8C331A',
-    borderColor: '#8C331A',
-  },
-  inactiveStatusChip: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#EFECE9',
-  },
-  statusChipText: {
+  noticeText: {
+    flex: 1,
     fontSize: 12,
-    fontWeight: '700',
-  },
-  activeStatusChipText: {
-    color: '#FFFFFF',
-  },
-  inactiveStatusChipText: {
-    color: '#6E6259',
+    color: '#065F46',
+    lineHeight: 16,
+    fontWeight: '500',
   },
   submitBtn: {
     backgroundColor: '#8C331A',
-    borderRadius: 26,
-    height: 52,
+    borderRadius: 12,
+    height: 48,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 18,
-    marginBottom: 20,
-    elevation: 3,
+    marginTop: 20,
     shadowColor: '#8C331A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
     shadowRadius: 6,
+    elevation: 3,
+  },
+  submitBtnDisabled: {
+    backgroundColor: '#C5A496',
   },
   submitBtnText: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  btnIcon: {
+    marginLeft: 8,
   },
 });

@@ -7,7 +7,6 @@ interface AuthContextType {
   userRole: UserRole;
   userMobile: string;
   userProfile: UserProfile;
-  login: (mobile?: string, role?: UserRole) => void;
   logout: () => void;
 }
 
@@ -19,19 +18,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     userRole,
     userMobile,
     userProfile,
-    login: appLogin,
     logout,
   } = useApp();
-
-  const handleLogin = (mobile?: string, role?: UserRole) => {
-    let mappedRole: 'ADMIN' | 'DELIVERY_PARTNER' | undefined;
-    if (role === 'OWNER' || role === 'ADMIN') {
-      mappedRole = 'ADMIN';
-    } else if (role === 'DELIVERY_PARTNER') {
-      mappedRole = 'DELIVERY_PARTNER';
-    }
-    appLogin(mobile, mappedRole);
-  };
 
   return (
     <AuthContext.Provider
@@ -45,7 +33,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           name: userProfile.fullName,
           role: (userRole === 'ADMIN' ? 'OWNER' : 'DELIVERY_PARTNER') as string,
         },
-        login: handleLogin,
         logout,
       }}
     >

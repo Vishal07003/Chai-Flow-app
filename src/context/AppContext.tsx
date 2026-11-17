@@ -274,13 +274,11 @@ export interface AppContextType {
   deleteSelectedNotifications: (ids: string[]) => void;
   clearAllNotifications: () => Promise<void> | void;
 
-  /* Auth & User Profile & Two Roles */
+  /* Auth & User Profile & Role strictly determined by Backend */
   isAuthenticated: boolean;
   userMobile: string;
   setUserMobile: (mobile: string) => void;
   userRole: UserRole;
-  setUserRole: (role: UserRole) => void;
-  login: (mobile?: string, role?: UserRole) => Promise<void> | void;
   loginWithVerifiedUser: (userResponse: any) => Promise<void>;
   logout: () => Promise<void> | void;
 
@@ -351,15 +349,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const openDrawer = () => setIsDrawerOpen(true);
   const closeDrawer = () => setIsDrawerOpen(false);
 
-  /* Auth State & Two Roles (ADMIN & DELIVERY_PARTNER) */
+  /* Auth State & Authenticated Role strictly determined by Backend */
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [userMobile, setUserMobile] = useState<string>('+91 1234567899');
+  const [userMobile, setUserMobile] = useState<string>('');
   const [userRole, setUserRole] = useState<UserRole>('ADMIN');
 
   const loginWithVerifiedUser = async (userResponse: any) => {
-    const role = userResponse?.profile?.role || 'customer';
+    const role = userResponse?.profile?.role || (userResponse?.is_staff ? 'owner' : 'customer');
     const phone = userResponse?.profile?.phone || userMobile;
-    const formattedPhone = phone.startsWith('+91') ? phone : `+91 ${phone}`;
+    const formattedPhone = phone?.startsWith('+91') ? phone : `+91 ${phone}`;
 
     setUserMobile(formattedPhone);
 
@@ -372,17 +370,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         email: userResponse.email || `${userResponse.username}@chaiflow.in`,
         businessName: 'ChaiFlow Fleet',
         address: userResponse?.profile?.address || 'Hub Central',
-        avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(userResponse.username || 'Delivery')}&background=3B82F6&color=FFF`,
+        avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(userResponse.username || 'Delivery')}&background=059669&color=FFF`,
         vehicle: 'Hero Electric Splendor',
         plateNumber: 'KA-01-EA-9920',
       });
     } else {
       setUserRole('ADMIN');
       setUserProfile({
-        fullName: `${userResponse.first_name || ''} ${userResponse.last_name || ''}`.trim() || 'Arjun Mehta',
-        role: role === 'owner' ? 'Network Owner' : 'Customer Account',
+        fullName: `${userResponse.first_name || ''} ${userResponse.last_name || ''}`.trim() || userResponse.username || 'Owner',
+        role: 'Network Owner',
         phone: formattedPhone,
-        email: userResponse.email || 'arjun@chaiflow.in',
+        email: userResponse.email || 'owner@chaiflow.in',
         businessName: 'ChaiFlow Beverages',
         address: userResponse?.profile?.address || 'Shop 14, Kirti Nagar, New Delhi',
         avatarUrl:
@@ -391,79 +389,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     setIsAuthenticated(true);
-    await notificationService.registerDeviceToken();
-  };
-
-  const login = async (mobile?: string, roleOverride?: UserRole) => {
-    const targetMobile = mobile || userMobile;
-    try {
-      await authService.login(targetMobile, 'ChaiPass@123');
-    } catch {
-      // Offline / fallback demo login support
-    }
-    const cleanDigits = (str: string) =>
-      (str || '').replace(/\D/g, '').slice(-10);
-    const inputDigits = cleanDigits(targetMobile);
-
-    // Find if entered phone matches any registered Delivery Partner
-    const matchedBoy = deliveryBoys.find(
-      b =>
-        b.phone &&
-        cleanDigits(b.phone) === inputDigits &&
-        inputDigits.length >= 8,
-    );
-
-    if (matchedBoy) {
-      const formattedPhone = matchedBoy.phone || targetMobile;
-      setUserMobile(formattedPhone);
-      setUserRole('DELIVERY_PARTNER');
-      setUserProfile({
-        fullName: matchedBoy.name,
-        role: 'Delivery Partner',
-        phone: formattedPhone,
-        email: `${matchedBoy.name
-          .toLowerCase()
-          .replace(/\s+/g, '')}@chaiflow.in`,
-        businessName: 'ChaiFlow Delivery Partner',
-        address: matchedBoy.location || 'Hub Central',
-        avatarUrl:
-          matchedBoy.avatarUrl ||
-          `https://ui-avatars.com/api/?name=${encodeURIComponent(
-            matchedBoy.name,
-          )}&background=3B82F6&color=FFF`,
-        vehicle:
-          matchedBoy.vehicleModel ||
-          matchedBoy.vehicleType ||
-          'Hero Electric Splendor',
-        plateNumber: matchedBoy.numberPlate || 'KA-01-EA-9920',
-      });
-    } else {
-      const resolvedRole = roleOverride || 'ADMIN';
-      const formattedPhone =
-        targetMobile === '+91 0000000000' ||
-          !targetMobile ||
-          inputDigits === '1234567899'
-          ? '+91 1234567899'
-          : targetMobile.startsWith('+91')
-            ? targetMobile
-            : `+91 ${targetMobile.trim()}`;
-
-      setUserMobile(formattedPhone);
-      setUserRole(resolvedRole);
-      setUserProfile({
-        fullName: 'Arjun Mehta',
-        role: 'Network Owner',
-        phone: formattedPhone,
-        email: 'arjun@chaiflow.in',
-        businessName: 'ChaiFlow Beverages',
-        address: 'Shop 14, Kirti Nagar, New Delhi',
-        avatarUrl:
-          'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
-      });
-    }
-
-    setIsAuthenticated(true);
-    // Register FCM device token for authenticated user session
     await notificationService.registerDeviceToken();
   };
 
@@ -587,9 +512,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
             }
           } catch (sessionErr) {
             console.log('Session verification expired or unreachable:', sessionErr);
-            // If token invalid, clear tokens
-            const refreshToken = await apiClient.getRefreshToken();
-            if (!refreshToken) {
+            // Attempt token renewal via refresh token
+            const refreshed = await apiClient.refreshAccessToken();
+            if (refreshed) {
+              try {
+                const refreshedUser = await authService.getCurrentUser();
+                if (refreshedUser) {
+                  const role = refreshedUser?.profile?.role || 'customer';
+                  setUserRole(role === 'delivery' ? 'DELIVERY_PARTNER' : 'ADMIN');
+                  setIsAuthenticated(true);
+                }
+              } catch {
+                await apiClient.clearTokens();
+                setIsAuthenticated(false);
+              }
+            } else {
               await apiClient.clearTokens();
               setIsAuthenticated(false);
             }
@@ -1489,8 +1426,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         userMobile,
         setUserMobile,
         userRole,
-        setUserRole,
-        login,
         loginWithVerifiedUser,
         logout,
 

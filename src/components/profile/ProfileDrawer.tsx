@@ -26,15 +26,12 @@ export default function ProfileDrawer(props?: DrawerContentComponentProps) {
     closeDrawer,
     userProfile,
     userRole,
-    setUserRole,
     logout,
   } = useApp();
   const navigation = useNavigation<any>();
 
   const isDelivery = userRole === 'DELIVERY_PARTNER';
   const accentColor = isDelivery ? '#059669' : '#8C331A';
-  const cardBg = isDelivery ? '#ECFDF5' : '#FDEBE4';
-  const cardBorder = isDelivery ? '#A7F3D0' : '#F5C6B8';
 
   const lastTapTime = useRef<number>(0);
   const handleDebouncedAction = (action: () => void) => {
@@ -51,19 +48,6 @@ export default function ProfileDrawer(props?: DrawerContentComponentProps) {
       props.navigation.closeDrawer();
     }
     closeDrawer();
-  };
-
-  const handleToggleRole = () => {
-    handleDebouncedAction(() => {
-      safeCloseDrawer();
-      const newRole = userRole === 'ADMIN' ? 'DELIVERY_PARTNER' : 'ADMIN';
-      setUserRole(newRole);
-      triggerToast(
-        `Switched to ${
-          newRole === 'ADMIN' ? 'Owner / Admin' : 'Delivery Partner'
-        } Mode!`,
-      );
-    });
   };
 
   const [activeModal, setActiveModal] = useState<
@@ -103,6 +87,24 @@ export default function ProfileDrawer(props?: DrawerContentComponentProps) {
       safeCloseDrawer();
       try {
         navigation.navigate('Reports');
+      } catch (e) {}
+    });
+  };
+
+  const handleNavigateToTracking = () => {
+    handleDebouncedAction(() => {
+      safeCloseDrawer();
+      try {
+        navigation.navigate('Tracking');
+      } catch (e) {}
+    });
+  };
+
+  const handleNavigateToHistory = () => {
+    handleDebouncedAction(() => {
+      safeCloseDrawer();
+      try {
+        navigation.navigate('History');
       } catch (e) {}
     });
   };
@@ -189,38 +191,6 @@ export default function ProfileDrawer(props?: DrawerContentComponentProps) {
         contentContainerStyle={styles.menuScrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Dynamic Role Switch Card */}
-        <View
-          style={[
-            styles.roleSwitchCard,
-            { backgroundColor: cardBg, borderColor: cardBorder },
-          ]}
-        >
-          <View style={styles.roleSwitchInfo}>
-            <View style={styles.roleIconCircle}>
-              <Ionicons
-                name={userRole === 'ADMIN' ? 'shield-checkmark' : 'bicycle'}
-                size={16}
-                color={accentColor}
-              />
-            </View>
-            <View style={{ marginLeft: 10, flex: 1 }}>
-              <Text style={[styles.roleSwitchTitle, { color: accentColor }]}>
-                {userRole === 'ADMIN' ? 'Owner Mode' : 'Delivery Mode'}
-              </Text>
-              <Text style={styles.roleSwitchSub}>
-                Tap switch to test partner flow
-              </Text>
-            </View>
-          </View>
-          <Switch
-            value={userRole === 'DELIVERY_PARTNER'}
-            onValueChange={handleToggleRole}
-            trackColor={{ false: '#EFECE9', true: accentColor }}
-            thumbColor="#FFFFFF"
-          />
-        </View>
-
         <TouchableOpacity
           activeOpacity={0.7}
           style={styles.menuItem}
@@ -249,19 +219,55 @@ export default function ProfileDrawer(props?: DrawerContentComponentProps) {
           <Text style={styles.menuText}>Settings</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          activeOpacity={0.7}
-          style={styles.menuItem}
-          onPress={handleNavigateToReports}
-        >
-          <Ionicons
-            name="document-text-outline"
-            size={20}
-            color={accentColor}
-            style={styles.menuIcon}
-          />
-          <Text style={styles.menuText}>Reports & Invoices</Text>
-        </TouchableOpacity>
+        {/* Owner-Specific Options */}
+        {!isDelivery && (
+          <TouchableOpacity
+            activeOpacity={0.7}
+            style={styles.menuItem}
+            onPress={handleNavigateToReports}
+          >
+            <Ionicons
+              name="document-text-outline"
+              size={20}
+              color={accentColor}
+              style={styles.menuIcon}
+            />
+            <Text style={styles.menuText}>Reports & Invoices</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Delivery Partner Specific Options */}
+        {isDelivery && (
+          <>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              style={styles.menuItem}
+              onPress={handleNavigateToTracking}
+            >
+              <Ionicons
+                name="navigate-outline"
+                size={20}
+                color={accentColor}
+                style={styles.menuIcon}
+              />
+              <Text style={styles.menuText}>Tracking</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.7}
+              style={styles.menuItem}
+              onPress={handleNavigateToHistory}
+            >
+              <Ionicons
+                name="time-outline"
+                size={20}
+                color={accentColor}
+                style={styles.menuIcon}
+              />
+              <Text style={styles.menuText}>Delivery History</Text>
+            </TouchableOpacity>
+          </>
+        )}
 
         <TouchableOpacity
           activeOpacity={0.7}
