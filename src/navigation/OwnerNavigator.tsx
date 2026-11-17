@@ -22,6 +22,7 @@ import CompaniesScreen from '../Screens/owner/CompaniesScreen';
 import CustomersScreen from '../Screens/owner/CustomersScreen';
 import ProductsScreen from '../Screens/owner/ProductsScreen';
 import DeliveryScreen from '../Screens/owner/DeliveryScreen';
+import OwnerDeliveryTrackingScreen from '../Screens/owner/DeliveryTrackingScreen';
 import ScheduleScreen from '../Screens/owner/ScheduleScreen';
 import ProfileDrawer from '../components/profile/ProfileDrawer';
 
@@ -41,6 +42,7 @@ export type OwnerStackParamList = {
   ProductDetail: { product?: any; mode?: 'add' | 'edit' } | undefined;
   Reports: undefined;
   Delivery: undefined;
+  DeliveryTracking: { deliveryId: number | string };
   Schedule: undefined;
   AddDeliveryBoy: undefined;
   AddRouteSchedule: undefined;
@@ -105,6 +107,7 @@ export default function OwnerNavigator() {
       <Stack.Screen name="ProductDetail" component={ProductDetailScreen} />
       <Stack.Screen name="Reports" component={ReportsScreen} />
       <Stack.Screen name="Delivery" component={DeliveryScreen} />
+      <Stack.Screen name="DeliveryTracking" component={OwnerDeliveryTrackingScreen} />
       <Stack.Screen name="Schedule" component={ScheduleScreen} />
       <Stack.Screen name="AddDeliveryBoy" component={AddDeliveryBoyScreen} />
       <Stack.Screen name="AddRouteSchedule" component={AddRouteScheduleScreen} />

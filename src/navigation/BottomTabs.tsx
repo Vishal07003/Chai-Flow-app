@@ -11,10 +11,11 @@ import OrdersScreen from '../Screens/owner/OrdersScreen';
 import QuickBillingScreen from '../Screens/owner/QuickBillingScreen';
 import MoreScreen from '../Screens/owner/MoreScreen';
 
-// Delivery Partner Screens
+// Delivery Partner Screens (Approved 5 Tabs: Home, My Deliveries, Tracking, History, Profile)
 import HomeScreen from '../Screens/delivery/HomeScreen';
 import DeliveryOrdersScreen from '../Screens/delivery/OrdersScreen';
-import DeliveryPaymentScreen from '../Screens/delivery/PaymentScreen';
+import TrackingScreen from '../Screens/delivery/TrackingScreen';
+import DeliveryHistoryScreen from '../Screens/delivery/HistoryScreen';
 import DeliveryProfileScreen from '../Screens/delivery/ProfileScreen';
 
 const Tab = createBottomTabNavigator();
@@ -41,7 +42,7 @@ export default function BottomTabs() {
           borderTopWidth: 1,
         },
         tabBarLabelStyle: {
-          fontSize: 10,
+          fontSize: 9,
           fontWeight: '700',
           letterSpacing: 0.3,
         },
@@ -55,8 +56,11 @@ export default function BottomTabs() {
             case 'DeliveryOrders':
               iconName = focused ? 'bicycle' : 'bicycle-outline';
               break;
-            case 'DeliveryPayments':
-              iconName = focused ? 'wallet' : 'wallet-outline';
+            case 'Tracking':
+              iconName = focused ? 'navigate' : 'navigate-outline';
+              break;
+            case 'History':
+              iconName = focused ? 'time' : 'time-outline';
               break;
             case 'DeliveryProfile':
               iconName = focused ? 'person' : 'person-outline';
@@ -99,9 +103,14 @@ export default function BottomTabs() {
             options={{ tabBarLabel: 'MY DELIVERIES' }}
           />
           <Tab.Screen
-            name="DeliveryPayments"
-            component={DeliveryPaymentScreen}
-            options={{ tabBarLabel: 'PAYMENTS' }}
+            name="Tracking"
+            component={TrackingScreen}
+            options={{ tabBarLabel: 'TRACKING' }}
+          />
+          <Tab.Screen
+            name="History"
+            component={DeliveryHistoryScreen}
+            options={{ tabBarLabel: 'HISTORY' }}
           />
           <Tab.Screen
             name="DeliveryProfile"
