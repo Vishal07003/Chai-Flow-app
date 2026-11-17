@@ -1,9 +1,39 @@
+import { Platform, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import deliveryService, { LocationPingPayload } from '../services/delivery.service';
 
 const LOCATION_BUFFER_KEY = '@chaiflow_buffered_location_pings';
 
+// State holder for active foreground tracking interval
+let activeTrackingInterval: any = null;
+let activeTrackingDeliveryId: number | string | null = null;
+
 export const locationTrackingService = {
+  /**
+   * Request Location & Notification Permissions on Android
+   */
+  async requestLocationPermissions(): Promise<boolean> {
+    if (Platform.OS !== 'android') return true;
+
+    try {
+      const fineLocationGranted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        {
+          title: 'Chai Flow Location Permission',
+          message: 'Chai Flow needs access to your GPS to track your active delivery runs.',
+          buttonNeutral: 'Ask Later',
+          buttonNegative: 'Deny',
+          buttonPositive: 'Allow',
+        }
+      );
+
+      return fineLocationGranted === PermissionsAndroid.RESULTS.GRANTED;
+    } catch (err) {
+      console.log('Error requesting location permissions:', err);
+      return false;
+    }
+  },
+
   /**
    * Save location ping to local storage buffer (offline resilience)
    */
@@ -72,7 +102,79 @@ export const locationTrackingService = {
       return false;
     }
   },
+
+  /**
+   * Start tracking interval when delivery enters 'on_the_way'
+   */
+  async startTrackingForDelivery(
+    deliveryId: number | string,
+    getCurrentCoords?: () => Promise<{ latitude: number; longitude: number; speed?: number; accuracy?: number } | null>
+  ): Promise<boolean> {
+    const hasPermission = await this.requestLocationPermissions();
+    if (!hasPermission) {
+      console.log('GPS tracking permission not granted');
+      return false;
+    }
+
+    // Stop any existing tracking loop
+    this.stopTracking();
+
+    activeTrackingDeliveryId = deliveryId;
+
+    // Send initial ping if coordinate getter supplied
+    if (getCurrentCoords) {
+      try {
+        const coords = await getCurrentCoords();
+        if (coords) {
+          await this.pingLocation(deliveryId, {
+            ...coords,
+            recorded_at: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        console.log('Error recording initial GPS ping:', err);
+      }
+    }
+
+    // Poll location every 20 seconds (battery and bandwidth efficient)
+    activeTrackingInterval = setInterval(async () => {
+      if (!activeTrackingDeliveryId) {
+        this.stopTracking();
+        return;
+      }
+
+      if (getCurrentCoords) {
+        try {
+          const coords = await getCurrentCoords();
+          if (coords) {
+            await this.pingLocation(activeTrackingDeliveryId, {
+              ...coords,
+              recorded_at: new Date().toISOString(),
+            });
+          }
+        } catch (err) {
+          console.log('Error in location ping cycle:', err);
+        }
+      }
+    }, 20000);
+
+    return true;
+  },
+
+  /**
+   * Stop tracking after Delivered, Failed or Cancelled
+   */
+  stopTracking(): void {
+    if (activeTrackingInterval) {
+      clearInterval(activeTrackingInterval);
+      activeTrackingInterval = null;
+    }
+    activeTrackingDeliveryId = null;
+  },
+
+  getActiveTrackingDeliveryId(): number | string | null {
+    return activeTrackingDeliveryId;
+  },
 };
 
 export default locationTrackingService;
-

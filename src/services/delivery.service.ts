@@ -91,6 +91,31 @@ export const deliveryService = {
   },
 
   /**
+   * Get full live tracking details, breadcrumbs, and status history (Owner / Partner)
+   */
+  async getTrackingHistory(id: number | string): Promise<{
+    delivery_id: number;
+    status: BackendDelivery['status'];
+    driver: DriverDetails | null;
+    current_lat: number | null;
+    current_lng: number | null;
+    updated_at: string;
+    pickup_time: string | null;
+    delivered_time: string | null;
+    location_logs: Array<{
+      id: number;
+      latitude: number;
+      longitude: number;
+      accuracy?: number;
+      speed?: number;
+      recorded_at: string;
+    }>;
+    status_history: DeliveryStatusHistoryItem[];
+  }> {
+    return apiClient.get(`/deliveries/${id}/tracking-history/`);
+  },
+
+  /**
    * Assign or reassign delivery driver to an order (Owner only)
    */
   async assignDriver(deliveryId: number | string, driverId: number): Promise<BackendDelivery> {
