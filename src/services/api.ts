@@ -75,6 +75,9 @@ class ApiClient {
 
       const data = await response.json();
       await AsyncStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access);
+      if (data.refresh) {
+        await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh);
+      }
       return data.access;
     } catch {
       return null;
