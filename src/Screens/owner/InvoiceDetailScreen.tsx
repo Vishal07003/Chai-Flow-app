@@ -142,9 +142,26 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
       setDialogConfig({
         visible: true,
         title: 'PDF Downloaded ✅',
-        message: `Invoice saved successfully to:\n${res.filePath}`,
+        message: `Invoice saved successfully to Downloads:\n${res.filename}`,
         type: 'success',
-        buttons: [{ text: 'OK', onPress: closeDialog }],
+        buttons: [
+          {
+            text: 'Open PDF',
+            onPress: () => {
+              closeDialog();
+              pdfService.openInvoicePdf(cleanId, currentOrder.invoiceNo).catch(err => {
+                setDialogConfig({
+                  visible: true,
+                  title: 'Unable to Open',
+                  message: err.message || 'No app available to open PDF.',
+                  type: 'warning',
+                  buttons: [{ text: 'OK', onPress: closeDialog }],
+                });
+              });
+            },
+          },
+          { text: 'OK', onPress: closeDialog },
+        ],
       });
     } catch (err: any) {
       setDialogConfig({

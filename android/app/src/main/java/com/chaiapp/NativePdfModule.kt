@@ -1,8 +1,12 @@
 package com.chaiapp
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.print.PrintAttributes
 import android.print.PrintDocumentAdapter
 import android.print.PrintManager
@@ -19,11 +23,99 @@ import com.facebook.react.bridge.ReactMethod
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 
 class NativePdfModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
 
     override fun getName(): String = "NativePdfModule"
+
+    @ReactMethod
+    fun saveToPublicDownloads(sourceFilePath: String, filename: String, promise: Promise) {
+        try {
+            val sourceFile = File(sourceFilePath)
+            if (!sourceFile.exists() || sourceFile.length() == 0L) {
+                promise.reject("INVALID_FILE", "Source file does not exist or is empty: $sourceFilePath")
+                return
+            }
+
+            var finalDestination = ""
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Scoped Storage: Insert into MediaStore.Downloads
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+
+                val resolver = reactContext.contentResolver
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                    ?: throw Exception("Failed to create MediaStore download record.")
+
+                resolver.openOutputStream(uri)?.use { outStream ->
+                    FileInputStream(sourceFile).use { inStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+
+                contentValues.clear()
+                contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                resolver.update(uri, contentValues, null, null)
+
+                finalDestination = "Downloads/$filename"
+            } else {
+                // Legacy storage (Android 9 and below)
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                if (!downloadsDir.exists()) {
+                    downloadsDir.mkdirs()
+                }
+                val destFile = File(downloadsDir, filename)
+                FileInputStream(sourceFile).use { inStream ->
+                    FileOutputStream(destFile).use { outStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+                finalDestination = destFile.absolutePath
+            }
+
+            promise.resolve(finalDestination)
+        } catch (e: Exception) {
+            promise.reject("SAVE_FAILED", "Failed saving to public Downloads: ${e.localizedMessage}", e)
+        }
+    }
+
+    @ReactMethod
+    fun viewPdf(filePath: String, title: String, promise: Promise) {
+        try {
+            val file = File(filePath)
+            if (!file.exists() || file.length() == 0L) {
+                promise.reject("FILE_NOT_FOUND", "The specified PDF file does not exist or is empty: $filePath")
+                return
+            }
+
+            val authority = "${reactContext.packageName}.provider"
+            val uri: Uri = FileProvider.getUriForFile(reactContext, authority, file)
+
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/pdf")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            val chooser = Intent.createChooser(viewIntent, title).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            reactContext.startActivity(chooser)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("VIEW_ERROR", "Failed to open PDF viewer: ${e.localizedMessage}", e)
+        }
+    }
 
     @ReactMethod
     fun sharePdf(filePath: String, title: String, promise: Promise) {

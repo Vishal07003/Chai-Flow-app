@@ -4,9 +4,9 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useApp } from '../context/AppContext';
 
-// Owner Screens (Approved 5 Tabs: Dashboard, Companies, Orders, Billing, More)
+// Owner Screens (Approved 5 Tabs: Dashboard, Customers, Orders, Billing, More)
 import DashboardScreen from '../Screens/owner/DashboardScreen';
-import CompaniesScreen from '../Screens/owner/CompaniesScreen';
+import CustomersScreen from '../Screens/owner/CustomersScreen';
 import OrdersScreen from '../Screens/owner/OrdersScreen';
 import QuickBillingScreen from '../Screens/owner/QuickBillingScreen';
 import MoreScreen from '../Screens/owner/MoreScreen';
@@ -68,8 +68,8 @@ export default function BottomTabs() {
             case 'Dashboard':
               iconName = focused ? 'grid' : 'grid-outline';
               break;
-            case 'Companies':
-              iconName = focused ? 'business' : 'business-outline';
+            case 'Customers':
+              iconName = focused ? 'people' : 'people-outline';
               break;
             case 'Orders':
               iconName = focused ? 'cart' : 'cart-outline';
@@ -126,9 +126,9 @@ export default function BottomTabs() {
             options={{ tabBarLabel: 'HOME' }}
           />
           <Tab.Screen
-            name="Companies"
-            component={CompaniesScreen}
-            options={{ tabBarLabel: 'COMPANIES' }}
+            name="Customers"
+            component={CustomersScreen}
+            options={{ tabBarLabel: 'CUSTOMERS' }}
           />
           <Tab.Screen
             name="Orders"

@@ -8,6 +8,7 @@ const { NativePdfModule } = NativeModules;
 export interface InvoicePdfDownloadResult {
   filePath: string;
   filename: string;
+  publicPath?: string;
 }
 
 export const pdfService = {
@@ -19,18 +20,18 @@ export const pdfService = {
   },
 
   /**
-   * Downloads the authenticated PDF from Django backend into local device storage.
-   * Cleans up or avoids repeated downloading if cached.
+   * Downloads the authenticated PDF from Django backend into local device storage,
+   * validates non-zero byte size, and copies into public Downloads folder on Android.
    */
   async downloadInvoicePdf(
     invoiceId: number | string,
     invoiceNumber?: string,
   ): Promise<InvoicePdfDownloadResult> {
     const token = await apiClient.getAccessToken();
-    const cleanNum = (invoiceNumber || `INV-${invoiceId}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const cleanNum = (invoiceNumber || `Invoice_${invoiceId}`).replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `ChaiFlow_${cleanNum}.pdf`;
 
-    // Save in DocumentDirectoryPath for persistent accessible storage
+    // Save in DocumentDirectoryPath for persistent accessible app storage
     const targetDir = RNFS.DocumentDirectoryPath;
     const filePath = `${targetDir}/${filename}`;
 
@@ -51,14 +52,51 @@ export const pdfService = {
     }).promise;
 
     if (downloadResult.statusCode !== 200) {
-      // Clean up failed file if exists
       if (await RNFS.exists(filePath)) {
         await RNFS.unlink(filePath).catch(() => {});
       }
       throw new Error(`Failed to download invoice PDF (Status ${downloadResult.statusCode})`);
     }
 
-    return { filePath, filename };
+    // Verify file actually exists and has non-zero size
+    const fileExists = await RNFS.exists(filePath);
+    if (!fileExists) {
+      throw new Error('Downloaded invoice PDF file was not found on device storage.');
+    }
+
+    const stat = await RNFS.stat(filePath);
+    if (stat.size <= 0) {
+      await RNFS.unlink(filePath).catch(() => {});
+      throw new Error('Downloaded invoice PDF is empty (0 bytes).');
+    }
+
+    // On Android, copy file into public Android Downloads using MediaStore
+    let publicPath = filePath;
+    if (Platform.OS === 'android' && NativePdfModule?.saveToPublicDownloads) {
+      try {
+        publicPath = await NativePdfModule.saveToPublicDownloads(filePath, filename);
+      } catch (err) {
+        console.warn('[PDF Download] MediaStore save warning:', err);
+      }
+    }
+
+    return { filePath, filename, publicPath };
+  },
+
+  /**
+   * Directly opens the invoice PDF in the device's default PDF viewer (e.g. Google Drive PDF, Adobe).
+   */
+  async openInvoicePdf(
+    invoiceId: number | string,
+    invoiceNumber?: string,
+  ): Promise<boolean> {
+    const { filePath, filename } = await this.downloadInvoicePdf(invoiceId, invoiceNumber);
+
+    if (Platform.OS === 'android' && NativePdfModule?.viewPdf) {
+      return await NativePdfModule.viewPdf(filePath, `Invoice ${filename}`);
+    }
+
+    throw new Error('Native PDF viewer is not available on this platform.');
   },
 
   /**
