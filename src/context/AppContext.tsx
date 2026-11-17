@@ -1245,7 +1245,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const assignOrderToBoy = async (boyId: string) => {
-    await deliveryService.assignOrder(boyId);
+    try {
+      await deliveryService.updateDeliveryBoy(boyId, { status: 'BUSY' });
+    } catch (e) {
+      console.log('Error updating partner status on assign:', e);
+    }
     setDeliveryBoys(prev =>
       prev.map(boy => {
         if (boy.id === boyId) {
@@ -1301,7 +1305,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     boyId: string,
     status: 'BUSY' | 'READY' | 'OFFLINE',
   ) => {
-    await deliveryService.updateStatus(boyId, status);
+    try {
+      await deliveryService.updateDeliveryBoy(boyId, { status });
+    } catch (e) {
+      console.log('Error updating fleet status:', e);
+    }
     setDeliveryBoys(prev =>
       prev.map(boy => {
         if (boy.id === boyId) {
