@@ -13,6 +13,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import RootNavigator from './navigation/RootNavigator';
 import { AppProvider } from './context/AppContext';
 import notificationService from './services/notification.service';
+import { toastConfig } from './components/common/ToastConfig';
 
 export default function App() {
   const navigationRef = useRef<NavigationContainerRef<any>>(null);
@@ -42,7 +43,7 @@ export default function App() {
             <RootNavigator />
           </NavigationContainer>
         </AppProvider>
-        <Toast />
+        <Toast config={toastConfig} />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
