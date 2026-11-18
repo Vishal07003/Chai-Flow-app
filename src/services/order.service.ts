@@ -27,6 +27,7 @@ export interface BackendOrder {
 }
 
 export interface CreateOrderPayload {
+  customer_id?: number | null;
   company_id?: number | null;
   delivery_address: string;
   notes?: string;
@@ -86,14 +87,60 @@ export interface PriceOverrideRequest {
   created_at: string;
 }
 
+export interface RecurringOrderItem {
+  id: number;
+  product: number;
+  product_name: string;
+  product_price: string;
+  quantity: number;
+}
+
+export interface BackendRecurringOrder {
+  id: number;
+  customer: number;
+  customer_profile?: number | null;
+  customer_name: string;
+  customer_phone?: string;
+  company?: number | null;
+  delivery_partner?: number | null;
+  delivery_partner_name?: string | null;
+  delivery_address: string;
+  frequency: 'daily' | 'weekdays';
+  weekdays?: string;
+  is_paused: boolean;
+  skipped_dates?: string[];
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+  items: RecurringOrderItem[];
+  is_scheduled_today: boolean;
+  today_order_generated: boolean;
+  today_order_id?: number | null;
+}
+
+export interface CreateRecurringOrderPayload {
+  customer_id?: number | null;
+  delivery_partner_id?: number | null;
+  delivery_address: string;
+  frequency: 'daily' | 'weekdays';
+  weekdays?: string;
+  is_paused?: boolean;
+  notes?: string;
+  items: Array<{
+    product_id: number;
+    quantity: number;
+  }>;
+}
+
 export const orderService = {
   /**
    * Fetch orders (scoped by role in backend)
    */
-  async getOrders(params?: { status?: string; company?: number | string }): Promise<BackendOrder[]> {
+  async getOrders(params?: { status?: string; company?: number | string; customer?: number | string }): Promise<BackendOrder[]> {
     const query = new URLSearchParams();
     if (params?.status) query.append('status', params.status);
     if (params?.company) query.append('company', String(params.company));
+    if (params?.customer) query.append('customer', String(params.customer));
     const qs = query.toString();
     return apiClient.get<BackendOrder[]>(`/orders/${qs ? `?${qs}` : ''}`);
   },
@@ -158,6 +205,51 @@ export const orderService = {
     data: { decision: 'APPROVED' | 'REJECTED'; notes?: string },
   ): Promise<PriceOverrideRequest> {
     return apiClient.post<PriceOverrideRequest>(`/orders/price-overrides/${requestId}/review/`, data);
+  },
+
+  /**
+   * Recurring Orders API
+   */
+  async getRecurringOrders(params?: { customer?: number; is_paused?: boolean }): Promise<BackendRecurringOrder[]> {
+    const query = new URLSearchParams();
+    if (params?.customer) query.append('customer', String(params.customer));
+    if (params?.is_paused !== undefined) query.append('is_paused', String(params.is_paused));
+    const qs = query.toString();
+    return apiClient.get<BackendRecurringOrder[]>(`/orders/recurring/${qs ? `?${qs}` : ''}`);
+  },
+
+  async createRecurringOrder(data: CreateRecurringOrderPayload): Promise<BackendRecurringOrder> {
+    return apiClient.post<BackendRecurringOrder>('/orders/recurring/', data);
+  },
+
+  async updateRecurringOrder(
+    id: number | string,
+    data: Partial<CreateRecurringOrderPayload>,
+  ): Promise<BackendRecurringOrder> {
+    return apiClient.patch<BackendRecurringOrder>(`/orders/recurring/${id}/`, data);
+  },
+
+  async pauseRecurringOrder(id: number | string): Promise<{ status: string }> {
+    return apiClient.post(`/orders/recurring/${id}/pause/`);
+  },
+
+  async resumeRecurringOrder(id: number | string): Promise<{ status: string }> {
+    return apiClient.post(`/orders/recurring/${id}/resume/`);
+  },
+
+  async skipRecurringDate(id: number | string, date?: string): Promise<{ status: string; skipped_dates: string[] }> {
+    return apiClient.post(`/orders/recurring/${id}/skip-date/`, { date });
+  },
+
+  async unskipRecurringDate(id: number | string, date?: string): Promise<{ status: string; skipped_dates: string[] }> {
+    return apiClient.post(`/orders/recurring/${id}/unskip-date/`, { date });
+  },
+
+  async generateOrderFromRecurring(
+    id: number | string,
+    date?: string,
+  ): Promise<{ success?: boolean; already_generated?: boolean; message: string; order: BackendOrder }> {
+    return apiClient.post(`/orders/recurring/${id}/generate-order/`, { date });
   },
 };
 

@@ -57,8 +57,8 @@ export const customerService = {
     try {
       const res = await apiClient.post<BackendCustomer>('/customers/', {
         name: customer.name,
-        phone: '+91 9999999999',
-        address: customer.address || 'Local Area',
+        phone: customer.phone || '',
+        address: customer.address || '',
       });
       return {
         ...customer,

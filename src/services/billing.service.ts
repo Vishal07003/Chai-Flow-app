@@ -81,10 +81,79 @@ export const billingService = {
   },
 
   /**
+   * Get single customer by ID
+   */
+  async getCustomerById(customerId: number | string): Promise<BillingCustomer> {
+    return apiClient.get<BillingCustomer>(`/billing/customers/${customerId}/`);
+  },
+
+  /**
+   * Get customer financial summary
+   */
+  async getCustomerSummary(customerId: number | string): Promise<{
+    customer_id: number;
+    name: string;
+    phone: string;
+    address: string;
+    total_invoices: number;
+    total_orders: number;
+    total_billed: string;
+    total_paid: string;
+    total_pending: string;
+    last_purchase_date: string | null;
+  }> {
+    return apiClient.get(`/billing/customers/${customerId}/summary/`);
+  },
+
+  /**
+   * Get dynamic customer ledger statement
+   */
+  async getCustomerLedger(customerId: number | string, year?: number, month?: number): Promise<any> {
+    const qs = year && month ? `?year=${year}&month=${month}` : '';
+    return apiClient.get(`/billing/customers/${customerId}/ledger/${qs}`);
+  },
+
+  /**
+   * Update customer profile
+   */
+  async updateCustomer(
+    customerId: number | string,
+    data: { name?: string; phone?: string; address?: string },
+  ): Promise<BillingCustomer> {
+    return apiClient.patch<BillingCustomer>(`/billing/customers/${customerId}/`, data);
+  },
+
+  /**
+   * Collect payment from customer with FIFO invoice allocation
+   */
+  async collectCustomerPayment(
+    customerId: number | string,
+    data: { amount: number | string; method?: string; notes?: string },
+  ): Promise<{
+    success: boolean;
+    customer_id: number;
+    amount_requested: string;
+    amount_allocated: string;
+    unallocated_credit: string;
+    invoices_settled: any[];
+  }> {
+    return apiClient.post(`/billing/customers/${customerId}/collect-payment/`, data);
+  },
+
+  /**
    * Create or save new customer
    */
-  async createCustomer(data: { name: string; phone: string; address?: string }): Promise<BillingCustomer> {
-    return apiClient.post<BillingCustomer>('/billing/customers/', data);
+  async createCustomer(data: {
+    name: string;
+    phone?: string;
+    address?: string;
+    opening_balance?: number;
+  }): Promise<BillingCustomer> {
+    return apiClient.post<BillingCustomer>('/billing/customers/', {
+      name: data.name,
+      phone: data.phone || '',
+      address: data.address || '',
+    });
   },
 
   /**
