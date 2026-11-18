@@ -79,7 +79,6 @@ export default function HomeScreen({ navigation }: any) {
           todayEarnings={1450}
           totalDeliveries={completedCount}
           codCollected={900}
-          onPressDetails={() => navigation.navigate('Earnings')}
         />
 
         <MapCard
