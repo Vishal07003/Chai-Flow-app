@@ -57,6 +57,9 @@ export interface InvoiceItem {
   status?: 'PENDING' | 'OVERDUE' | 'PAID';
   items?: InvoiceLineItem[];
   subtotal?: number;
+  discountAmount?: number;
+  paidAmount?: number;
+  pendingAmount?: number;
   tax?: number;
   notes?: string;
   deliveryPartnerName?: string;
@@ -164,6 +167,7 @@ export interface AppContextType {
   setActiveFilter: (filter: string) => void;
   sortBy: string;
   setSortBy: (sort: string) => void;
+  refreshBackendData: () => Promise<void>;
 
   addCustomer: (customer: Omit<Customer, 'id'>) => Promise<void> | void;
   collectPayment: (
@@ -405,6 +409,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     setIsAuthenticated(false);
   };
 
+  // Centralized Function to re-sync all live data from Django Backend
+  const refreshBackendData = useCallback(async () => {
+    try {
+      const [liveCustomers, liveProducts, livePartners, liveSchedules, liveInvoices, liveStats] =
+        await Promise.all([
+          customerService.getCustomers().catch(() => null),
+          productService.getProductsList().catch(() => null),
+          deliveryService.getDeliveryBoys().catch(() => null),
+          scheduleService.getSchedules().catch(() => null),
+          billingService.getInvoices().catch(() => null),
+          billingService.getDashboardStats().catch(() => null),
+        ]);
+
+      if (liveCustomers && liveCustomers.length > 0) setCustomers(liveCustomers);
+      if (liveProducts && liveProducts.length > 0) setProducts(liveProducts);
+      if (livePartners && livePartners.length > 0) setDeliveryBoys(livePartners);
+      if (liveSchedules && liveSchedules.length > 0) setSchedules(liveSchedules);
+
+      if (Array.isArray(liveInvoices) && liveInvoices.length > 0) {
+        const mappedInvoices: InvoiceItem[] = liveInvoices.map(inv => {
+          const grandNum = parseFloat(inv.grand_total) || 0;
+          const pendingNum = parseFloat(inv.pending_amount) || 0;
+          const isPaid = inv.status === 'paid' || pendingNum <= 0;
+          const isOverdue = !isPaid && Boolean(inv.is_overdue);
+          return {
+            id: String(inv.id),
+            invoiceNo: inv.invoice_number,
+            name: inv.customer_name || 'Walk-in Customer',
+            customerAddress: 'Counter Sale',
+            customerPhone: inv.customer_phone || '',
+            amount: `₹${grandNum.toLocaleString()}`,
+            numericAmount: grandNum,
+            due: isPaid
+              ? 'Paid in Full'
+              : isOverdue
+              ? `Overdue • ₹${pendingNum.toLocaleString()} due`
+              : `₹${pendingNum.toLocaleString()} due`,
+            date: inv.created_at ? new Date(inv.created_at).toLocaleDateString() : 'Today',
+            isOverdue: isOverdue,
+            status: isPaid ? 'PAID' : isOverdue ? 'OVERDUE' : 'PENDING',
+            deliveryPartnerName: 'Rahul Sharma',
+            deliveryStatus: isPaid ? 'Delivered' : 'Pending',
+            items: (inv.items || []).map(it => ({
+              id: String(it.id),
+              name: it.product_name,
+              qty: it.quantity,
+              price: parseFloat(it.unit_price) || 0,
+            })),
+            subtotal: parseFloat(inv.subtotal) || grandNum,
+            tax: 0,
+          };
+        });
+        setInvoices(mappedInvoices);
+      }
+
+      if (liveStats && liveStats.total_received) {
+        const recNum = parseFloat(liveStats.total_received) || 0;
+        setCollectionsTotal(recNum);
+      }
+    } catch (err) {
+      console.log('Error refreshing live backend data:', err);
+    }
+  }, []);
+
   /* -------------------------------------------------------------
    *  AsyncStorage Local Device Persistence Engine
    * ------------------------------------------------------------- */
@@ -461,61 +529,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
               setIsAuthenticated(true);
 
               // Dynamically fetch live data from Django Backend
-              try {
-                const [liveCustomers, liveProducts, livePartners, liveSchedules] = await Promise.all([
-                  customerService.getCustomers(),
-                  productService.getProductsList(),
-                  deliveryService.getDeliveryBoys(),
-                  scheduleService.getSchedules(),
-                ]);
-
-                if (liveCustomers && liveCustomers.length > 0) setCustomers(liveCustomers);
-                if (liveProducts && liveProducts.length > 0) setProducts(liveProducts);
-                if (livePartners && livePartners.length > 0) setDeliveryBoys(livePartners);
-                if (liveSchedules && liveSchedules.length > 0) setSchedules(liveSchedules);
-
-                // Fetch live invoices & dashboard stats
-                const liveInvoices = await billingService.getInvoices();
-                if (Array.isArray(liveInvoices) && liveInvoices.length > 0) {
-                  const mappedInvoices: InvoiceItem[] = liveInvoices.map(inv => {
-                    const grandNum = parseFloat(inv.grand_total) || 0;
-                    const pendingNum = parseFloat(inv.pending_amount) || 0;
-                    const isPaid = inv.status === 'paid' || pendingNum <= 0;
-                    return {
-                      id: String(inv.id),
-                      invoiceNo: inv.invoice_number,
-                      name: inv.customer_name || 'Walk-in Customer',
-                      customerAddress: 'Counter Sale',
-                      customerPhone: inv.customer_phone || '',
-                      amount: `₹${grandNum.toLocaleString()}`,
-                      numericAmount: grandNum,
-                      due: isPaid ? 'Paid in Full' : `₹${pendingNum.toLocaleString()} due`,
-                      date: inv.created_at ? new Date(inv.created_at).toLocaleDateString() : 'Today',
-                      isOverdue: !isPaid,
-                      status: isPaid ? 'PAID' : 'PENDING',
-                      deliveryPartnerName: 'Rahul Sharma',
-                      deliveryStatus: isPaid ? 'Delivered' : 'Pending',
-                      items: (inv.items || []).map(it => ({
-                        id: String(it.id),
-                        name: it.product_name,
-                        qty: it.quantity,
-                        price: parseFloat(it.unit_price) || 0,
-                      })),
-                      subtotal: parseFloat(inv.subtotal) || grandNum,
-                      tax: 0,
-                    };
-                  });
-                  setInvoices(mappedInvoices);
-                }
-
-                const liveStats = await billingService.getDashboardStats();
-                if (liveStats && liveStats.total_received) {
-                  const recNum = parseFloat(liveStats.total_received) || 0;
-                  setCollectionsTotal(recNum);
-                }
-              } catch (fetchErr) {
-                console.log('Error refreshing live backend data:', fetchErr);
-              }
+              await refreshBackendData();
             }
           } catch (sessionErr: any) {
             console.log('Session verification error:', sessionErr);
@@ -641,7 +655,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     if (activeFilter === 'Due Today') {
       result = result.filter(c => c.amount > 0 && !c.isOverdue);
     } else if (activeFilter === 'Defaulters') {
-      result = result.filter(c => c.isOverdue || c.badge === 'OVERDUE');
+      result = result.filter(c => c.amount > 0 && (c.isOverdue || c.badge === 'OVERDUE'));
     }
     if (sortBy === 'Name') {
       result.sort((a, b) => a.name.localeCompare(b.name));

@@ -36,6 +36,7 @@ export interface BackendInvoice {
   customer_name: string;
   customer_phone: string;
   subtotal: string;
+  discount_amount?: string;
   grand_total: string;
   status: 'unpaid' | 'partially_paid' | 'paid';
   notes?: string;
@@ -44,6 +45,7 @@ export interface BackendInvoice {
   payments: BackendPayment[];
   total_paid: string;
   pending_amount: string;
+  is_overdue?: boolean;
 }
 
 export interface CreateInvoicePayload {
@@ -51,6 +53,7 @@ export interface CreateInvoicePayload {
   customer_name?: string;
   customer_phone?: string;
   notes?: string;
+  discount_amount?: number | string;
   items: Array<{
     product_id?: number | null;
     product_name?: string;
@@ -69,6 +72,10 @@ export interface DashboardStats {
   online_received: string;
   total_received: string;
   total_pending: string;
+  paid_invoices_count?: number;
+  partially_paid_invoices_count?: number;
+  unpaid_invoices_count?: number;
+  defaulters_count?: number;
 }
 
 export const billingService = {

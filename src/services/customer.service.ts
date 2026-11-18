@@ -10,6 +10,8 @@ export interface BackendCustomer {
   total_bills: number;
   total_billed_amount: string;
   total_pending_amount: string;
+  is_defaulter?: boolean;
+  has_overdue?: boolean;
 }
 
 export const customerService = {
@@ -25,14 +27,17 @@ export const customerService = {
             .toUpperCase()
             .slice(0, 2);
           const pending = parseFloat(bc.total_pending_amount || '0');
+          const isOverdue = pending > 0 && Boolean(bc.is_defaulter || bc.has_overdue);
           return {
             id: String(bc.id),
             name: bc.name,
+            phone: bc.phone || '',
             address: bc.address || 'Local Area',
             amount: isNaN(pending) ? 0 : pending,
             deliveryStatus: `${bc.total_bills || 0} bills recorded`,
             hasDot: pending > 0,
-            isOverdue: pending > 0,
+            isOverdue: isOverdue,
+            badge: isOverdue ? 'OVERDUE' : undefined,
             initials,
             avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(
               bc.name || 'Customer',
