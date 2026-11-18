@@ -4,26 +4,22 @@ import { createDrawerNavigator } from '@react-navigation/drawer';
 import BottomTabs from './BottomTabs';
 import ProfileScreen from '../Screens/owner/ProfileScreen';
 import CustomerDetailScreen from '../Screens/owner/CustomerDetailScreen';
-import AddLeadScreen from '../Screens/owner/AddLeadScreen';
 import InvoicesScreen from '../Screens/owner/InvoicesScreen';
 import QuickBillingScreen from '../Screens/owner/QuickBillingScreen';
 import InvoiceDetailScreen from '../Screens/owner/InvoiceDetailScreen';
 import ProductDetailScreen from '../Screens/owner/ProductDetailScreen';
 import ReportsScreen from '../Screens/owner/ReportsScreen';
 import AddDeliveryBoyScreen from '../Screens/owner/AddDeliveryBoyScreen';
-import AddRouteScheduleScreen from '../Screens/owner/AddRouteScheduleScreen';
-import RouteBoysScreen from '../Screens/owner/RouteBoysScreen';
 import SettingsScreen from '../Screens/owner/SettingsScreen';
 import NotificationsScreen from '../Screens/NotificationsScreen';
 import PendingPaymentsScreen from '../Screens/owner/PendingPaymentsScreen';
 import MoreScreen from '../Screens/owner/MoreScreen';
 import OrdersScreen from '../Screens/owner/OrdersScreen';
-import CompaniesScreen from '../Screens/owner/CompaniesScreen';
 import CustomersScreen from '../Screens/owner/CustomersScreen';
 import ProductsScreen from '../Screens/owner/ProductsScreen';
 import DeliveryScreen from '../Screens/owner/DeliveryScreen';
 import OwnerDeliveryTrackingScreen from '../Screens/owner/DeliveryTrackingScreen';
-import ScheduleScreen from '../Screens/owner/ScheduleScreen';
+import RecurringOrderScreen from '../Screens/owner/RecurringOrderScreen';
 import ProfileDrawer from '../components/profile/ProfileDrawer';
 
 export type OwnerStackParamList = {
@@ -31,26 +27,22 @@ export type OwnerStackParamList = {
   Profile: undefined;
   Settings: undefined;
   CustomerDetail: { customerId?: string; customer?: any } | undefined;
-  AddLead: undefined;
   Invoices: undefined;
   Orders: undefined;
   PendingPayments: undefined;
-  CreateInvoice: undefined;
-  QuickBilling: undefined;
+  CreateInvoice: { customer?: any; prefilledItems?: Array<{ product_id: number; product_name?: string; quantity: number }> } | undefined;
+  QuickBilling: { customer?: any; prefilledItems?: Array<{ product_id: number; product_name?: string; quantity: number }> } | undefined;
   InvoiceDetail: { invoice?: any } | undefined;
   Products: undefined;
   ProductDetail: { product?: any; mode?: 'add' | 'edit' } | undefined;
   Reports: undefined;
   Delivery: undefined;
   DeliveryTracking: { deliveryId: number | string };
-  Schedule: undefined;
   AddDeliveryBoy: undefined;
-  AddRouteSchedule: undefined;
-  RouteBoys: undefined;
   Notifications: undefined;
   More: undefined;
-  Companies: undefined;
   Customers: undefined;
+  RecurringOrder: { template?: any; customer?: any; customerId?: any; prefilledItems?: any } | undefined;
 };
 
 const Stack = createNativeStackNavigator<OwnerStackParamList>();
@@ -97,7 +89,6 @@ export default function OwnerNavigator() {
       <Stack.Screen name="Profile" component={ProfileScreen} />
       <Stack.Screen name="Settings" component={SettingsScreen} />
       <Stack.Screen name="CustomerDetail" component={CustomerDetailScreen} />
-      <Stack.Screen name="AddLead" component={AddLeadScreen} />
       <Stack.Screen name="Invoices" component={InvoicesScreen} />
       <Stack.Screen name="PendingPayments" component={PendingPaymentsScreen} />
       <Stack.Screen name="CreateInvoice" component={QuickBillingScreen} />
@@ -108,15 +99,12 @@ export default function OwnerNavigator() {
       <Stack.Screen name="Reports" component={ReportsScreen} />
       <Stack.Screen name="Delivery" component={DeliveryScreen} />
       <Stack.Screen name="DeliveryTracking" component={OwnerDeliveryTrackingScreen} />
-      <Stack.Screen name="Schedule" component={ScheduleScreen} />
       <Stack.Screen name="AddDeliveryBoy" component={AddDeliveryBoyScreen} />
-      <Stack.Screen name="AddRouteSchedule" component={AddRouteScheduleScreen} />
-      <Stack.Screen name="RouteBoys" component={RouteBoysScreen} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} />
       <Stack.Screen name="More" component={MoreScreen} />
       <Stack.Screen name="Orders" component={OrdersScreen} />
-      <Stack.Screen name="Companies" component={CompaniesScreen} />
       <Stack.Screen name="Customers" component={CustomersScreen} />
+      <Stack.Screen name="RecurringOrder" component={RecurringOrderScreen} />
     </Stack.Navigator>
   );
 }

@@ -2,23 +2,18 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createDrawerNavigator } from '@react-navigation/drawer';
 import BottomTabs from './BottomTabs';
-import SplashScreen from '../Screens/delivery/SplashScreen';
-import LoginScreen from '../Screens/delivery/LoginScreen';
 import HomeScreen from '../Screens/delivery/HomeScreen';
 import OrdersScreen from '../Screens/delivery/OrdersScreen';
 import OrderDetailsScreen from '../Screens/delivery/OrderDetailsScreen';
 import NavigationScreen from '../Screens/delivery/NavigationScreen';
 import TrackingScreen from '../Screens/delivery/TrackingScreen';
 import DeliveryHistoryScreen from '../Screens/delivery/HistoryScreen';
-import EarningsScreen from '../Screens/delivery/EarningsScreen';
 import NotificationsScreen from '../Screens/delivery/NotificationsScreen';
 import ProfileScreen from '../Screens/delivery/ProfileScreen';
 import SettingsScreen from '../Screens/delivery/SettingsScreen';
 import ProfileDrawer from '../components/profile/ProfileDrawer';
 
 export type DeliveryStackParamList = {
-  Splash: undefined;
-  Login: undefined;
   Home: undefined;
   MainTabs: undefined;
   Orders: undefined;
@@ -26,7 +21,6 @@ export type DeliveryStackParamList = {
   Navigation: undefined;
   Tracking: undefined;
   History: undefined;
-  Earnings: undefined;
   Notifications: undefined;
   Profile: undefined;
   Settings: undefined;
@@ -74,15 +68,12 @@ export default function DeliveryNavigator() {
       }}
     >
       <Stack.Screen name="MainTabs" component={DeliveryDrawerNavigator} />
-      <Stack.Screen name="Splash" component={SplashScreen} />
-      <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="Home" component={HomeScreen} />
       <Stack.Screen name="Orders" component={OrdersScreen} />
       <Stack.Screen name="OrderDetails" component={OrderDetailsScreen} />
       <Stack.Screen name="Navigation" component={NavigationScreen} />
       <Stack.Screen name="Tracking" component={TrackingScreen} />
       <Stack.Screen name="History" component={DeliveryHistoryScreen} />
-      <Stack.Screen name="Earnings" component={EarningsScreen} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} />
       <Stack.Screen name="Profile" component={ProfileScreen} />
       <Stack.Screen name="Settings" component={SettingsScreen} />
