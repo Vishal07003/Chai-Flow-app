@@ -77,26 +77,27 @@ export const validation = {
    */
   validateCustomerForm(data: {
     name: string;
-    phone: string;
-    email?: string;
-    gstin?: string;
+    phone?: string;
+    address?: string;
+    openingBalance?: string | number;
   }): { isValid: boolean; errors: Record<string, string> } {
     const errors: Record<string, string> = {};
 
     if (!this.isNotEmpty(data.name)) {
-      errors.name = 'Customer name is required.';
+      errors.name = 'Customer Name cannot be empty.';
     }
 
-    if (!this.isValidPhone(data.phone)) {
-      errors.phone = 'Please enter a valid 10-digit mobile number.';
+    if (data.phone && data.phone.trim().length > 0) {
+      if (!this.isValidPhone(data.phone)) {
+        errors.phone = 'Please enter a valid 10-digit mobile number.';
+      }
     }
 
-    if (data.email && !this.isValidEmail(data.email)) {
-      errors.email = 'Please enter a valid email address.';
-    }
-
-    if (data.gstin && !this.isValidGST(data.gstin)) {
-      errors.gstin = 'Please enter a valid 15-digit GSTIN.';
+    if (data.openingBalance !== undefined && data.openingBalance !== '') {
+      const num = typeof data.openingBalance === 'number' ? data.openingBalance : parseFloat(data.openingBalance);
+      if (isNaN(num) || num < 0) {
+        errors.openingBalance = 'Opening Balance cannot be negative.';
+      }
     }
 
     return {

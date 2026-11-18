@@ -12,4 +12,5 @@ export interface Customer {
   phone?: string;
   category?: string;
   pendingBalance?: number;
+  openingBalance?: number;
 }
