@@ -220,7 +220,7 @@ export default function PendingPaymentsScreen({ navigation }: any) {
           <View style={styles.heroCard}>
             <View style={styles.heroRow}>
               <View>
-                <Text style={styles.heroSub}>Total Outstanding Due</Text>
+                <Text style={styles.heroSub}>Total Amount Due</Text>
                 <Text style={styles.heroValue}>
                   ₹{totalOutstandingSum.toLocaleString()}
                 </Text>
@@ -407,7 +407,7 @@ export default function PendingPaymentsScreen({ navigation }: any) {
                   </View>
 
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.infoLabel}>Outstanding Amount</Text>
+                    <Text style={styles.infoLabel}>Amount Due</Text>
                     <Text style={styles.amountVal}>
                       ₹{numVal.toLocaleString()}
                     </Text>
@@ -492,7 +492,7 @@ export default function PendingPaymentsScreen({ navigation }: any) {
             {/* Current Balance Banner */}
             <View style={styles.balanceBanner}>
               <Text style={styles.balanceLabel}>
-                Current Invoice Outstanding
+                Current Invoice Amount Due
               </Text>
               <Text style={styles.balanceValue}>
                 ₹{selectedNumVal.toLocaleString()}
@@ -582,7 +582,7 @@ export default function PendingPaymentsScreen({ navigation }: any) {
               <Text style={styles.summaryNotice}>
                 {calculatedRemaining === 0
                   ? '✨ This invoice will be marked as FULLY PAID and removed from pending lists.'
-                  : 'ℹ️ Invoice status will update to Partially Paid with remaining due balance.'}
+                  : 'ℹ️ Invoice status will update to Partially Paid with remaining amount.'}
               </Text>
             </View>
 
