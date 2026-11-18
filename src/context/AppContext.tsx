@@ -30,6 +30,10 @@ export interface Customer {
   isOverdue?: boolean;
   avatarUrl?: string;
   initials?: string;
+  phone?: string;
+  category?: string;
+  pendingBalance?: number;
+  openingBalance?: number;
 }
 
 export interface InvoiceLineItem {
