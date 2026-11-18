@@ -18,6 +18,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useApp } from '../../context/AppContext';
 import billingService, { BillingCustomer } from '../../services/billing.service';
 import { CustomDialog } from '../../components/common';
+import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 
 const TEA_IMAGES: { [key: string]: string } = {
   'Masala Chai':
@@ -45,8 +46,11 @@ const TEA_IMAGES: { [key: string]: string } = {
 const DEFAULT_TEA_IMAGE =
   'https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=300&auto=format&fit=crop';
 
-export default function QuickBillingScreen({ navigation }: any) {
+export default function QuickBillingScreen({ route, navigation }: any) {
   const { products, addProduct } = useApp();
+
+  const routeCustomer = route?.params?.customer;
+  const prefilledItems = route?.params?.prefilledItems;
 
   // Search filter for products
   const [productSearchQuery, setProductSearchQuery] = useState<string>('');
@@ -67,9 +71,6 @@ export default function QuickBillingScreen({ navigation }: any) {
 
   // New Customer Modal
   const [showAddCustomerModal, setShowAddCustomerModal] = useState<boolean>(false);
-  const [newCustName, setNewCustName] = useState<string>('');
-  const [newCustPhone, setNewCustPhone] = useState<string>('');
-  const [newCustAddress, setNewCustAddress] = useState<string>('');
 
   // Payment Options: Cash or Online (manual recording)
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'online'>('cash');
@@ -148,6 +149,45 @@ export default function QuickBillingScreen({ navigation }: any) {
     return lineItems.reduce((acc, curr) => acc + curr.qty, 0);
   }, [lineItems]);
 
+  // Preselect customer and prefill items from navigation params
+  useEffect(() => {
+    if (routeCustomer) {
+      setSelectedCustomer({
+        id: Number(routeCustomer.id),
+        name: routeCustomer.name,
+        phone: routeCustomer.phone || '',
+        address: routeCustomer.address || '',
+        created_at: routeCustomer.created_at || new Date().toISOString(),
+        total_bills: routeCustomer.total_bills || 0,
+        total_billed_amount: String(routeCustomer.total_billed_amount || '0'),
+        total_pending_amount: String(routeCustomer.total_pending_amount || routeCustomer.amount || '0'),
+      });
+    }
+
+    if (prefilledItems && Array.isArray(prefilledItems) && prefilledItems.length > 0 && products.length > 0) {
+      const newQtys: { [productId: string]: number } = {};
+      const newOrder: string[] = [];
+
+      prefilledItems.forEach(it => {
+        // match by product_id or product_name in catalog
+        const found = products.find(
+          p => String(p.id) === String(it.product_id) || (it.product_name && p.name.toLowerCase() === it.product_name.toLowerCase())
+        );
+        if (found) {
+          newQtys[found.id] = it.quantity;
+          if (!newOrder.includes(found.id)) {
+            newOrder.push(found.id);
+          }
+        }
+      });
+
+      if (Object.keys(newQtys).length > 0) {
+        setCartQuantities(newQtys);
+        setAddedOrder(newOrder);
+      }
+    }
+  }, [routeCustomer, prefilledItems, products]);
+
   // Auto-fill receivedAmount with grandTotal by default if empty or matches previous total
   useEffect(() => {
     setReceivedAmount(grandTotal > 0 ? String(grandTotal) : '');
@@ -171,26 +211,21 @@ export default function QuickBillingScreen({ navigation }: any) {
     fetchCustomers(customerSearch);
   };
 
-  const handleCreateCustomer = async () => {
-    if (!newCustName.trim() || !newCustPhone.trim()) {
-      showToast('Name and phone number are required.', true);
-      return;
-    }
+  const handleCreateCustomer = async (data: AddCustomerFormData) => {
     try {
       const created = await billingService.createCustomer({
-        name: newCustName.trim(),
-        phone: newCustPhone.trim(),
-        address: newCustAddress.trim(),
+        name: data.name,
+        phone: data.phone,
+        address: data.address,
+        opening_balance: data.openingBalance,
       });
       setSelectedCustomer(created);
       setShowAddCustomerModal(false);
       setShowCustomerModal(false);
-      setNewCustName('');
-      setNewCustPhone('');
-      setNewCustAddress('');
       showToast(`Customer ${created.name} added!`);
     } catch (err: any) {
-      showToast(err.message || 'Failed to add customer', true);
+      showToast(err.message || err.detail || 'Failed to add customer', true);
+      throw err;
     }
   };
 
@@ -246,21 +281,29 @@ export default function QuickBillingScreen({ navigation }: any) {
         initial_payment_method: paymentMethod,
       };
 
-      await billingService.createInvoice(payload);
+      const createdInvoice = await billingService.createInvoice(payload);
 
       // Reset Quick Billing screen immediately for the next customer
       handleClearCart();
 
-      // Show Custom Success Popup
+      // Navigate to Invoice Details screen to view and download PDF
       setDialogConfig({
         visible: true,
-        title: 'Bill Saved Successfully!',
-        message: 'Counter invoice has been permanently recorded in bill history.',
+        title: 'Bill Saved Successfully! ✅',
+        message: `Official Invoice #${createdInvoice.invoice_number || 'Generated'} issued.`,
         type: 'success',
         buttons: [
           {
-            text: 'Great',
+            text: 'View Invoice',
             style: 'default',
+            onPress: () => {
+              closeDialog();
+              navigation.navigate('InvoiceDetail', { invoice: createdInvoice });
+            },
+          },
+          {
+            text: 'Done',
+            style: 'cancel',
             onPress: closeDialog,
           },
         ],
@@ -297,7 +340,7 @@ export default function QuickBillingScreen({ navigation }: any) {
     setDialogConfig({
       visible: true,
       title: 'Confirm Bill?',
-      message: `Grand Total: ₹${grandTotal}\nReceived: ₹${numericReceived}\nRemaining Due: ₹${remainingDue}`,
+      message: `Grand Total: ₹${grandTotal}\nReceived: ₹${numericReceived}\nRemaining Amount: ₹${remainingDue}`,
       type: 'confirm',
       buttons: [
         {
@@ -561,7 +604,7 @@ export default function QuickBillingScreen({ navigation }: any) {
               </View>
 
               <View style={styles.dueSummaryBox}>
-                <Text style={styles.dueSummaryLabel}>Remaining Due</Text>
+                <Text style={styles.dueSummaryLabel}>Remaining Amount</Text>
                 <Text style={styles.dueSummaryValue}>
                   ₹{Math.max(0, grandTotal - (parseFloat(receivedAmount) || 0))}
                 </Text>
@@ -658,67 +701,12 @@ export default function QuickBillingScreen({ navigation }: any) {
         </View>
       </Modal>
 
-      {/* MODAL: CREATE CUSTOMER */}
-      <Modal
+      {/* UNIFIED MODAL: CREATE CUSTOMER */}
+      <AddCustomerModal
         visible={showAddCustomerModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowAddCustomerModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>New Customer</Text>
-              <TouchableOpacity onPress={() => setShowAddCustomerModal(false)}>
-                <Ionicons name="close" size={20} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.modalLabel}>Customer Name *</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="e.g. Ramesh Kumar"
-              placeholderTextColor="#9CA3AF"
-              value={newCustName}
-              onChangeText={setNewCustName}
-            />
-
-            <Text style={styles.modalLabel}>Phone Number *</Text>
-            <TextInput
-              style={styles.modalInput}
-              keyboardType="phone-pad"
-              placeholder="e.g. 9876543210"
-              placeholderTextColor="#9CA3AF"
-              value={newCustPhone}
-              onChangeText={setNewCustPhone}
-            />
-
-            <Text style={styles.modalLabel}>Address / Note</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="e.g. Shop 42, Market Road"
-              placeholderTextColor="#9CA3AF"
-              value={newCustAddress}
-              onChangeText={setNewCustAddress}
-            />
-
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity
-                style={styles.modalCancelBtn}
-                onPress={() => setShowAddCustomerModal(false)}
-              >
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.modalSubmitBtn}
-                onPress={handleCreateCustomer}
-              >
-                <Text style={styles.modalSubmitText}>Save Customer</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setShowAddCustomerModal(false)}
+        onSubmit={handleCreateCustomer}
+      />
 
       {/* CUSTOM BRANDED POPUP DIALOG */}
       <CustomDialog
