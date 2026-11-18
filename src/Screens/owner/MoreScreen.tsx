@@ -29,42 +29,26 @@ export default function MoreScreen() {
 
   const sections: ToolSection[] = [
     {
-      title: 'BUSINESS & CATALOG',
+      title: 'CATALOG',
       items: [
         {
           id: 'products',
-          title: 'Products Catalog',
+          title: 'Products',
           subtitle: 'Manage items, pricing & stock',
           icon: 'cube-outline',
           onPress: () => navigation.navigate('Products'),
         },
-        {
-          id: 'add-product',
-          title: 'Add New Product',
-          subtitle: 'Create a new beverage or snack',
-          icon: 'add-circle-outline',
-          onPress: () => navigation.navigate('ProductDetail', { mode: 'add' }),
-        },
+      ],
+    },
+    {
+      title: 'BILLING',
+      items: [
         {
           id: 'invoices',
-          title: 'Invoice History & PDFs',
+          title: 'Invoices',
           subtitle: 'All daily invoices, receipts & A4 downloads',
           icon: 'receipt-outline',
           onPress: () => navigation.navigate('Invoices'),
-        },
-        {
-          id: 'customers',
-          title: 'Retail & Walk-in Customers',
-          subtitle: 'Direct customer contact list & credit sales',
-          icon: 'people-outline',
-          onPress: () => navigation.navigate('Customers'),
-        },
-        {
-          id: 'reports',
-          title: 'Financial Reports',
-          subtitle: 'Audit revenue, MTD & daily collections',
-          icon: 'bar-chart-outline',
-          onPress: () => navigation.navigate('Reports'),
         },
         {
           id: 'pending-payments',
@@ -73,55 +57,27 @@ export default function MoreScreen() {
           icon: 'time-outline',
           onPress: () => navigation.navigate('PendingPayments'),
         },
-        {
-          id: 'orders',
-          title: 'Advance Orders',
-          subtitle: 'Customer orders and lifecycle',
-          icon: 'receipt-outline',
-          onPress: () => navigation.navigate('Orders'),
-        },
       ],
     },
     {
-      title: 'FLEET & OPERATIONS',
+      title: 'FLEET',
       items: [
         {
-          id: 'delivery-boys',
-          title: 'Delivery Boys',
-          subtitle: 'Fleet status & live dispatch',
+          id: 'delivery-partners',
+          title: 'Delivery Partners',
+          subtitle: 'Fleet status, register & assignments',
           icon: 'bicycle-outline',
           onPress: () => navigation.navigate('Delivery'),
         },
-        {
-          id: 'schedules',
-          title: 'Delivery Schedules',
-          subtitle: 'Daily morning & evening slots',
-          icon: 'calendar-outline',
-          onPress: () => navigation.navigate('Schedule'),
-        },
-        {
-          id: 'add-delivery-boy',
-          title: 'Add Delivery Boy',
-          subtitle: 'Register driver & vehicle info',
-          icon: 'person-add-outline',
-          onPress: () => navigation.navigate('AddDeliveryBoy'),
-        },
-        {
-          id: 'add-schedule',
-          title: 'New Route Schedule',
-          subtitle: 'Assign customer recurring route',
-          icon: 'navigate-outline',
-          onPress: () => navigation.navigate('AddRouteSchedule'),
-        },
       ],
     },
     {
-      title: 'ACCOUNT & SETTINGS',
+      title: 'ACCOUNT',
       items: [
         {
           id: 'profile',
-          title: 'Shop & Owner Profile',
-          subtitle: 'View store details & identity',
+          title: 'Store Profile',
+          subtitle: 'Store details & identity',
           icon: 'person-outline',
           onPress: () => navigation.navigate('Profile'),
         },
