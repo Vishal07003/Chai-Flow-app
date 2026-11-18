@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Modal,
   View,
@@ -9,10 +9,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  TouchableWithoutFeedback,
   Keyboard,
   ActivityIndicator,
   Alert,
+  Dimensions,
+  BackHandler,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { BackendRecurringOrder } from '../../services/order.service';
@@ -75,6 +76,40 @@ export default function RecurringOrderModal({
   const [itemQuantities, setItemQuantities] = useState<{ [productId: number]: number }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [productSearch, setProductSearch] = useState('');
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  // Keyboard and Android back listener
+  useEffect(() => {
+    if (!visible) return;
+
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'android' ? 'keyboardDidShow' : 'keyboardWillShow',
+      () => setIsKeyboardVisible(true)
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'android' ? 'keyboardDidHide' : 'keyboardWillHide',
+      () => setIsKeyboardVisible(false)
+    );
+
+    const backAction = () => {
+      if (isKeyboardVisible) {
+        Keyboard.dismiss();
+        return true;
+      }
+      onClose();
+      return true;
+    };
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+      backHandler.remove();
+    };
+  }, [visible, isKeyboardVisible, onClose]);
 
   // Initialize form state
   useEffect(() => {
@@ -146,8 +181,39 @@ export default function RecurringOrderModal({
     });
   };
 
+  const handleDirectQtyChange = (productId: number, text: string) => {
+    const cleanText = text.replace(/[^0-9]/g, '');
+    if (cleanText === '') {
+      setItemQuantities(prev => {
+        const copy = { ...prev };
+        delete copy[productId];
+        return copy;
+      });
+      return;
+    }
+    const val = parseInt(cleanText, 10);
+    if (isNaN(val) || val <= 0) {
+      setItemQuantities(prev => {
+        const copy = { ...prev };
+        delete copy[productId];
+        return copy;
+      });
+    } else {
+      setItemQuantities(prev => ({ ...prev, [productId]: val }));
+    }
+  };
+
   const selectedCount = Object.keys(itemQuantities).length;
   const totalUnits = Object.values(itemQuantities).reduce((a, b) => a + b, 0);
+
+  // Calculate estimated total based on product rates
+  const estimatedTotal = useMemo(() => {
+    return Object.entries(itemQuantities).reduce((sum, [pid, qty]) => {
+      const prod = products.find(p => p.id === Number(pid));
+      const rate = prod ? parseFloat(String(prod.price)) || 0 : 0;
+      return sum + rate * qty;
+    }, 0);
+  }, [itemQuantities, products]);
 
   const filteredProducts = products.filter(p =>
     !productSearch.trim() || p.name.toLowerCase().includes(productSearch.toLowerCase().trim())
@@ -195,275 +261,330 @@ export default function RecurringOrderModal({
     }
   };
 
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={styles.modalOverlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View style={styles.modalSheet}>
-          {/* Header */}
-          <View style={styles.modalHeader}>
-            <View>
-              <Text style={styles.modalTitle}>
-                {isEditing ? 'Edit Recurring Order' : 'New Recurring Order'}
-              </Text>
-              <Text style={styles.modalSubtitle}>
-                {isEditing ? 'Edits will apply to future scheduled orders only' : 'Create an automated order template'}
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={styles.closeBtn}
-              onPress={onClose}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons name="close" size={20} color="#6B5E55" />
-            </TouchableOpacity>
-          </View>
+    return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent={true}
+    >
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={() => {
+            if (isKeyboardVisible) {
+              Keyboard.dismiss();
+            } else {
+              onClose();
+            }
+          }}
+        />
 
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.scrollContent}
+        <KeyboardAvoidingView
+          style={[
+            styles.keyboardContainer,
+            isKeyboardVisible && styles.keyboardContainerLifted,
+          ]}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          pointerEvents="box-none"
+        >
+          <View
+            style={[
+              styles.modalCard,
+              { maxHeight: isKeyboardVisible ? Dimensions.get('window').height * 0.76 : Dimensions.get('window').height * 0.86 },
+            ]}
           >
-            {/* Customer Selector (Read-only on edit to protect identity) */}
-            {!isEditing ? (
-              <>
-                <Text style={styles.sectionLabel}>SELECT CUSTOMER *</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.chipScroll}
-                  contentContainerStyle={{ paddingVertical: 2 }}
+            {/* Header */}
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>
+                  {isEditing ? 'Edit Recurring Order' : 'New Recurring Order'}
+                </Text>
+                <Text style={styles.modalSubtitle}>
+                  {isEditing ? 'Edits will apply to future scheduled orders only' : 'Create an automated order template'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={onClose}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={20} color="#6B5E55" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              ref={scrollViewRef}
+              showsVerticalScrollIndicator={true}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.scrollContent}
+              bounces={false}
+            >
+              {/* Customer Selector (Read-only on edit to protect identity) */}
+              {!isEditing ? (
+                <>
+                  <Text style={styles.sectionLabel}>SELECT CUSTOMER *</Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.chipScroll}
+                    contentContainerStyle={{ paddingVertical: 2 }}
+                  >
+                    {customers.map(c => {
+                      const isSelected = selectedCustomerId === c.id;
+                      return (
+                        <TouchableOpacity
+                          key={c.id}
+                          style={[styles.chip, isSelected && styles.chipActive]}
+                          onPress={() => handleSelectCustomer(c)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons
+                            name="person-outline"
+                            size={13}
+                            color={isSelected ? '#FFFFFF' : '#8C331A'}
+                            style={{ marginRight: 6 }}
+                          />
+                          <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>
+                            {c.name}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </>
+              ) : (
+                <View style={styles.readOnlyCustBox}>
+                  <Ionicons name="person-circle-outline" size={18} color="#8C331A" style={{ marginRight: 6 }} />
+                  <Text style={styles.readOnlyCustName}>
+                    Customer: <Text style={{ fontWeight: '800' }}>{existingTemplate?.customer_name}</Text>
+                  </Text>
+                </View>
+              )}
+
+              {/* Delivery Address */}
+              <Text style={styles.sectionLabel}>DELIVERY ADDRESS *</Text>
+              <View style={styles.inputContainer}>
+                <Ionicons name="location-outline" size={16} color="#8E8278" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Enter delivery address *"
+                  placeholderTextColor="#A0958D"
+                  value={deliveryAddress}
+                  onChangeText={setDeliveryAddress}
+                />
+              </View>
+
+              {/* Frequency Selector: Daily or Specific Weekdays */}
+              <Text style={styles.sectionLabel}>FREQUENCY & SCHEDULE</Text>
+              <View style={styles.frequencyRow}>
+                <TouchableOpacity
+                  style={[styles.freqBtn, frequency === 'daily' && styles.freqBtnActive]}
+                  onPress={() => setFrequency('daily')}
                 >
-                  {customers.map(c => {
-                    const isSelected = selectedCustomerId === c.id;
+                  <Ionicons
+                    name="calendar-outline"
+                    size={15}
+                    color={frequency === 'daily' ? '#FFFFFF' : '#8C331A'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={[styles.freqBtnText, frequency === 'daily' && styles.freqBtnTextActive]}>
+                    Daily (All 7 Days)
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.freqBtn, frequency === 'weekdays' && styles.freqBtnActive]}
+                  onPress={() => setFrequency('weekdays')}
+                >
+                  <Ionicons
+                    name="repeat-outline"
+                    size={15}
+                    color={frequency === 'weekdays' ? '#FFFFFF' : '#8C331A'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={[styles.freqBtnText, frequency === 'weekdays' && styles.freqBtnTextActive]}>
+                    Select Weekdays
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Weekday Picker if frequency is weekdays */}
+              {frequency === 'weekdays' && (
+                <View style={styles.weekdayPickerRow}>
+                  {WEEKDAY_NAMES.map(w => {
+                    const isChecked = selectedWeekdays.includes(w.day);
                     return (
                       <TouchableOpacity
-                        key={c.id}
-                        style={[styles.chip, isSelected && styles.chipActive]}
-                        onPress={() => handleSelectCustomer(c)}
-                        activeOpacity={0.7}
+                        key={w.day}
+                        style={[styles.dayChip, isChecked && styles.dayChipActive]}
+                        onPress={() => handleToggleWeekday(w.day)}
                       >
-                        <Ionicons
-                          name="person-outline"
-                          size={13}
-                          color={isSelected ? '#FFFFFF' : '#8C331A'}
-                          style={{ marginRight: 6 }}
-                        />
-                        <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>
-                          {c.name}
+                        <Text style={[styles.dayChipText, isChecked && styles.dayChipTextActive]}>
+                          {w.label}
                         </Text>
                       </TouchableOpacity>
                     );
                   })}
-                </ScrollView>
-              </>
-            ) : (
-              <View style={styles.readOnlyCustBox}>
-                <Ionicons name="person-circle-outline" size={18} color="#8C331A" style={{ marginRight: 6 }} />
-                <Text style={styles.readOnlyCustName}>
-                  Customer: <Text style={{ fontWeight: '800' }}>{existingTemplate?.customer_name}</Text>
-                </Text>
-              </View>
-            )}
+                </View>
+              )}
 
-            {/* Delivery Address */}
-            <Text style={styles.sectionLabel}>DELIVERY ADDRESS *</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons name="location-outline" size={16} color="#8E8278" style={styles.inputIcon} />
-              <TextInput
-                style={styles.textInput}
-                placeholder="Enter delivery address *"
-                placeholderTextColor="#A0958D"
-                value={deliveryAddress}
-                onChangeText={setDeliveryAddress}
-              />
-            </View>
-
-            {/* Frequency Selector: Daily or Specific Weekdays */}
-            <Text style={styles.sectionLabel}>FREQUENCY & SCHEDULE</Text>
-            <View style={styles.frequencyRow}>
-              <TouchableOpacity
-                style={[styles.freqBtn, frequency === 'daily' && styles.freqBtnActive]}
-                onPress={() => setFrequency('daily')}
+              {/* Optional Assigned Delivery Partner */}
+              <Text style={styles.sectionLabel}>ASSIGN DELIVERY PARTNER (OPTIONAL)</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.chipScroll}
+                contentContainerStyle={{ paddingVertical: 2 }}
               >
-                <Ionicons
-                  name="calendar-outline"
-                  size={15}
-                  color={frequency === 'daily' ? '#FFFFFF' : '#8C331A'}
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={[styles.freqBtnText, frequency === 'daily' && styles.freqBtnTextActive]}>
-                  Daily (All 7 Days)
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.freqBtn, frequency === 'weekdays' && styles.freqBtnActive]}
-                onPress={() => setFrequency('weekdays')}
-              >
-                <Ionicons
-                  name="repeat-outline"
-                  size={15}
-                  color={frequency === 'weekdays' ? '#FFFFFF' : '#8C331A'}
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={[styles.freqBtnText, frequency === 'weekdays' && styles.freqBtnTextActive]}>
-                  Select Weekdays
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Weekday Picker if frequency is weekdays */}
-            {frequency === 'weekdays' && (
-              <View style={styles.weekdayPickerRow}>
-                {WEEKDAY_NAMES.map(w => {
-                  const isChecked = selectedWeekdays.includes(w.day);
+                <TouchableOpacity
+                  style={[styles.chip, selectedPartnerId === null && styles.chipActive]}
+                  onPress={() => setSelectedPartnerId(null)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.chipText, selectedPartnerId === null && styles.chipTextActive]}>
+                    None (Auto-Unassigned)
+                  </Text>
+                </TouchableOpacity>
+                {partners.map(p => {
+                  const isSelected = selectedPartnerId === p.id;
                   return (
                     <TouchableOpacity
-                      key={w.day}
-                      style={[styles.dayChip, isChecked && styles.dayChipActive]}
-                      onPress={() => handleToggleWeekday(w.day)}
+                      key={p.id}
+                      style={[styles.chip, isSelected && styles.chipActive]}
+                      onPress={() => setSelectedPartnerId(p.id)}
+                      activeOpacity={0.7}
                     >
-                      <Text style={[styles.dayChipText, isChecked && styles.dayChipTextActive]}>
-                        {w.label}
+                      <Ionicons
+                        name="bicycle-outline"
+                        size={13}
+                        color={isSelected ? '#FFFFFF' : '#8C331A'}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>
+                        {p.name}
                       </Text>
                     </TouchableOpacity>
                   );
                 })}
-              </View>
-            )}
+              </ScrollView>
 
-            {/* Optional Assigned Delivery Partner */}
-            <Text style={styles.sectionLabel}>ASSIGN DELIVERY PARTNER (OPTIONAL)</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.chipScroll}
-              contentContainerStyle={{ paddingVertical: 2 }}
-            >
-              <TouchableOpacity
-                style={[styles.chip, selectedPartnerId === null && styles.chipActive]}
-                onPress={() => setSelectedPartnerId(null)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.chipText, selectedPartnerId === null && styles.chipTextActive]}>
-                  None (Auto-Unassigned)
-                </Text>
-              </TouchableOpacity>
-              {partners.map(p => {
-                const isSelected = selectedPartnerId === p.id;
-                return (
-                  <TouchableOpacity
-                    key={p.id}
-                    style={[styles.chip, isSelected && styles.chipActive]}
-                    onPress={() => setSelectedPartnerId(p.id)}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons
-                      name="bicycle-outline"
-                      size={13}
-                      color={isSelected ? '#FFFFFF' : '#8C331A'}
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>
-                      {p.name}
+              {/* Product Quantities & Items */}
+              <View style={styles.productHeader}>
+                <View>
+                  <Text style={styles.sectionLabel}>SELECT PRODUCTS & QUANTITIES</Text>
+                  {estimatedTotal > 0 && (
+                    <Text style={styles.estimatedTotalText}>
+                      Est. Total: <Text style={styles.estimatedTotalBold}>₹{estimatedTotal}</Text>
                     </Text>
+                  )}
+                </View>
+                {selectedCount > 0 && (
+                  <View style={styles.countBadgeContainer}>
+                    <Text style={styles.countBadge}>
+                      {selectedCount} {selectedCount === 1 ? 'item' : 'items'} ({totalUnits} units)
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Filter products */}
+              <View style={styles.productSearchRow}>
+                <Ionicons name="search-outline" size={14} color="#8E8278" style={{ marginRight: 6 }} />
+                <TextInput
+                  style={styles.productSearchInput}
+                  placeholder="Search products..."
+                  placeholderTextColor="#A0958D"
+                  value={productSearch}
+                  onChangeText={setProductSearch}
+                />
+                {productSearch.length > 0 && (
+                  <TouchableOpacity onPress={() => setProductSearch('')}>
+                    <Ionicons name="close-circle" size={15} color="#8E8278" />
                   </TouchableOpacity>
-                );
-              })}
+                )}
+              </View>
+
+              <View style={styles.productTable}>
+                {filteredProducts.map(prod => {
+                  const qty = itemQuantities[prod.id] || 0;
+                  return (
+                    <View key={prod.id} style={[styles.prodRow, qty > 0 && styles.prodRowSelected]}>
+                      <View style={{ flex: 1, marginRight: 8 }}>
+                        <Text style={styles.prodName}>{prod.name}</Text>
+                        <Text style={styles.prodPrice}>₹{prod.price} / unit</Text>
+                      </View>
+
+                      <View style={styles.stepperContainer}>
+                        <TouchableOpacity
+                          style={[styles.stepBtn, qty === 0 && styles.stepBtnDisabled]}
+                          onPress={() => handleItemQtyChange(prod.id, -1)}
+                          disabled={qty === 0}
+                        >
+                          <Ionicons name="remove" size={14} color={qty === 0 ? '#C4BBB5' : '#8C331A'} />
+                        </TouchableOpacity>
+
+                        <TextInput
+                          style={styles.qtyInput}
+                          keyboardType="numeric"
+                          value={qty > 0 ? String(qty) : '0'}
+                          onChangeText={text => handleDirectQtyChange(prod.id, text)}
+                          selectTextOnFocus={true}
+                        />
+
+                        <TouchableOpacity
+                          style={styles.stepBtn}
+                          onPress={() => handleItemQtyChange(prod.id, 1)}
+                        >
+                          <Ionicons name="add" size={14} color="#8C331A" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+
+              {/* Notes */}
+              <Text style={styles.sectionLabel}>ORDER INSTRUCTIONS (OPTIONAL)</Text>
+              <View style={styles.inputContainer}>
+                <Ionicons name="document-text-outline" size={16} color="#8E8278" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="e.g. Deliver before 10:30 AM"
+                  placeholderTextColor="#A0958D"
+                  value={notes}
+                  onChangeText={setNotes}
+                />
+              </View>
             </ScrollView>
 
-            {/* Product Quantities & Items */}
-            <View style={styles.productHeader}>
-              <Text style={styles.sectionLabel}>SELECT PRODUCTS & QUANTITIES</Text>
-              {selectedCount > 0 && (
-                <Text style={styles.countBadge}>
-                  {selectedCount} products ({totalUnits} units)
-                </Text>
-              )}
+            {/* Fixed Footer Save Button */}
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={[styles.saveBtn, selectedCount === 0 && styles.saveBtnDisabled]}
+                onPress={handleSubmit}
+                disabled={isSubmitting || selectedCount === 0}
+                activeOpacity={0.85}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.saveBtnText}>
+                      {isEditing
+                        ? `Update Recurring Template ${estimatedTotal > 0 ? `(₹${estimatedTotal})` : ''}`
+                        : `Create Recurring Order ${estimatedTotal > 0 ? `(₹${estimatedTotal})` : ''}`}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
             </View>
-
-            {/* Filter products */}
-            <View style={styles.productSearchRow}>
-              <Ionicons name="search-outline" size={14} color="#8E8278" style={{ marginRight: 6 }} />
-              <TextInput
-                style={styles.productSearchInput}
-                placeholder="Search products..."
-                placeholderTextColor="#A0958D"
-                value={productSearch}
-                onChangeText={setProductSearch}
-              />
-            </View>
-
-            <View style={styles.productTable}>
-              {filteredProducts.map(prod => {
-                const qty = itemQuantities[prod.id] || 0;
-                return (
-                  <View key={prod.id} style={[styles.prodRow, qty > 0 && styles.prodRowSelected]}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.prodName}>{prod.name}</Text>
-                      <Text style={styles.prodPrice}>₹{prod.price} / unit</Text>
-                    </View>
-
-                    <View style={styles.stepperContainer}>
-                      <TouchableOpacity
-                        style={[styles.stepBtn, qty === 0 && styles.stepBtnDisabled]}
-                        onPress={() => handleItemQtyChange(prod.id, -1)}
-                        disabled={qty === 0}
-                      >
-                        <Ionicons name="remove" size={14} color={qty === 0 ? '#C4BBB5' : '#8C331A'} />
-                      </TouchableOpacity>
-
-                      <Text style={styles.qtyText}>{qty}</Text>
-
-                      <TouchableOpacity
-                        style={styles.stepBtn}
-                        onPress={() => handleItemQtyChange(prod.id, 1)}
-                      >
-                        <Ionicons name="add" size={14} color="#8C331A" />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-
-            {/* Notes */}
-            <Text style={styles.sectionLabel}>ORDER INSTRUCTIONS (OPTIONAL)</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons name="document-text-outline" size={16} color="#8E8278" style={styles.inputIcon} />
-              <TextInput
-                style={styles.textInput}
-                placeholder="e.g. Deliver before 10:30 AM"
-                placeholderTextColor="#A0958D"
-                value={notes}
-                onChangeText={setNotes}
-              />
-            </View>
-
-            {/* Save Template Button */}
-            <TouchableOpacity
-              style={[styles.saveBtn, selectedCount === 0 && styles.saveBtnDisabled]}
-              onPress={handleSubmit}
-              disabled={isSubmitting || selectedCount === 0}
-              activeOpacity={0.85}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <>
-                  <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-                  <Text style={styles.saveBtnText}>
-                    {isEditing ? 'Save Template Changes' : 'Create Recurring Order'}
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      </KeyboardAvoidingView>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
@@ -471,52 +592,85 @@ export default function RecurringOrderModal({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  modalSheet: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '90%',
+  keyboardContainer: {
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 20,
+  },
+  keyboardContainerLifted: {
+    justifyContent: 'flex-start',
+    paddingTop: Platform.OS === 'android' ? 24 : 44,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    overflow: 'hidden',
+    shadowColor: '#2A2421',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 10,
+    flexDirection: 'column',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingBottom: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#F0EBE6',
-    marginBottom: 10,
+    backgroundColor: '#FFFFFF',
   },
   modalTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '800',
     color: '#2A2421',
   },
   modalSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#8E8278',
-    marginTop: 2,
+    marginTop: 1,
   },
   closeBtn: {
     padding: 6,
-    borderRadius: 20,
-    backgroundColor: '#F5EFEA',
+    borderRadius: 16,
+    backgroundColor: '#FAF7F4',
   },
   scrollContent: {
-    paddingBottom: 20,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
   },
   sectionLabel: {
     fontSize: 11,
     fontWeight: '800',
     color: '#8E8278',
     letterSpacing: 0.5,
-    marginTop: 12,
+    marginTop: 10,
     marginBottom: 6,
+  },
+  estimatedTotalText: {
+    fontSize: 12,
+    color: '#6B5E55',
+    marginTop: 1,
+  },
+  estimatedTotalBold: {
+    fontWeight: '800',
+    color: '#8C331A',
+  },
+  countBadgeContainer: {
+    backgroundColor: '#F7EBE4',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
   chipScroll: {
     marginBottom: 8,
@@ -576,7 +730,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     color: '#2A2421',
-    paddingVertical: 8,
+    paddingVertical: 7,
   },
   frequencyRow: {
     flexDirection: 'row',
@@ -592,7 +746,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E6DDD5',
     borderRadius: 8,
-    paddingVertical: 9,
+    paddingVertical: 8,
   },
   freqBtnActive: {
     backgroundColor: '#8C331A',
@@ -612,8 +766,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   dayChip: {
-    width: 42,
-    height: 36,
+    width: 38,
+    height: 34,
     borderRadius: 8,
     backgroundColor: '#FAF7F4',
     borderWidth: 1,
@@ -668,14 +822,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E6DDD5',
     overflow: 'hidden',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   prodRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     borderBottomWidth: 0.5,
     borderBottomColor: '#EFEAE4',
   },
@@ -699,7 +853,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E6DDD5',
     borderRadius: 6,
-    paddingHorizontal: 4,
+    paddingHorizontal: 2,
     paddingVertical: 2,
   },
   stepBtn: {
@@ -708,12 +862,21 @@ const styles = StyleSheet.create({
   stepBtnDisabled: {
     opacity: 0.3,
   },
-  qtyText: {
+  qtyInput: {
     fontSize: 13,
     fontWeight: '800',
     color: '#2A2421',
-    minWidth: 24,
+    minWidth: 32,
     textAlign: 'center',
+    paddingVertical: 0,
+    paddingHorizontal: 2,
+  },
+  modalFooter: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F0EBE6',
+    backgroundColor: '#FFFFFF',
   },
   saveBtn: {
     flexDirection: 'row',
@@ -722,7 +885,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#8C331A',
     borderRadius: 10,
     paddingVertical: 12,
-    marginTop: 14,
   },
   saveBtnDisabled: {
     opacity: 0.5,

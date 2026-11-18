@@ -19,6 +19,9 @@ export interface InvoiceItem {
   status?: 'PENDING' | 'OVERDUE' | 'PAID';
   items?: InvoiceLineItem[];
   subtotal?: number;
+  discountAmount?: number;
+  paidAmount?: number;
+  pendingAmount?: number;
   tax?: number;
   notes?: string;
 }

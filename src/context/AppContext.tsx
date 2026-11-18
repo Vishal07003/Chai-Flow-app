@@ -683,7 +683,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const collectPayment = async (customerId: string, amountToDeduct: number) => {
-    await customerService.collectPayment(customerId, amountToDeduct);
     let customerName = '';
 
     setCustomers(prev =>
@@ -703,7 +702,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     );
 
     setCollectionsTotal(prev => prev + amountToDeduct);
-    setInvoices(prev => prev.filter(inv => inv.name !== customerName));
+
+    // Call backend payment collection
+    try {
+      await customerService.collectPayment(customerId, amountToDeduct);
+      // Re-sync all customer balances, invoices and dashboard figures from single source of truth
+      await refreshBackendData();
+    } catch (err) {
+      console.log('Error in collectPayment:', err);
+    }
 
     setActivities(prev => [
       {
@@ -1412,6 +1419,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         setActiveFilter,
         sortBy,
         setSortBy,
+        refreshBackendData,
         addCustomer,
         collectPayment,
         invoices,
