@@ -20,6 +20,7 @@ import { useNavigation } from '@react-navigation/native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header, FloatingButton, EmptyState } from '../../components/common';
+import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 
 import { useApp, Customer } from '../../context/AppContext';
 
@@ -55,9 +56,6 @@ export default function CustomersScreen() {
 
   // Modal State for Add Customer
   const [addModalVisible, setAddModalVisible] = useState(false);
-  const [nameInput, setNameInput] = useState('');
-  const [addressInput, setAddressInput] = useState('');
-  const [amountInput, setAmountInput] = useState('');
 
   // Modal State for Collect Payment
   const [collectModalVisible, setCollectModalVisible] = useState(false);
@@ -72,21 +70,17 @@ export default function CustomersScreen() {
   // Modal State for Financial Reports
   const [reportsModalVisible, setReportsModalVisible] = useState(false);
 
-  const handleAddCustomerSubmit = () => {
-    if (!nameInput.trim()) return;
-
-    addCustomer({
-      name: nameInput,
-      address: addressInput || 'Local Area',
-      amount: parseFloat(amountInput) || 0,
+  const handleAddCustomerSubmit = async (data: AddCustomerFormData) => {
+    await addCustomer({
+      name: data.name,
+      phone: data.phone,
+      address: data.address || 'Local Area',
+      amount: data.openingBalance || 0,
+      openingBalance: data.openingBalance || 0,
       deliveryStatus: 'Last delivery: Just now',
-      hasDot: true,
+      hasDot: (data.openingBalance || 0) > 0,
       isOverdue: false,
     });
-
-    setNameInput('');
-    setAddressInput('');
-    setAmountInput('');
     setAddModalVisible(false);
   };
 
@@ -162,7 +156,7 @@ export default function CustomersScreen() {
       >
         {/* Dynamic Total Outstanding Card */}
         <View style={styles.outstandingCard}>
-          <Text style={styles.cardHeaderTitle}>TOTAL OUTSTANDING</Text>
+          <Text style={styles.cardHeaderTitle}>TOTAL AMOUNT DUE</Text>
           <View style={styles.amountRow}>
             <Text style={styles.amountText}>
               ₹{totalOutstanding.toLocaleString()}
@@ -339,80 +333,15 @@ export default function CustomersScreen() {
       {/* Floating Add Customer Button */}
       <FloatingButton
         iconName="person-add-outline"
-        onPress={() => navigation.navigate('AddLead')}
+        onPress={() => setAddModalVisible(true)}
       />
 
-      {/* Modal 1: Add New Customer */}
-      <Modal
-        animationType="slide"
-        transparent={true}
+      {/* Unified Add Customer Modal */}
+      <AddCustomerModal
         visible={addModalVisible}
-        onRequestClose={() => setAddModalVisible(false)}
-      >
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={Keyboard.dismiss}
-          >
-            <TouchableOpacity activeOpacity={1} style={styles.modalContent}>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                bounces={false}
-              >
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Add New Customer</Text>
-                  <TouchableOpacity onPress={() => setAddModalVisible(false)}>
-                    <Ionicons name="close" size={24} color="#666" />
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={styles.inputLabel}>Customer Name *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Ramesh Tea Stall"
-                  placeholderTextColor="#999"
-                  value={nameInput}
-                  onChangeText={setNameInput}
-                />
-
-                <Text style={styles.inputLabel}>Address / Area</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Flat 301, Sector 5"
-                  placeholderTextColor="#999"
-                  value={addressInput}
-                  onChangeText={setAddressInput}
-                />
-
-                <Text style={styles.inputLabel}>
-                  Initial Outstanding Amount (₹)
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. 1500"
-                  placeholderTextColor="#999"
-                  keyboardType="numeric"
-                  value={amountInput}
-                  onChangeText={setAmountInput}
-                />
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  style={styles.submitBtn}
-                  onPress={handleAddCustomerSubmit}
-                >
-                  <Text style={styles.submitBtnText}>Add Customer</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </KeyboardAvoidingView>
-      </Modal>
+        onClose={() => setAddModalVisible(false)}
+        onSubmit={handleAddCustomerSubmit}
+      />
 
       {/* Modal 2: Collect Payment */}
       <Modal
@@ -451,7 +380,7 @@ export default function CustomersScreen() {
                       {selectedCustomer.name}
                     </Text>
                     <Text style={styles.paymentDueText}>
-                      Current Outstanding: ₹
+                      Amount Due: ₹
                       {selectedCustomer.amount.toLocaleString()}
                     </Text>
                   </View>
@@ -556,7 +485,7 @@ export default function CustomersScreen() {
               {/* Summary Cards Grid */}
               <View style={styles.reportGrid}>
                 <View style={styles.reportCard}>
-                  <Text style={styles.reportLabel}>TOTAL OUTSTANDING</Text>
+                  <Text style={styles.reportLabel}>TOTAL AMOUNT DUE</Text>
                   <Text style={styles.reportVal}>
                     ₹{totalOutstanding.toLocaleString()}
                   </Text>
@@ -582,7 +511,7 @@ export default function CustomersScreen() {
 
               {/* Overdue Accounts Summary */}
               <Text style={styles.reportSectionHeader}>
-                TOP OUTSTANDING ACCOUNTS
+                TOP ACCOUNTS BY AMOUNT DUE
               </Text>
               {customers
                 .filter(c => c.amount > 0)
