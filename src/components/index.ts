@@ -6,4 +6,5 @@ export * from './delivery';
 export * from './schedule';
 export * from './notification';
 export * from './owner';
+export * from './order';
 export * from './profile';
