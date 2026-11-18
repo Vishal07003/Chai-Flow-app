@@ -69,7 +69,7 @@ export default function ReportsScreen({ navigation }: any) {
   const handleSendReminder = (customer: any) => {
     const message = `Hello ${
       customer.name
-    }, your ChaiFlow balance of ₹${customer.amount.toLocaleString()} is pending. Please clear your outstanding amount at your earliest convenience. Thank you!`;
+    }, your ChaiFlow balance of ₹${customer.amount.toLocaleString()} is pending. Please clear your remaining amount at your earliest convenience. Thank you!`;
     const encoded = encodeURIComponent(message);
     const whatsappUrl = `whatsapp://send?text=${encoded}`;
     const smsUrl = `sms:?body=${encoded}`;
@@ -158,7 +158,7 @@ export default function ReportsScreen({ navigation }: any) {
                 </Text>
               </View>
               <View style={styles.heroStatItem}>
-                <Text style={styles.heroStatLabel}>Outstanding Balance</Text>
+                <Text style={styles.heroStatLabel}>Total Amount Due</Text>
                 <Text style={styles.heroStatValOrange}>
                   ₹{totalOutstanding.toLocaleString()}
                 </Text>
