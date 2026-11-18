@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import Toast from 'react-native-toast-message';
 import { useApp } from '../../context/AppContext';
 import billingService, { BillingCustomer } from '../../services/billing.service';
 import { CustomDialog } from '../../components/common';
@@ -54,6 +55,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
 
   // Search filter for products
   const [productSearchQuery, setProductSearchQuery] = useState<string>('');
+  const [productViewMode, setProductViewMode] = useState<'grid' | 'list'>('grid');
 
   // Cart Quantities: productId -> qty
   const [cartQuantities, setCartQuantities] = useState<{ [productId: string]: number }>({});
@@ -72,8 +74,10 @@ export default function QuickBillingScreen({ route, navigation }: any) {
   // New Customer Modal
   const [showAddCustomerModal, setShowAddCustomerModal] = useState<boolean>(false);
 
-  // Payment Options: Cash or Online (manual recording)
+  // Payment Options: Status (Full, Partial, Unpaid), Method (Cash, Online)
+  const [paymentStatus, setPaymentStatus] = useState<'FULL' | 'PARTIAL' | 'UNPAID'>('FULL');
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'online'>('cash');
+  const [discount, setDiscount] = useState<string>('');
   const [receivedAmount, setReceivedAmount] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
@@ -141,9 +145,18 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     return items;
   }, [addedOrder, cartQuantities, products, parseProductPrice]);
 
-  const grandTotal = useMemo(() => {
+  const subtotal = useMemo(() => {
     return lineItems.reduce((acc, curr) => acc + curr.qty * curr.price, 0);
   }, [lineItems]);
+
+  const discountAmount = useMemo(() => {
+    const val = parseFloat(discount) || 0;
+    return Math.max(0, Math.min(val, subtotal));
+  }, [discount, subtotal]);
+
+  const grandTotal = useMemo(() => {
+    return Math.max(0, subtotal - discountAmount);
+  }, [subtotal, discountAmount]);
 
   const totalItemsCount = useMemo(() => {
     return lineItems.reduce((acc, curr) => acc + curr.qty, 0);
@@ -188,10 +201,59 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     }
   }, [routeCustomer, prefilledItems, products]);
 
-  // Auto-fill receivedAmount with grandTotal by default if empty or matches previous total
+  // Auto-fill receivedAmount based on paymentStatus and grandTotal
   useEffect(() => {
-    setReceivedAmount(grandTotal > 0 ? String(grandTotal) : '');
+    if (paymentStatus === 'FULL') {
+      setReceivedAmount(grandTotal > 0 ? String(grandTotal) : '0');
+    } else if (paymentStatus === 'UNPAID') {
+      setReceivedAmount('0');
+    }
   }, [grandTotal]);
+
+  const handleSelectPaymentStatus = (status: 'FULL' | 'PARTIAL' | 'UNPAID') => {
+    setPaymentStatus(status);
+    if (status === 'FULL') {
+      setReceivedAmount(grandTotal > 0 ? String(grandTotal) : '0');
+    } else if (status === 'UNPAID') {
+      setReceivedAmount('0');
+    } else if (status === 'PARTIAL') {
+      // If was full or 0, clear or prompt partial input
+      if (receivedAmount === String(grandTotal) || receivedAmount === '0') {
+        setReceivedAmount('');
+      }
+    }
+  };
+
+  const handleDiscountChange = (text: string) => {
+    const cleanText = text.replace(/[^0-9.]/g, '');
+    const numVal = parseFloat(cleanText) || 0;
+    if (numVal > subtotal && subtotal > 0) {
+      setDiscount(String(subtotal));
+    } else {
+      setDiscount(cleanText);
+    }
+  };
+
+  // Synchronize payment status when Owner manually edits received amount
+  const handleReceivedAmountChange = (text: string) => {
+    // Sanitize non-numeric characters (allow decimal if needed, but integers preferred)
+    const cleanText = text.replace(/[^0-9.]/g, '');
+    setReceivedAmount(cleanText);
+
+    if (cleanText === '') {
+      setPaymentStatus('PARTIAL');
+      return;
+    }
+
+    const numericVal = parseFloat(cleanText);
+    if (isNaN(numericVal) || numericVal <= 0) {
+      setPaymentStatus('UNPAID');
+    } else if (numericVal >= grandTotal && grandTotal > 0) {
+      setPaymentStatus('FULL');
+    } else {
+      setPaymentStatus('PARTIAL');
+    }
+  };
 
   // Load customers for selection
   const fetchCustomers = useCallback(async (query: string = '') => {
@@ -256,8 +318,71 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     setAddedOrder([]);
     setSelectedCustomer(null);
     setReceivedAmount('0');
+    setPaymentStatus('FULL');
     setPaymentMethod('cash');
   }, []);
+
+  const handlePromptClearCart = () => {
+    if (lineItems.length === 0) return;
+    Alert.alert(
+      'Clear Bill?',
+      'Are you sure you want to remove all items and reset this bill?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Clear All', style: 'destructive', onPress: handleClearCart },
+      ]
+    );
+  };
+
+  const handleDirectQtyChange = (productId: string, text: string) => {
+    const cleanText = text.replace(/[^0-9]/g, '');
+    if (cleanText === '') {
+      setCartQuantities(prev => {
+        const next = { ...prev };
+        delete next[productId];
+        return next;
+      });
+      setAddedOrder(prev => prev.filter(id => id !== productId));
+      return;
+    }
+
+    const val = parseInt(cleanText, 10);
+    if (isNaN(val) || val <= 0) {
+      setCartQuantities(prev => {
+        const next = { ...prev };
+        delete next[productId];
+        return next;
+      });
+      setAddedOrder(prev => prev.filter(id => id !== productId));
+    } else {
+      setCartQuantities(prev => ({ ...prev, [productId]: val }));
+      setAddedOrder(prev => (prev.includes(productId) ? prev : [...prev, productId]));
+    }
+  };
+
+  const handlePromptRemoveItem = (productId: string, productName: string) => {
+    Alert.alert(
+      'Remove Product?',
+      `Are you sure you want to remove "${productName}" from the bill?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => handleRemoveItem(productId),
+        },
+      ]
+    );
+  };
+
+  const handleRemoveItem = (productId: string) => {
+    setCartQuantities(prev => {
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+    setAddedOrder(prev => prev.filter(id => id !== productId));
+  };
 
   // Execute Invoice Creation in Django Backend
   const executeSaveBill = async () => {
@@ -266,19 +391,21 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     setIsSaving(true);
 
     const numericReceived = parseFloat(receivedAmount) || 0;
+    const remainingDue = Math.max(0, grandTotal - numericReceived);
 
     try {
       const payload = {
         customer_id: selectedCustomer ? selectedCustomer.id : null,
         customer_name: selectedCustomer ? selectedCustomer.name : 'Walk-in Customer',
         customer_phone: selectedCustomer ? selectedCustomer.phone : '',
+        discount_amount: discountAmount,
         items: lineItems.map(item => ({
           product_name: item.name,
           unit_price: item.price,
           quantity: item.qty,
         })),
         initial_payment_amount: numericReceived,
-        initial_payment_method: paymentMethod,
+        initial_payment_method: paymentStatus === 'UNPAID' ? 'cash' : paymentMethod,
       };
 
       const createdInvoice = await billingService.createInvoice(payload);
@@ -286,31 +413,31 @@ export default function QuickBillingScreen({ route, navigation }: any) {
       // Reset Quick Billing screen immediately for the next customer
       handleClearCart();
 
-      // Navigate to Invoice Details screen to view and download PDF
-      setDialogConfig({
-        visible: true,
-        title: 'Bill Saved Successfully! ✅',
-        message: `Official Invoice #${createdInvoice.invoice_number || 'Generated'} issued.`,
-        type: 'success',
-        buttons: [
-          {
-            text: 'View Invoice',
-            style: 'default',
-            onPress: () => {
-              closeDialog();
-              navigation.navigate('InvoiceDetail', { invoice: createdInvoice });
-            },
-          },
-          {
-            text: 'Done',
-            style: 'cancel',
-            onPress: closeDialog,
-          },
-        ],
-      });
-      showToast('Bill Saved Successfully!');
+      // Show toast notification based on payment status
+      if (paymentStatus === 'FULL' || remainingDue === 0) {
+        Toast.show({
+          type: 'success',
+          text1: 'Bill saved successfully – Fully Paid',
+          text2: `Invoice #${createdInvoice.invoice_number || 'Generated'}`,
+        });
+      } else {
+        Toast.show({
+          type: 'info',
+          text1: `Bill saved – Payment Pending ₹${remainingDue}`,
+          text2: `Invoice #${createdInvoice.invoice_number || 'Generated'}`,
+        });
+      }
+
+      // Navigate to Invoice Details screen after saving
+      setTimeout(() => {
+        navigation.navigate('InvoiceDetail', { invoice: createdInvoice });
+      }, 500);
     } catch (err: any) {
-      showToast(err.message || 'Failed to save bill in database.', true);
+      Toast.show({
+        type: 'error',
+        text1: 'Failed to save bill',
+        text2: err.message || 'Please check your connection and try again.',
+      });
     } finally {
       setIsSaving(false);
     }
@@ -321,17 +448,29 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     if (isSaving) return;
 
     if (lineItems.length === 0) {
-      showToast('Please add at least 1 product to the bill!', true);
+      Toast.show({
+        type: 'error',
+        text1: 'Empty Bill',
+        text2: 'Please add at least 1 product to the bill!',
+      });
       return;
     }
 
     const numericReceived = parseFloat(receivedAmount) || 0;
     if (numericReceived < 0) {
-      showToast('Received amount cannot be negative.', true);
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid Amount',
+        text2: 'Received amount cannot be negative.',
+      });
       return;
     }
     if (numericReceived > grandTotal) {
-      showToast(`Received amount cannot exceed total (₹${grandTotal})`, true);
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid Amount',
+        text2: `Received amount cannot exceed total (₹${grandTotal})`,
+      });
       return;
     }
 
@@ -340,7 +479,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     setDialogConfig({
       visible: true,
       title: 'Confirm Bill?',
-      message: `Grand Total: ₹${grandTotal}\nReceived: ₹${numericReceived}\nRemaining Amount: ₹${remainingDue}`,
+      message: `Customer: ${selectedCustomer ? selectedCustomer.name : 'Walk-in'}\nSubtotal: ₹${subtotal}${discountAmount > 0 ? `\nDiscount: -₹${discountAmount}` : ''}\nFinal Bill: ₹${grandTotal}\nPayment: ${paymentStatus === 'FULL' ? 'Paid in Full' : paymentStatus === 'PARTIAL' ? `Partial (₹${numericReceived})` : 'Unpaid / Credit'}\nRemaining: ₹${remainingDue}`,
       type: 'confirm',
       buttons: [
         {
@@ -418,75 +557,175 @@ export default function QuickBillingScreen({ route, navigation }: any) {
               <Text style={styles.customerName}>
                 {selectedCustomer ? selectedCustomer.name : 'Walk-in Customer'}
               </Text>
-              <Text style={styles.customerSub}>
+              <Text style={styles.customerSub} numberOfLines={1}>
                 {selectedCustomer
-                  ? `${selectedCustomer.phone} • Counter Account`
+                  ? `${selectedCustomer.phone ? selectedCustomer.phone + ' • ' : ''}${selectedCustomer.address || 'Counter Account'}`
                   : 'Counter Sale (No account selected)'}
               </Text>
             </View>
 
             {selectedCustomer ? (
-              <TouchableOpacity
-                onPress={() => setSelectedCustomer(null)}
-                style={styles.customerChangeBtn}
-              >
-                <Text style={styles.customerChangeText}>Remove</Text>
-              </TouchableOpacity>
+              <View style={styles.customerActionRow}>
+                <TouchableOpacity
+                  onPress={handleOpenCustomerModal}
+                  style={styles.customerChangeMiniBtn}
+                >
+                  <Text style={styles.customerChangeMiniText}>Change</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setSelectedCustomer(null)}
+                  style={styles.customerRemoveBtn}
+                >
+                  <Ionicons name="close-circle-outline" size={18} color="#EF4444" />
+                </TouchableOpacity>
+              </View>
             ) : (
               <TouchableOpacity
                 onPress={handleOpenCustomerModal}
                 style={styles.customerSelectBtn}
               >
+                <Ionicons name="person-add-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
                 <Text style={styles.customerSelectText}>Select / Add</Text>
               </TouchableOpacity>
             )}
           </View>
         </View>
 
-        {/* PRODUCTS SECTION */}
-        <Text style={styles.productsSectionTitle}>Products</Text>
+        {/* PRODUCTS SECTION HEADER & VIEW TOGGLE */}
+        <View style={styles.productsHeaderRow}>
+          <Text style={styles.productsSectionTitle}>Products</Text>
+          <View style={styles.viewModeToggleGroup}>
+            <TouchableOpacity
+              style={[styles.viewModeBtn, productViewMode === 'grid' && styles.viewModeBtnActive]}
+              onPress={() => setProductViewMode('grid')}
+            >
+              <Ionicons
+                name="grid-outline"
+                size={16}
+                color={productViewMode === 'grid' ? '#8C331A' : '#9CA3AF'}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.viewModeBtn, productViewMode === 'list' && styles.viewModeBtnActive]}
+              onPress={() => setProductViewMode('list')}
+            >
+              <Ionicons
+                name="list-outline"
+                size={16}
+                color={productViewMode === 'list' ? '#8C331A' : '#9CA3AF'}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
 
         {/* SEARCH BAR */}
         <View style={styles.searchBarContainer}>
           <Ionicons name="search-outline" size={16} color="#9CA3AF" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search tea..."
+            placeholder="Search tea, snacks, beverages..."
             placeholderTextColor="#9CA3AF"
             value={productSearchQuery}
             onChangeText={setProductSearchQuery}
           />
+          {productSearchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setProductSearchQuery('')}>
+              <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* 3-COLUMN PRODUCT GRID */}
-        <View style={styles.productThreeGrid}>
-          {filteredProducts.map(p => {
-            const currentQty = cartQuantities[p.id] || 0;
-            const isSelected = currentQty > 0;
-            const imgUri = TEA_IMAGES[p.name] || DEFAULT_TEA_IMAGE;
+        {/* PRODUCT CATALOG: GRID OR LIST LAYOUT */}
+        {productViewMode === 'grid' ? (
+          <View style={styles.productThreeGrid}>
+            {filteredProducts.map(p => {
+              const currentQty = cartQuantities[p.id] || 0;
+              const isSelected = currentQty > 0;
+              const imgUri = TEA_IMAGES[p.name] || DEFAULT_TEA_IMAGE;
 
-            return (
-              <TouchableOpacity
-                key={p.id}
-                activeOpacity={0.8}
-                style={[styles.threeGridCard, isSelected && styles.threeGridCardSelected]}
-                onPress={() => updateQuantity(p.id, 1)}
-              >
-                {currentQty > 0 && (
-                  <View style={styles.qtyBadge}>
-                    <Text style={styles.qtyBadgeText}>{currentQty}</Text>
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  activeOpacity={0.8}
+                  style={[styles.threeGridCard, isSelected && styles.threeGridCardSelected]}
+                  onPress={() => updateQuantity(p.id, 1)}
+                >
+                  {currentQty > 0 && (
+                    <View style={styles.qtyBadge}>
+                      <Text style={styles.qtyBadgeText}>{currentQty}</Text>
+                    </View>
+                  )}
+
+                  <Image source={{ uri: imgUri }} style={styles.teaCardImage} resizeMode="cover" />
+                  <View style={styles.productTagRow}>
+                    <Text style={styles.productIdTag}>#{p.id}</Text>
+                    {p.unit ? <Text style={styles.productUnitTag}>{p.unit}</Text> : null}
                   </View>
-                )}
+                  <Text style={styles.threeGridCardTitle} numberOfLines={2}>
+                    {p.name}
+                  </Text>
+                  <Text style={styles.threeGridCardPrice}>₹{p.price}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={styles.productListView}>
+            {filteredProducts.map(p => {
+              const currentQty = cartQuantities[p.id] || 0;
+              const isSelected = currentQty > 0;
+              const imgUri = TEA_IMAGES[p.name] || DEFAULT_TEA_IMAGE;
 
-                <Image source={{ uri: imgUri }} style={styles.teaCardImage} resizeMode="cover" />
-                <Text style={styles.threeGridCardTitle} numberOfLines={2}>
-                  {p.name}
-                </Text>
-                <Text style={styles.threeGridCardPrice}>₹{p.price}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+              return (
+                <View
+                  key={p.id}
+                  style={[styles.productListRow, isSelected && styles.productListRowSelected]}
+                >
+                  <Image source={{ uri: imgUri }} style={styles.teaRowImage} resizeMode="cover" />
+                  <View style={styles.productListInfoCol}>
+                    <View style={styles.productRowTitleLine}>
+                      <Text style={styles.productListTitle} numberOfLines={1}>
+                        {p.name}
+                      </Text>
+                      <Text style={styles.productIdTag}>#{p.id}</Text>
+                    </View>
+                    <Text style={styles.productListPrice}>
+                      ₹{p.price} {p.unit ? `• per ${p.unit}` : ''}
+                    </Text>
+                  </View>
+
+                  <View style={styles.productListStepper}>
+                    {currentQty > 0 ? (
+                      <>
+                        <TouchableOpacity
+                          style={styles.miniMinusBtn}
+                          onPress={() => updateQuantity(p.id, -1)}
+                        >
+                          <Ionicons name="remove" size={14} color="#8C331A" />
+                        </TouchableOpacity>
+                        <Text style={styles.miniQtyText}>{currentQty}</Text>
+                        <TouchableOpacity
+                          style={styles.miniPlusBtn}
+                          onPress={() => updateQuantity(p.id, 1)}
+                        >
+                          <Ionicons name="add" size={14} color="#FFFFFF" />
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.rowAddBtn}
+                        onPress={() => updateQuantity(p.id, 1)}
+                      >
+                        <Ionicons name="add" size={14} color="#8C331A" style={{ marginRight: 2 }} />
+                        <Text style={styles.rowAddBtnText}>Add</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
 
         {/* YOUR BILL & PAYMENT CARD */}
         <View style={styles.mergedBillSummaryCard}>
@@ -502,8 +741,8 @@ export default function QuickBillingScreen({ route, navigation }: any) {
             </View>
 
             {totalItemsCount > 0 && (
-              <TouchableOpacity activeOpacity={0.7} style={styles.clearAllBtn} onPress={handleClearCart}>
-                <Ionicons name="trash-outline" size={14} color="#8C331A" style={{ marginRight: 2 }} />
+              <TouchableOpacity activeOpacity={0.7} style={styles.clearAllBtn} onPress={handlePromptClearCart}>
+                <Ionicons name="trash-outline" size={14} color="#8C331A" style={{ marginRight: 4 }} />
                 <Text style={styles.clearAllBtnText}>Clear All</Text>
               </TouchableOpacity>
             )}
@@ -516,20 +755,42 @@ export default function QuickBillingScreen({ route, navigation }: any) {
             <View style={styles.billItemsList}>
               {lineItems.map(item => (
                 <View key={item.id} style={styles.billItemRow}>
-                  <View style={styles.billItemInfoCol}>
-                    <Text style={styles.billItemName}>{item.name}</Text>
-                    <Text style={styles.billItemSubPrice}>
-                      ₹{item.price} x {item.qty} = ₹{item.price * item.qty}
-                    </Text>
+                  {/* Left Side: Product Name, Unit Price and Line Total */}
+                  <View style={styles.billItemLeftCol}>
+                    <Text style={styles.billItemName} numberOfLines={1}>{item.name}</Text>
+                    <View style={styles.billItemPricingRow}>
+                      <Text style={styles.billItemSubPrice}>
+                        ₹{item.price} / unit
+                      </Text>
+                      <Text style={styles.billItemDotSeparator}>•</Text>
+                      <Text style={styles.billItemLineTotalText}>
+                        Total: <Text style={styles.billItemLineTotalBold}>₹{item.price * item.qty}</Text>
+                      </Text>
+                    </View>
                   </View>
 
-                  <View style={styles.billItemStepper}>
-                    <TouchableOpacity style={styles.miniMinusBtn} onPress={() => updateQuantity(item.id, -1)}>
-                      <Ionicons name="remove" size={14} color="#8C331A" />
-                    </TouchableOpacity>
-                    <Text style={styles.miniQtyText}>{item.qty}</Text>
-                    <TouchableOpacity style={styles.miniPlusBtn} onPress={() => updateQuantity(item.id, 1)}>
-                      <Ionicons name="add" size={14} color="#FFFFFF" />
+                  {/* Right Side: Quantity Input and Remove Button beside each other */}
+                  <View style={styles.billItemRightCol}>
+                    {/* Small direct editable numeric quantity input */}
+                    <View style={styles.billItemQtyBox}>
+                      <TextInput
+                        style={styles.billItemQtyInput}
+                        keyboardType="numeric"
+                        value={String(item.qty)}
+                        onChangeText={text => handleDirectQtyChange(item.id, text)}
+                        selectTextOnFocus={true}
+                      />
+                    </View>
+
+                    {/* Remove button beside the quantity input with 12-16dp spacing */}
+                    <TouchableOpacity
+                      style={styles.removeItemActionBtn}
+                      onPress={() => handlePromptRemoveItem(item.id, item.name)}
+                      activeOpacity={0.7}
+                      hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+                      accessibilityLabel={`Remove ${item.name}`}
+                    >
+                      <Ionicons name="trash-outline" size={16} color="#DC2626" />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -539,62 +800,182 @@ export default function QuickBillingScreen({ route, navigation }: any) {
 
           <View style={styles.dottedDivider} />
 
-          {/* TOTAL */}
-          <View style={styles.grandTotalRow}>
-            <Text style={styles.grandTotalLabel}>Grand Total</Text>
-            <Text style={styles.grandTotalValue}>₹{grandTotal}</Text>
+          {/* FINANCIAL BREAKDOWN: Subtotal, Discount, Grand Total */}
+          <View style={styles.calcSummarySection}>
+            <View style={styles.calcSummaryRow}>
+              <Text style={styles.calcSummaryLabel}>Product Subtotal</Text>
+              <Text style={styles.calcSummaryValue}>₹{subtotal}</Text>
+            </View>
+
+            <View style={styles.calcSummaryRow}>
+              <View style={styles.discountLabelCol}>
+                <Text style={styles.discountFieldLabel}>Discount (₹)</Text>
+                <Text style={styles.discountFieldSubLabel}>Deducted from bill</Text>
+              </View>
+              <View style={styles.discountInputWrapper}>
+                <Text style={styles.discountCurrencyPrefix}>₹</Text>
+                <TextInput
+                  style={styles.discountInput}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  placeholderTextColor="#9CA3AF"
+                  value={discount}
+                  onChangeText={handleDiscountChange}
+                  selectTextOnFocus={true}
+                />
+              </View>
+            </View>
+
+            <View style={[styles.calcSummaryRow, styles.grandTotalRowBorder]}>
+              <View>
+                <Text style={styles.grandTotalLabel}>Final Bill Amount</Text>
+                {discountAmount > 0 ? (
+                  <Text style={styles.discountSavedTag}>₹{discountAmount} discount applied</Text>
+                ) : null}
+              </View>
+              <Text style={styles.grandTotalValue}>₹{grandTotal}</Text>
+            </View>
           </View>
 
-          {/* PAYMENT METHOD (CASH OR ONLINE ONLY) */}
+          {/* PAYMENT CUSTOMIZATION: STATUS SELECTOR */}
           <View style={styles.paymentMethodSection}>
-            <Text style={styles.paymentSectionLabel}>Payment Method</Text>
-            <View style={styles.paymentMethodRow}>
+            <Text style={styles.paymentSectionLabel}>Payment Status</Text>
+            <View style={styles.paymentStatusRow}>
               <TouchableOpacity
-                style={[styles.paymentMethodTab, paymentMethod === 'cash' && styles.paymentMethodTabActive]}
-                onPress={() => setPaymentMethod('cash')}
+                style={[
+                  styles.paymentStatusTab,
+                  paymentStatus === 'FULL' && styles.paymentStatusTabActive,
+                ]}
+                onPress={() => handleSelectPaymentStatus('FULL')}
               >
                 <Ionicons
-                  name="cash-outline"
-                  size={16}
-                  color={paymentMethod === 'cash' ? '#FFFFFF' : '#4B5563'}
-                  style={{ marginRight: 6 }}
+                  name="checkmark-circle"
+                  size={14}
+                  color={paymentStatus === 'FULL' ? '#FFFFFF' : '#059669'}
+                  style={{ marginRight: 4 }}
                 />
                 <Text
-                  style={[styles.paymentMethodText, paymentMethod === 'cash' && styles.paymentMethodTextActive]}
+                  style={[
+                    styles.paymentStatusText,
+                    paymentStatus === 'FULL' && styles.paymentStatusTextActive,
+                  ]}
                 >
-                  Cash
+                  Paid in Full
                 </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.paymentMethodTab, paymentMethod === 'online' && styles.paymentMethodTabActive]}
-                onPress={() => setPaymentMethod('online')}
+                style={[
+                  styles.paymentStatusTab,
+                  paymentStatus === 'PARTIAL' && styles.paymentStatusTabActive,
+                ]}
+                onPress={() => handleSelectPaymentStatus('PARTIAL')}
               >
                 <Ionicons
-                  name="card-outline"
-                  size={16}
-                  color={paymentMethod === 'online' ? '#FFFFFF' : '#4B5563'}
-                  style={{ marginRight: 6 }}
+                  name="pie-chart"
+                  size={14}
+                  color={paymentStatus === 'PARTIAL' ? '#FFFFFF' : '#D97706'}
+                  style={{ marginRight: 4 }}
                 />
                 <Text
-                  style={[styles.paymentMethodText, paymentMethod === 'online' && styles.paymentMethodTextActive]}
+                  style={[
+                    styles.paymentStatusText,
+                    paymentStatus === 'PARTIAL' && styles.paymentStatusTextActive,
+                  ]}
                 >
-                  Online (Manual)
+                  Partially Paid
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.paymentStatusTab,
+                  paymentStatus === 'UNPAID' && styles.paymentStatusTabActive,
+                ]}
+                onPress={() => handleSelectPaymentStatus('UNPAID')}
+              >
+                <Ionicons
+                  name="time"
+                  size={14}
+                  color={paymentStatus === 'UNPAID' ? '#FFFFFF' : '#DC2626'}
+                  style={{ marginRight: 4 }}
+                />
+                <Text
+                  style={[
+                    styles.paymentStatusText,
+                    paymentStatus === 'UNPAID' && styles.paymentStatusTextActive,
+                  ]}
+                >
+                  Unpaid / Credit
                 </Text>
               </TouchableOpacity>
             </View>
 
-            {/* RECEIVED AMOUNT INPUT (SUPPORTS PARTIAL & FULL PAYMENTS) */}
+            {/* PAYMENT METHOD (CASH OR ONLINE) - HIDDEN IF UNPAID */}
+            {paymentStatus !== 'UNPAID' && (
+              <View style={styles.methodContainer}>
+                <Text style={styles.paymentSectionSubLabel}>Payment Method</Text>
+                <View style={styles.paymentMethodRow}>
+                  <TouchableOpacity
+                    style={[styles.paymentMethodTab, paymentMethod === 'cash' && styles.paymentMethodTabActive]}
+                    onPress={() => setPaymentMethod('cash')}
+                  >
+                    <Ionicons
+                      name="cash-outline"
+                      size={15}
+                      color={paymentMethod === 'cash' ? '#FFFFFF' : '#4B5563'}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[styles.paymentMethodText, paymentMethod === 'cash' && styles.paymentMethodTextActive]}
+                    >
+                      Cash
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.paymentMethodTab, paymentMethod === 'online' && styles.paymentMethodTabActive]}
+                    onPress={() => setPaymentMethod('online')}
+                  >
+                    <Ionicons
+                      name="card-outline"
+                      size={15}
+                      color={paymentMethod === 'online' ? '#FFFFFF' : '#4B5563'}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[styles.paymentMethodText, paymentMethod === 'online' && styles.paymentMethodTextActive]}
+                    >
+                      Online (Manual)
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* RECEIVED AMOUNT & REMAINING SUMMARY */}
             <View style={styles.receivedAmountRow}>
               <View style={{ flex: 1, marginRight: 10 }}>
-                <Text style={styles.receivedAmountLabel}>Received Amount (₹)</Text>
+                <Text style={styles.receivedAmountLabel}>
+                  {paymentStatus === 'UNPAID'
+                    ? 'Received Amount (₹0)'
+                    : paymentStatus === 'FULL'
+                      ? 'Received Amount (₹ Full)'
+                      : 'Received Amount (₹ Partial)'}
+                </Text>
                 <TextInput
-                  style={styles.receivedAmountInput}
+                  style={[
+                    styles.receivedAmountInput,
+                    styles.receivedAmountInputEditable,
+                    paymentStatus === 'UNPAID' && styles.receivedAmountInputDisabled,
+                  ]}
                   keyboardType="numeric"
+                  editable={paymentStatus !== 'UNPAID'}
                   placeholder="0"
                   placeholderTextColor="#9CA3AF"
                   value={receivedAmount}
-                  onChangeText={setReceivedAmount}
+                  onChangeText={handleReceivedAmountChange}
+                  selectTextOnFocus={true}
                   onFocus={() => {
                     setTimeout(() => {
                       scrollRef.current?.scrollToEnd({ animated: true });
@@ -604,7 +985,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
               </View>
 
               <View style={styles.dueSummaryBox}>
-                <Text style={styles.dueSummaryLabel}>Remaining Amount</Text>
+                <Text style={styles.dueSummaryLabel}>Remaining Due</Text>
                 <Text style={styles.dueSummaryValue}>
                   ₹{Math.max(0, grandTotal - (parseFloat(receivedAmount) || 0))}
                 </Text>
@@ -797,7 +1178,7 @@ const styles = StyleSheet.create({
 
   scrollContent: {
     paddingHorizontal: 16,
-    paddingBottom: 110,
+    paddingBottom: 130,
   },
 
   customerCard: {
@@ -833,6 +1214,8 @@ const styles = StyleSheet.create({
   },
   customerSelectBtn: {
     backgroundColor: '#8C331A',
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
@@ -842,24 +1225,57 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  customerChangeBtn: {
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+  customerActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
-  customerChangeText: {
-    color: '#EF4444',
-    fontSize: 12,
+  customerChangeMiniBtn: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  customerChangeMiniText: {
+    color: '#374151',
+    fontSize: 11,
     fontWeight: '700',
   },
+  customerRemoveBtn: {
+    padding: 4,
+  },
 
+  productsHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
   productsSectionTitle: {
     fontSize: 16,
     fontWeight: '800',
     color: '#111827',
-    marginBottom: 8,
   },
+  viewModeToggleGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+    padding: 2,
+  },
+  viewModeBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  viewModeBtnActive: {
+    backgroundColor: '#FFFFFF',
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 1,
+  },
+
   searchBarContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -922,7 +1338,27 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 52,
     borderRadius: 6,
-    marginBottom: 6,
+    marginBottom: 4,
+  },
+  productTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginBottom: 2,
+  },
+  productIdTag: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#6B7280',
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  productUnitTag: {
+    fontSize: 9,
+    color: '#9CA3AF',
   },
   threeGridCardTitle: {
     fontSize: 11,
@@ -935,6 +1371,68 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#8C331A',
     marginTop: 2,
+  },
+
+  productListView: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 14,
+    overflow: 'hidden',
+  },
+  productListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#F3F4F6',
+  },
+  productListRowSelected: {
+    backgroundColor: '#FEF9F6',
+  },
+  teaRowImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 6,
+    marginRight: 10,
+  },
+  productListInfoCol: {
+    flex: 1,
+  },
+  productRowTitleLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  productListTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
+    flexShrink: 1,
+  },
+  productListPrice: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#8C331A',
+    marginTop: 2,
+  },
+  productListStepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  rowAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F7EBE4',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  rowAddBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#8C331A',
   },
 
   mergedBillSummaryCard: {
@@ -996,32 +1494,82 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 6,
+    paddingVertical: 10,
     borderBottomWidth: 0.5,
     borderBottomColor: '#F3F4F6',
   },
-  billItemInfoCol: {
+  billItemLeftCol: {
     flex: 1,
+    marginRight: 12,
   },
   billItemName: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: '#111827',
   },
-  billItemSubPrice: {
-    fontSize: 11,
-    color: '#6B7280',
-    marginTop: 1,
-  },
-  billItemStepper: {
+  billItemPricingRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: 2,
+  },
+  billItemSubPrice: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  billItemDotSeparator: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginHorizontal: 5,
+  },
+  billItemLineTotalText: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  billItemLineTotalBold: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  billItemRightCol: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  billItemQtyBox: {
+    backgroundColor: '#FAF7F4',
+    borderWidth: 1,
+    borderColor: '#D7CCC8',
+    borderRadius: 7,
+    minWidth: 75,
+    height: 34,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  billItemQtyInput: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#111827',
+    textAlign: 'center',
+    width: '100%',
+    paddingVertical: 0,
+    paddingHorizontal: 2,
   },
   miniMinusBtn: {
-    width: 24,
-    height: 24,
+    width: 28,
+    height: 28,
     borderRadius: 6,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  miniPlusBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#8C331A',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1031,11 +1579,13 @@ const styles = StyleSheet.create({
     color: '#111827',
     marginHorizontal: 8,
   },
-  miniPlusBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    backgroundColor: '#8C331A',
+  removeItemActionBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 7,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1046,6 +1596,78 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     borderStyle: 'dashed',
     marginVertical: 12,
+  },
+
+  calcSummarySection: {
+    marginBottom: 8,
+  },
+  calcSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  calcSummaryLabel: {
+    fontSize: 14,
+    color: '#4B5563',
+    fontWeight: '600',
+  },
+  calcSummaryValue: {
+    fontSize: 15,
+    color: '#111827',
+    fontWeight: '700',
+  },
+  discountLabelCol: {
+    flex: 1,
+  },
+  discountFieldLabel: {
+    fontSize: 14,
+    color: '#059669',
+    fontWeight: '700',
+  },
+  discountFieldSubLabel: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 1,
+  },
+  discountInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    minWidth: 100,
+    justifyContent: 'flex-end',
+  },
+  discountCurrencyPrefix: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#059669',
+    marginRight: 4,
+  },
+  discountInput: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#059669',
+    minWidth: 50,
+    textAlign: 'right',
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+  },
+  grandTotalRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    paddingTop: 10,
+    marginTop: 4,
+  },
+  discountSavedTag: {
+    fontSize: 11,
+    color: '#059669',
+    fontWeight: '700',
+    marginTop: 1,
   },
   grandTotalRow: {
     flexDirection: 'row',
@@ -1072,6 +1694,44 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#4B5563',
     marginBottom: 6,
+  },
+  paymentSectionSubLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4B5563',
+    marginBottom: 6,
+  },
+  paymentStatusRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 12,
+  },
+  paymentStatusTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  paymentStatusTabActive: {
+    backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
+  },
+  paymentStatusText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  paymentStatusTextActive: {
+    color: '#FFFFFF',
+  },
+
+  methodContainer: {
+    marginBottom: 4,
   },
   paymentMethodRow: {
     flexDirection: 'row',
@@ -1119,6 +1779,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: '#111827',
+  },
+  receivedAmountInputEditable: {
+    borderColor: '#8C331A',
+    backgroundColor: '#FFFFFF',
+  },
+  receivedAmountInputDisabled: {
+    backgroundColor: '#F3F4F6',
+    color: '#9CA3AF',
   },
   dueSummaryBox: {
     backgroundColor: '#FEF2F2',
