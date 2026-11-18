@@ -14,6 +14,7 @@ export const AppToast = {
       text1: title,
       text2: message,
       position: 'top',
+      topOffset: 50,
       visibilityTime: 2500,
     });
   },
@@ -24,7 +25,8 @@ export const AppToast = {
       text1: title,
       text2: message,
       position: 'top',
-      visibilityTime: 3000,
+      topOffset: 50,
+      visibilityTime: 3200,
     });
   },
 
@@ -34,17 +36,19 @@ export const AppToast = {
       text1: title,
       text2: message,
       position: 'top',
+      topOffset: 50,
       visibilityTime: 2500,
     });
   },
 
   warning: (title: string, message?: string) => {
     Toast.show({
-      type: 'info',
+      type: 'warning',
       text1: title,
       text2: message,
       position: 'top',
-      visibilityTime: 2500,
+      topOffset: 50,
+      visibilityTime: 2800,
     });
   },
 };
