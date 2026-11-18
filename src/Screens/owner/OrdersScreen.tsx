@@ -28,6 +28,7 @@ import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery
 import companyService, { Company } from '../../services/company.service';
 import productService, { BackendProduct } from '../../services/product.service';
 import { RecurringOrderModal, type RecurringOrderFormData } from '../../components/order';
+import AppToast from '../../utils/toast';
 
 const tabs = ['ALL', 'PENDING', 'ACCEPTED', 'OUT_FOR_DELIVERY', 'DELIVERED'];
 
@@ -206,6 +207,28 @@ export default function OrdersScreen({ navigation }: any) {
       }
       return { ...prev, [productId]: next };
     });
+  };
+
+  const handleDirectItemQtyChange = (productId: number, text: string) => {
+    const cleanText = text.replace(/[^0-9]/g, '');
+    if (cleanText === '') {
+      setSelectedItems(prev => {
+        const copy = { ...prev };
+        delete copy[productId];
+        return copy;
+      });
+      return;
+    }
+    const val = parseInt(cleanText, 10);
+    if (isNaN(val) || val <= 0) {
+      setSelectedItems(prev => {
+        const copy = { ...prev };
+        delete copy[productId];
+        return copy;
+      });
+    } else {
+      setSelectedItems(prev => ({ ...prev, [productId]: val }));
+    }
   };
 
   const handleSelectCompany = (comp: Company) => {
@@ -727,191 +750,213 @@ export default function OrdersScreen({ navigation }: any) {
         onPress={sectionMode === 'orders' ? handleOpenCreateModal : handleOpenNewRecurring}
       />
 
-      {/* Commercial / Customer Order Creation Bottom Sheet */}
-      <Modal visible={createModalVisible} transparent animationType="slide">
-        <KeyboardAvoidingView
-          style={styles.modalOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-          <View style={styles.modalSheet}>
-            {/* Header: Title and Simple Close Icon */}
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>New Customer Order</Text>
-                <Text style={styles.modalSubtitle}>Select customer, destination and products</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.closeIconBtn}
-                onPress={() => setCreateModalVisible(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons name="close" size={20} color="#6B5E55" />
-              </TouchableOpacity>
-            </View>
+      {/* Commercial / Customer Order Creation Modal */}
+      <Modal
+        visible={createModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCreateModalVisible(false)}
+        statusBarTranslucent={true}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setCreateModalVisible(false)}
+          />
 
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{ paddingBottom: 16 }}
-            >
-              {/* Customer Selector */}
-              <Text style={styles.fieldSectionLabel}>SELECT CUSTOMER</Text>
+          <KeyboardAvoidingView
+            style={styles.keyboardContainer}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            pointerEvents="box-none"
+          >
+            <View style={styles.modalCard}>
+              {/* Header */}
+              <View style={styles.modalHeader}>
+                <View>
+                  <Text style={styles.modalTitle}>New Customer Order</Text>
+                  <Text style={styles.modalSubtitle}>Select customer, destination and products</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.closeIconBtn}
+                  onPress={() => setCreateModalVisible(false)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close" size={20} color="#6B5E55" />
+                </TouchableOpacity>
+              </View>
+
               <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.customerScroll}
-                contentContainerStyle={{ paddingVertical: 2 }}
+                showsVerticalScrollIndicator={true}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 16 }}
+                bounces={false}
               >
-                {companies.map(c => {
-                  const isSelected = selectedCompanyId === c.id;
-                  return (
-                    <TouchableOpacity
-                      key={c.id}
-                      style={[styles.compChip, isSelected && styles.compChipActive]}
-                      onPress={() => handleSelectCompany(c)}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons
-                        name="business-outline"
-                        size={13}
-                        color={isSelected ? '#FFFFFF' : '#8C331A'}
-                        style={{ marginRight: 6 }}
-                      />
-                      <Text style={[styles.compChipText, isSelected && styles.compChipTextActive]}>
-                        {c.name}
+                {/* Customer Selector */}
+                <Text style={styles.fieldSectionLabel}>SELECT CUSTOMER</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.customerScroll}
+                  contentContainerStyle={{ paddingVertical: 2 }}
+                >
+                  {companies.map(c => {
+                    const isSelected = selectedCompanyId === c.id;
+                    return (
+                      <TouchableOpacity
+                        key={c.id}
+                        style={[styles.compChip, isSelected && styles.compChipActive]}
+                        onPress={() => handleSelectCompany(c)}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons
+                          name="business-outline"
+                          size={13}
+                          color={isSelected ? '#FFFFFF' : '#8C331A'}
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text style={[styles.compChipText, isSelected && styles.compChipTextActive]}>
+                          {c.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Delivery Address & Notes Inputs */}
+                <Text style={styles.fieldSectionLabel}>DELIVERY DETAILS</Text>
+                <View style={styles.inputContainer}>
+                  <Ionicons name="location-outline" size={16} color="#8E8278" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="Delivery Address *"
+                    placeholderTextColor="#A0958D"
+                    value={deliveryAddress}
+                    onChangeText={setDeliveryAddress}
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Ionicons name="document-text-outline" size={16} color="#8E8278" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="Order instructions / notes (Optional)"
+                    placeholderTextColor="#A0958D"
+                    value={orderNotes}
+                    onChangeText={setOrderNotes}
+                  />
+                </View>
+
+                {/* Product Selection with Clean Compact Row */}
+                <View style={styles.productSectionHeader}>
+                  <Text style={styles.fieldSectionLabel}>SELECT PRODUCTS</Text>
+                  {selectedItemCount > 0 && (
+                    <Text style={styles.selectedCountBadge}>
+                      {selectedItemCount} {selectedItemCount === 1 ? 'item' : 'items'}
+                    </Text>
+                  )}
+                </View>
+
+                <View style={styles.productsCard}>
+                  {products.map((p, idx) => {
+                    const qty = selectedItems[p.id] || 0;
+                    const isSelected = qty > 0;
+                    const isLast = idx === products.length - 1;
+                    return (
+                      <View
+                        key={p.id}
+                        style={[
+                          styles.prodRow,
+                          isLast && { borderBottomWidth: 0 },
+                          isSelected && styles.prodRowSelected,
+                        ]}
+                      >
+                        <View style={{ flex: 1, marginRight: 12 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Text style={styles.prodName}>{p.name}</Text>
+                            <Text style={styles.prodIdTag}>#{p.id}</Text>
+                          </View>
+                          <Text style={styles.prodBaseRate}>
+                            ₹{p.price} / unit
+                          </Text>
+                        </View>
+
+                        {/* Minimal, compact quantity controls with direct edit */}
+                        <View style={styles.qtyControl}>
+                          <TouchableOpacity
+                            style={[styles.qtyBtn, qty === 0 && styles.qtyBtnDisabled]}
+                            onPress={() => handleItemQtyChange(p.id, -1)}
+                            disabled={qty === 0}
+                            activeOpacity={0.6}
+                          >
+                            <Ionicons
+                              name="remove"
+                              size={14}
+                              color={qty === 0 ? '#C4BCB5' : '#8C331A'}
+                            />
+                          </TouchableOpacity>
+
+                          <TextInput
+                            style={[styles.qtyInputText, isSelected && styles.qtyTextActive]}
+                            keyboardType="numeric"
+                            value={qty > 0 ? String(qty) : '0'}
+                            onChangeText={text => handleDirectItemQtyChange(p.id, text)}
+                            selectTextOnFocus={true}
+                          />
+
+                          <TouchableOpacity
+                            style={styles.qtyBtn}
+                            onPress={() => handleItemQtyChange(p.id, 1)}
+                            activeOpacity={0.6}
+                          >
+                            <Ionicons name="add" size={14} color="#8C331A" />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+
+                {/* Compact Order Summary Bar */}
+                {selectedItemCount > 0 && (
+                  <View style={styles.orderSummaryBar}>
+                    <View>
+                      <Text style={styles.summaryCountText}>
+                        {selectedItemCount} {selectedItemCount === 1 ? 'unit selected' : 'units selected'}
                       </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+                      <Text style={styles.summarySubtext}>Volume pricing applied at generation</Text>
+                    </View>
+                    <Text style={styles.summaryTotalText}>
+                      ~₹{estimatedOrderTotal.toLocaleString()}
+                    </Text>
+                  </View>
+                )}
               </ScrollView>
 
-              {/* Delivery Address & Notes Inputs */}
-              <Text style={styles.fieldSectionLabel}>DELIVERY DETAILS</Text>
-              <View style={styles.inputContainer}>
-                <Ionicons name="location-outline" size={16} color="#8E8278" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="Delivery Address *"
-                  placeholderTextColor="#A0958D"
-                  value={deliveryAddress}
-                  onChangeText={setDeliveryAddress}
-                />
+              {/* Fixed Footer Create Order Button */}
+              <View style={styles.modalFooter}>
+                <TouchableOpacity
+                  style={[
+                    styles.confirmGenerateBtn,
+                    selectedItemCount === 0 && styles.confirmGenerateBtnDisabled,
+                  ]}
+                  onPress={handleSubmitNewOrder}
+                  disabled={creatingOrder || selectedItemCount === 0}
+                  activeOpacity={0.8}
+                >
+                  {creatingOrder ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <>
+                      <Ionicons name="checkmark-circle" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.confirmGenerateBtnText}>Create Customer Order</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
               </View>
-
-              <View style={styles.inputContainer}>
-                <Ionicons name="document-text-outline" size={16} color="#8E8278" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="Order instructions / notes (Optional)"
-                  placeholderTextColor="#A0958D"
-                  value={orderNotes}
-                  onChangeText={setOrderNotes}
-                />
-              </View>
-
-              {/* Product Selection with Clean Compact Row */}
-              <View style={styles.productSectionHeader}>
-                <Text style={styles.fieldSectionLabel}>SELECT PRODUCTS</Text>
-                {selectedItemCount > 0 && (
-                  <Text style={styles.selectedCountBadge}>
-                    {selectedItemCount} {selectedItemCount === 1 ? 'item' : 'items'}
-                  </Text>
-                )}
-              </View>
-
-              <View style={styles.productsCard}>
-                {products.map((p, idx) => {
-                  const qty = selectedItems[p.id] || 0;
-                  const isSelected = qty > 0;
-                  const isLast = idx === products.length - 1;
-                  return (
-                    <View
-                      key={p.id}
-                      style={[
-                        styles.prodRow,
-                        isLast && { borderBottomWidth: 0 },
-                        isSelected && styles.prodRowSelected,
-                      ]}
-                    >
-                      <View style={{ flex: 1, marginRight: 12 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <Text style={styles.prodName}>{p.name}</Text>
-                          <Text style={styles.prodIdTag}>#{p.id}</Text>
-                        </View>
-                        <Text style={styles.prodBaseRate}>
-                          ₹{p.price} / unit
-                        </Text>
-                      </View>
-
-                      {/* Minimal, compact quantity controls */}
-                      <View style={styles.qtyControl}>
-                        <TouchableOpacity
-                          style={[styles.qtyBtn, qty === 0 && styles.qtyBtnDisabled]}
-                          onPress={() => handleItemQtyChange(p.id, -1)}
-                          disabled={qty === 0}
-                          activeOpacity={0.6}
-                        >
-                          <Ionicons
-                            name="remove"
-                            size={14}
-                            color={qty === 0 ? '#C4BCB5' : '#8C331A'}
-                          />
-                        </TouchableOpacity>
-
-                        <Text style={[styles.qtyText, isSelected && styles.qtyTextActive]}>
-                          {qty}
-                        </Text>
-
-                        <TouchableOpacity
-                          style={styles.qtyBtn}
-                          onPress={() => handleItemQtyChange(p.id, 1)}
-                          activeOpacity={0.6}
-                        >
-                          <Ionicons name="add" size={14} color="#8C331A" />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-
-              {/* Compact Order Summary Bar */}
-              {selectedItemCount > 0 && (
-                <View style={styles.orderSummaryBar}>
-                  <View>
-                    <Text style={styles.summaryCountText}>
-                      {selectedItemCount} {selectedItemCount === 1 ? 'unit selected' : 'units selected'}
-                    </Text>
-                    <Text style={styles.summarySubtext}>Volume pricing applied at generation</Text>
-                  </View>
-                  <Text style={styles.summaryTotalText}>
-                    ~₹{estimatedOrderTotal.toLocaleString()}
-                  </Text>
-                </View>
-              )}
-
-              {/* Confirm / Create Order Button */}
-              <TouchableOpacity
-                style={[
-                  styles.confirmGenerateBtn,
-                  selectedItemCount === 0 && styles.confirmGenerateBtnDisabled,
-                ]}
-                onPress={handleSubmitNewOrder}
-                disabled={creatingOrder || selectedItemCount === 0}
-                activeOpacity={0.8}
-              >
-                {creatingOrder ? (
-                  <ActivityIndicator color="#FFFFFF" size="small" />
-                ) : (
-                  <>
-                    <Ionicons name="checkmark-circle" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.confirmGenerateBtnText}>Create Customer Order</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
       </Modal>
 
       {/* Manual Invoice Review Modal */}
@@ -1173,7 +1218,35 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  keyboardContainer: {
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    overflow: 'hidden',
+    maxHeight: '88%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 10,
+    flexDirection: 'column',
+  },
+  modalFooter: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F0EBE6',
+    backgroundColor: '#FFFFFF',
   },
   modalSheet: {
     backgroundColor: '#FFFFFF',
@@ -1364,6 +1437,15 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
     minWidth: 16,
     textAlign: 'center',
+  },
+  qtyInputText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#8E8278',
+    marginHorizontal: 4,
+    minWidth: 26,
+    textAlign: 'center',
+    paddingVertical: 0,
   },
   qtyTextActive: {
     color: '#8C331A',

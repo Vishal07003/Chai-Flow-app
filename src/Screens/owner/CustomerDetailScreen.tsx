@@ -19,9 +19,13 @@ import orderService, {
   BackendOrder,
   BackendRecurringOrder,
 } from '../../services/order.service';
+import { useApp } from '../../context/AppContext';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
+import { CollectPaymentModal, type CollectPaymentFormData } from '../../components/payment';
+import AppToast from '../../utils/toast';
 
 export default function CustomerDetailScreen({ route, navigation }: any) {
+  const { refreshBackendData } = useApp();
   // Support either customer object, customerId, or companyId passed in route params
   const initialCustomer = route.params?.customer || null;
   const rawId = route.params?.customerId || initialCustomer?.id || route.params?.companyId || route.params?.company?.id;
@@ -196,32 +200,28 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
   };
 
   // Collect Payment with FIFO Allocation
-  const handleConfirmCollectPayment = async () => {
+  const handleConfirmCollectPayment = async (data: CollectPaymentFormData) => {
     if (!customerId) return;
-    const amt = parseFloat(collectAmount);
-    if (!amt || amt <= 0) {
-      Alert.alert('Invalid Amount', 'Please enter a valid amount greater than zero.');
-      return;
-    }
 
     try {
       setSubmittingPayment(true);
       const res = await billingService.collectCustomerPayment(customerId, {
-        amount: amt,
-        method: paymentMethod,
-        notes: paymentNotes.trim() || `Payment collection for ${customer?.name || 'Customer'}`,
+        amount: data.amount,
+        method: data.paymentMethod,
+        notes: data.notes || `Payment collection for ${customer?.name || 'Customer'}`,
       });
 
       setCollectModalVisible(false);
-      setPaymentNotes('');
       fetchCustomerData();
       fetchLedgerAndInvoices();
-      Alert.alert(
-        'Payment Recorded',
-        `₹${res.amount_allocated} allocated to open invoices via FIFO.\nAdvance Credit: ₹${res.unallocated_credit}`,
+      refreshBackendData();
+      AppToast.success(
+        'Payment Recorded Successfully',
+        `₹${res.amount_allocated} allocated via FIFO.${parseFloat(String(res.unallocated_credit)) > 0 ? ` Advance Credit: ₹${res.unallocated_credit}` : ''}`
       );
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to collect payment.');
+      AppToast.error('Failed to Collect Payment', err?.message || 'Please check connection.');
+      throw err;
     } finally {
       setSubmittingPayment(false);
     }
@@ -792,9 +792,10 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
       />
 
       {/* 2. Select Order to Repeat Modal */}
-      <Modal visible={repeatOrderModalVisible} transparent animationType="slide">
+      <Modal visible={repeatOrderModalVisible} transparent animationType="fade" onRequestClose={() => setRepeatOrderModalVisible(false)} statusBarTranslucent={true}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setRepeatOrderModalVisible(false)} />
+          <View style={styles.modalCenterCard}>
             <View style={styles.modalSheetHeader}>
               <View>
                 <Text style={styles.modalSheetTitle}>Repeat Previous Order</Text>
@@ -802,12 +803,12 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
                   Choose an order to prefill items into Quick Billing
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => setRepeatOrderModalVisible(false)}>
-                <Ionicons name="close" size={22} color="#6B5E55" />
+              <TouchableOpacity onPress={() => setRepeatOrderModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={20} color="#6B5E55" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
+            <ScrollView showsVerticalScrollIndicator={true} style={{ maxHeight: 380 }} bounces={false}>
               {recentOrders.map(ord => (
                 <TouchableOpacity
                   key={ord.id}
@@ -849,76 +850,19 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
       </Modal>
 
       {/* 3. Collect Payment Modal */}
-      <Modal visible={collectModalVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            <View style={styles.modalSheetHeader}>
-              <View>
-                <Text style={styles.modalSheetTitle}>Collect Payment</Text>
-                <Text style={styles.modalSheetSubtitle}>
-                  FIFO Allocation • Settles oldest open invoices first
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => setCollectModalVisible(false)}>
-                <Ionicons name="close" size={22} color="#6B5E55" />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.fieldLabel}>AMOUNT TO COLLECT (₹)</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="Enter amount (e.g. 500)"
-              placeholderTextColor="#A0958D"
-              keyboardType="numeric"
-              value={collectAmount}
-              onChangeText={setCollectAmount}
-            />
-
-            <Text style={styles.fieldLabel}>PAYMENT METHOD</Text>
-            <View style={styles.methodChipsRow}>
-              {(['cash', 'online', 'upi', 'bank_transfer'] as const).map(m => (
-                <TouchableOpacity
-                  key={m}
-                  style={[styles.methodChip, paymentMethod === m && styles.methodChipActive]}
-                  onPress={() => setPaymentMethod(m)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.methodChipText, paymentMethod === m && styles.methodChipTextActive]}>
-                    {m === 'bank_transfer' ? 'Bank' : m.toUpperCase()}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.fieldLabel}>NOTES / REFERENCE (OPTIONAL)</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="e.g. UPI Ref / Cash receipt"
-              placeholderTextColor="#A0958D"
-              value={paymentNotes}
-              onChangeText={setPaymentNotes}
-            />
-
-            <TouchableOpacity
-              style={styles.primarySubmitBtn}
-              onPress={handleConfirmCollectPayment}
-              disabled={submittingPayment}
-              activeOpacity={0.8}
-            >
-              {submittingPayment ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <Text style={styles.primarySubmitText}>Record Payment</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      <CollectPaymentModal
+        visible={collectModalVisible}
+        onClose={() => setCollectModalVisible(false)}
+        onSubmit={handleConfirmCollectPayment}
+        customerName={displayName}
+        totalPendingAmount={amountDue}
+      />
 
       {/* 4. Full Ledger Passbook Modal */}
-      <Modal visible={ledgerModalVisible} transparent animationType="slide">
+      <Modal visible={ledgerModalVisible} transparent animationType="fade" onRequestClose={() => setLedgerModalVisible(false)} statusBarTranslucent={true}>
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalSheet, { maxHeight: '88%' }]}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setLedgerModalVisible(false)} />
+          <View style={[styles.modalCenterCard, { maxHeight: '85%' }]}>
             <View style={styles.modalSheetHeader}>
               <View>
                 <Text style={styles.modalSheetTitle}>Customer Ledger Passbook</Text>
@@ -926,8 +870,8 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
                   Chronological financial transactions for {displayName}
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => setLedgerModalVisible(false)}>
-                <Ionicons name="close" size={22} color="#6B5E55" />
+              <TouchableOpacity onPress={() => setLedgerModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={20} color="#6B5E55" />
               </TouchableOpacity>
             </View>
 
@@ -1577,8 +1521,22 @@ const styles = StyleSheet.create({
   /* Modals */
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCenterCard: {
+    width: '92%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
+    shadowColor: '#2A2421',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 10,
+    overflow: 'hidden',
   },
   modalSheet: {
     backgroundColor: '#FFFFFF',

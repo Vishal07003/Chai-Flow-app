@@ -32,9 +32,9 @@ export default function ReportsScreen({ navigation }: any) {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string>('');
 
-  // Overdue Defaulter List
+  // Overdue Defaulter List: only customers with outstanding balance > 0 and genuine overdue status
   const overdueCustomers = customers.filter(
-    c => c.isOverdue || c.amount > 1000 || c.badge?.includes('OVERDUE'),
+    c => c.amount > 0 && (c.isOverdue || c.badge?.includes('OVERDUE')),
   );
 
   // Filtered Payment History

@@ -48,7 +48,7 @@ const DEFAULT_TEA_IMAGE =
   'https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=300&auto=format&fit=crop';
 
 export default function QuickBillingScreen({ route, navigation }: any) {
-  const { products, addProduct } = useApp();
+  const { products, addProduct, refreshBackendData } = useApp();
 
   const routeCustomer = route?.params?.customer;
   const prefilledItems = route?.params?.prefilledItems;
@@ -412,6 +412,9 @@ export default function QuickBillingScreen({ route, navigation }: any) {
 
       // Reset Quick Billing screen immediately for the next customer
       handleClearCart();
+
+      // Trigger global state refresh from backend
+      refreshBackendData();
 
       // Show toast notification based on payment status
       if (paymentStatus === 'FULL' || remainingDue === 0) {

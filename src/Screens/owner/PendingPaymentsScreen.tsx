@@ -13,10 +13,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header, CustomDialog } from '../../components/common';
+import { CollectPaymentModal, type CollectPaymentFormData } from '../../components/payment';
 import { useApp, InvoiceItem } from '../../context/AppContext';
+import AppToast from '../../utils/toast';
 
 export default function PendingPaymentsScreen({ navigation }: any) {
-  const { invoices, customers, collectInvoicePayment } = useApp();
+  const { invoices, customers, collectInvoicePayment, refreshBackendData } = useApp();
 
   const [activeTab, setActiveTab] = useState<'ALL' | 'PENDING' | 'OVERDUE'>(
     'ALL',
@@ -138,7 +140,7 @@ export default function PendingPaymentsScreen({ navigation }: any) {
   };
 
   // Process Payment Collection
-  const handleConfirmCollection = () => {
+  const handleConfirmCollection = (data: CollectPaymentFormData) => {
     if (!selectedInvoice) return;
 
     const currentNumVal =
@@ -146,18 +148,7 @@ export default function PendingPaymentsScreen({ navigation }: any) {
         ? selectedInvoice.numericAmount
         : parseInt((selectedInvoice.amount || '').replace(/[^0-9]/g, '')) || 0;
 
-    const paidVal = parseFloat(paidAmountInput.trim());
-
-    if (isNaN(paidVal) || paidVal <= 0) {
-      setDialogConfig({
-        visible: true,
-        title: 'Invalid Amount',
-        message: 'Please enter a valid payment amount greater than zero.',
-        type: 'warning',
-        buttons: [{ text: 'OK', onPress: closeDialog }],
-      });
-      return;
-    }
+    const paidVal = data.amount;
 
     if (paidVal > currentNumVal) {
       setDialogConfig({
@@ -170,17 +161,23 @@ export default function PendingPaymentsScreen({ navigation }: any) {
       return;
     }
 
-    collectInvoicePayment(selectedInvoice.id, paidVal, paymentMethod);
+    const mappedMethod =
+      data.paymentMethod === 'online' || data.paymentMethod === 'upi'
+        ? 'UPI'
+        : data.paymentMethod === 'bank_transfer'
+        ? 'Bank Transfer'
+        : 'Cash';
+
+    collectInvoicePayment(selectedInvoice.id, paidVal, mappedMethod as any);
+    refreshBackendData();
 
     const isFull = paidVal >= currentNumVal;
-    setToastMessage(
-      isFull
-        ? `✅ Full payment of ₹${paidVal.toLocaleString()} collected! Invoice marked as PAID.`
-        : `✅ Partial payment of ₹${paidVal.toLocaleString()} collected! Remaining balance updated.`,
+    AppToast.success(
+      isFull ? 'Invoice Paid in Full' : 'Partial Payment Recorded',
+      `₹${paidVal.toLocaleString()} collected for ${selectedInvoice.name}`
     );
 
     handleCloseCollectModal();
-    setTimeout(() => setToastMessage(''), 3000);
   };
 
   // Live calculation of remaining amount for bottom sheet
@@ -454,156 +451,14 @@ export default function PendingPaymentsScreen({ navigation }: any) {
         </View>
       </ScrollView>
 
-      {/* Payment Collection Bottom Sheet Modal */}
-      <Modal
+      {/* Payment Collection Modal */}
+      <CollectPaymentModal
         visible={isCollectModalVisible}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={handleCloseCollectModal}
-      >
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity
-            style={styles.modalDismissArea}
-            activeOpacity={1}
-            onPress={handleCloseCollectModal}
-          />
-
-          <View style={styles.bottomSheetContainer}>
-            {/* Sheet Handle Indicator */}
-            <View style={styles.sheetHandle} />
-
-            {/* Sheet Header */}
-            <View style={styles.sheetHeader}>
-              <View>
-                <Text style={styles.sheetTitle}>Collect Payment</Text>
-                <Text style={styles.sheetSubtitle}>
-                  {selectedInvoice?.name} (
-                  {selectedInvoice?.invoiceNo || selectedInvoice?.id})
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={styles.closeBtn}
-                onPress={handleCloseCollectModal}
-              >
-                <Ionicons name="close" size={22} color="#6E6259" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Current Balance Banner */}
-            <View style={styles.balanceBanner}>
-              <Text style={styles.balanceLabel}>
-                Current Invoice Amount Due
-              </Text>
-              <Text style={styles.balanceValue}>
-                ₹{selectedNumVal.toLocaleString()}
-              </Text>
-            </View>
-
-            {/* Enter Paid Amount */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>ENTER PAID AMOUNT (₹)</Text>
-              <View style={styles.amountInputRow}>
-                <Text style={styles.currencySymbol}>₹</Text>
-                <TextInput
-                  style={styles.amountInput}
-                  keyboardType="numeric"
-                  value={paidAmountInput}
-                  onChangeText={setPaidAmountInput}
-                  placeholder="Enter amount"
-                  placeholderTextColor="#A09489"
-                />
-                <TouchableOpacity
-                  style={styles.fullAmountChip}
-                  onPress={() => setPaidAmountInput(selectedNumVal.toString())}
-                >
-                  <Text style={styles.fullAmountChipText}>Full Amount</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* Payment Method Selection */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>PAYMENT METHOD</Text>
-              <View style={styles.methodsRow}>
-                {[
-                  { id: 'UPI', label: 'UPI / GPay', icon: 'qr-code-outline' },
-                  { id: 'Cash', label: 'Cash', icon: 'cash-outline' },
-                  { id: 'Card', label: 'Card', icon: 'card-outline' },
-                  {
-                    id: 'Bank Transfer',
-                    label: 'Bank',
-                    icon: 'business-outline',
-                  },
-                ].map(m => (
-                  <TouchableOpacity
-                    key={m.id}
-                    activeOpacity={0.8}
-                    style={[
-                      styles.methodCard,
-                      paymentMethod === m.id && styles.methodCardActive,
-                    ]}
-                    onPress={() => setPaymentMethod(m.id as any)}
-                  >
-                    <Ionicons
-                      name={m.icon}
-                      size={18}
-                      color={paymentMethod === m.id ? '#8C331A' : '#6E6259'}
-                    />
-                    <Text
-                      style={[
-                        styles.methodLabel,
-                        paymentMethod === m.id && styles.methodLabelActive,
-                      ]}
-                    >
-                      {m.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            {/* Remaining Amount Calculation Summary */}
-            <View style={styles.summaryCard}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>
-                  Remaining Balance After Payment:
-                </Text>
-                <Text
-                  style={[
-                    styles.summaryVal,
-                    calculatedRemaining === 0
-                      ? styles.textSuccess
-                      : styles.textWarning,
-                  ]}
-                >
-                  ₹{calculatedRemaining.toLocaleString()}
-                </Text>
-              </View>
-              <Text style={styles.summaryNotice}>
-                {calculatedRemaining === 0
-                  ? '✨ This invoice will be marked as FULLY PAID and removed from pending lists.'
-                  : 'ℹ️ Invoice status will update to Partially Paid with remaining amount.'}
-              </Text>
-            </View>
-
-            {/* Confirm Collection Action Button */}
-            <TouchableOpacity
-              activeOpacity={0.88}
-              style={styles.confirmBtn}
-              onPress={handleConfirmCollection}
-            >
-              <Ionicons
-                name="checkmark-circle-outline"
-                size={20}
-                color="#FFFFFF"
-              />
-              <Text style={styles.confirmBtnText}>
-                Confirm Collection (₹{currentPaidInputVal.toLocaleString()})
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+        onClose={handleCloseCollectModal}
+        onSubmit={handleConfirmCollection}
+        customerName={selectedInvoice ? `${selectedInvoice.name} (${selectedInvoice.invoiceNo || selectedInvoice.id})` : 'Customer'}
+        totalPendingAmount={selectedNumVal}
+      />
 
       {/* CUSTOM DIALOG POPUP */}
       <CustomDialog

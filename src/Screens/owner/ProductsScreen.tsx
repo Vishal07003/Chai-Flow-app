@@ -179,32 +179,37 @@ export default function ProductsScreen({ navigation, route }: any) {
 
       {/* Modal: Add New Product */}
       <Modal
-        animationType="slide"
+        animationType="fade"
         transparent={true}
         visible={modalVisible}
         onRequestClose={() => setModalVisible(false)}
+        statusBarTranslucent={true}
       >
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
+        <View style={styles.modalOverlay}>
           <TouchableOpacity
-            style={styles.modalOverlay}
+            style={StyleSheet.absoluteFill}
             activeOpacity={1}
-            onPress={Keyboard.dismiss}
+            onPress={() => setModalVisible(false)}
+          />
+
+          <KeyboardAvoidingView
+            style={styles.keyboardContainer}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            pointerEvents="box-none"
           >
-            <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Add New Product</Text>
+                <TouchableOpacity onPress={() => setModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close" size={20} color="#6E6259" />
+                </TouchableOpacity>
+              </View>
+
               <ScrollView
                 keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
+                showsVerticalScrollIndicator={true}
+                bounces={false}
               >
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Add New Product</Text>
-                  <TouchableOpacity onPress={() => setModalVisible(false)}>
-                    <Ionicons name="close" size={24} color="#6E6259" />
-                  </TouchableOpacity>
-                </View>
-
                 <Text style={styles.label}>Product Name *</Text>
                 <TextInput
                   style={styles.input}
@@ -268,9 +273,9 @@ export default function ProductsScreen({ navigation, route }: any) {
                   </Text>
                 </TouchableOpacity>
               </ScrollView>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </KeyboardAvoidingView>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -347,14 +352,27 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  keyboardContainer: {
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
   },
   modalCard: {
+    width: '100%',
+    maxWidth: 440,
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
+    borderRadius: 18,
+    padding: 18,
     maxHeight: '85%',
+    shadowColor: '#2A2421',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 10,
   },
   modalHeader: {
     flexDirection: 'row',

@@ -18,7 +18,7 @@ import type { DashboardStats } from '../../services/billing.service';
 
 export default function DashboardScreen() {
   const navigation = useNavigation<any>();
-  const { invoices } = useApp();
+  const { invoices, refreshBackendData } = useApp();
 
   const [refreshing, setRefreshing] = useState(false);
   const [liveStats, setLiveStats] = useState<DashboardStats | null>(null);
@@ -40,9 +40,9 @@ export default function DashboardScreen() {
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
-    await fetchLiveStats();
+    await Promise.all([fetchLiveStats(), refreshBackendData()]);
     setRefreshing(false);
-  }, []);
+  }, [refreshBackendData]);
 
   // Financial figures strictly matching requirements:
   // Today's Sales = invoices created today

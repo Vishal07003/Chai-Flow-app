@@ -21,6 +21,8 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header, FloatingButton, EmptyState } from '../../components/common';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
+import { CollectPaymentModal, type CollectPaymentFormData } from '../../components/payment';
+import AppToast from '../../utils/toast';
 
 import { useApp, Customer } from '../../context/AppContext';
 
@@ -40,6 +42,7 @@ export default function CustomersScreen() {
     setActiveFilter,
     sortBy,
     setSortBy,
+    refreshBackendData,
     addCustomer,
     collectPayment,
   } = useApp();
@@ -47,12 +50,11 @@ export default function CustomersScreen() {
   // Pull to refresh state
   const [refreshing, setRefreshing] = useState(false);
 
-  const onRefresh = React.useCallback(() => {
+  const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 1000);
-  }, []);
+    await refreshBackendData();
+    setRefreshing(false);
+  }, [refreshBackendData]);
 
   // Modal State for Add Customer
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -98,13 +100,14 @@ export default function CustomersScreen() {
     setCollectModalVisible(true);
   };
 
-  const handleCollectSubmit = () => {
+  const handleCollectSubmit = (data: CollectPaymentFormData) => {
     if (!selectedCustomer) return;
-    const amountToDeduct =
-      parseFloat(payAmountInput) || selectedCustomer.amount;
-
-    collectPayment(selectedCustomer.id, amountToDeduct);
+    collectPayment(selectedCustomer.id, data.amount);
     setCollectModalVisible(false);
+    AppToast.success(
+      'Payment Recorded',
+      `₹${data.amount} recorded for ${selectedCustomer.name} via ${data.paymentMethod.toUpperCase()}`
+    );
   };
 
   const toggleSortBy = () => {
@@ -306,7 +309,7 @@ export default function CustomersScreen() {
                 </View>
               </View>
 
-              {/* Right Info */}
+              {/* Right Info: Amount & Status Badge */}
               <View style={styles.rightContainer}>
                 <Text
                   style={[
@@ -318,12 +321,29 @@ export default function CustomersScreen() {
                 >
                   ₹{item.amount.toLocaleString()}
                 </Text>
-                <Ionicons
-                  name="chevron-forward"
-                  size={16}
-                  color="#A89F97"
-                  style={{ marginTop: 4 }}
-                />
+                <View
+                  style={[
+                    styles.paymentStatusPill,
+                    item.amount === 0
+                      ? styles.statusPillPaid
+                      : item.isOverdue || item.badge === 'OVERDUE'
+                      ? styles.statusPillOverdue
+                      : styles.statusPillUnpaid,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.paymentStatusPillText,
+                      item.amount === 0
+                        ? styles.statusTextPaid
+                        : item.isOverdue || item.badge === 'OVERDUE'
+                        ? styles.statusTextOverdue
+                        : styles.statusTextUnpaid,
+                    ]}
+                  >
+                    {item.amount === 0 ? 'PAID' : item.isOverdue || item.badge === 'OVERDUE' ? 'OVERDUE' : 'UNPAID'}
+                  </Text>
+                </View>
               </View>
             </TouchableOpacity>
           ))
@@ -344,112 +364,13 @@ export default function CustomersScreen() {
       />
 
       {/* Modal 2: Collect Payment */}
-      <Modal
-        animationType="fade"
-        transparent={true}
+      <CollectPaymentModal
         visible={collectModalVisible}
-        onRequestClose={() => setCollectModalVisible(false)}
-      >
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={Keyboard.dismiss}
-          >
-            <TouchableOpacity activeOpacity={1} style={styles.modalContent}>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                bounces={false}
-              >
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Collect Payment</Text>
-                  <TouchableOpacity
-                    onPress={() => setCollectModalVisible(false)}
-                  >
-                    <Ionicons name="close" size={24} color="#666" />
-                  </TouchableOpacity>
-                </View>
-
-                {selectedCustomer && (
-                  <View style={styles.customerPaymentBanner}>
-                    <Text style={styles.paymentCustomerName}>
-                      {selectedCustomer.name}
-                    </Text>
-                    <Text style={styles.paymentDueText}>
-                      Amount Due: ₹
-                      {selectedCustomer.amount.toLocaleString()}
-                    </Text>
-                  </View>
-                )}
-
-                <Text style={styles.inputLabel}>Collection Amount (₹)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter amount collected"
-                  placeholderTextColor="#999"
-                  keyboardType="numeric"
-                  value={payAmountInput}
-                  onChangeText={setPayAmountInput}
-                />
-
-                <Text style={styles.inputLabel}>Payment Method</Text>
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    flexWrap: 'wrap',
-                    marginBottom: 12,
-                  }}
-                >
-                  {(['UPI', 'Cash', 'Bank Transfer', 'Cheque'] as const).map(
-                    method => {
-                      const active = payMethod === method;
-                      return (
-                        <TouchableOpacity
-                          key={method}
-                          activeOpacity={0.8}
-                          onPress={() => setPayMethod(method)}
-                          style={{
-                            backgroundColor: active ? '#8C331A' : '#FAF8F5',
-                            borderWidth: 1,
-                            borderColor: active ? '#8C331A' : '#EFECE8',
-                            borderRadius: 12,
-                            paddingHorizontal: 12,
-                            paddingVertical: 8,
-                            marginRight: 8,
-                            marginBottom: 8,
-                          }}
-                        >
-                          <Text
-                            style={{
-                              fontSize: 13,
-                              fontWeight: '600',
-                              color: active ? '#FFFFFF' : '#6E6259',
-                            }}
-                          >
-                            {method}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    },
-                  )}
-                </View>
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  style={styles.submitBtn}
-                  onPress={handleCollectSubmit}
-                >
-                  <Text style={styles.submitBtnText}>Confirm Payment</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </KeyboardAvoidingView>
-      </Modal>
+        onClose={() => setCollectModalVisible(false)}
+        onSubmit={handleCollectSubmit}
+        customerName={selectedCustomer?.name || 'Customer'}
+        totalPendingAmount={selectedCustomer?.amount || 0}
+      />
 
       {/* Modal 3: Financial Reports */}
       <Modal
@@ -814,7 +735,35 @@ const styles = StyleSheet.create({
     color: '#8C331A',
   },
   zeroAmount: {
-    color: '#2C201A',
+    color: '#059669',
+  },
+  paymentStatusPill: {
+    marginTop: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  statusPillPaid: {
+    backgroundColor: '#D1FAE5',
+  },
+  statusPillOverdue: {
+    backgroundColor: '#FEE2E2',
+  },
+  statusPillUnpaid: {
+    backgroundColor: '#FEF3C7',
+  },
+  paymentStatusPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  statusTextPaid: {
+    color: '#059669',
+  },
+  statusTextOverdue: {
+    color: '#DC2626',
+  },
+  statusTextUnpaid: {
+    color: '#D97706',
   },
   emptyCard: {
     backgroundColor: '#FFF',

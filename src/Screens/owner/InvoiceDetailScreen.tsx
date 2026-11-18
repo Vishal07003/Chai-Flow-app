@@ -27,8 +27,48 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
     assignOrderPartner,
   } = useApp();
 
+  const mapBackendInvoiceToItem = (raw: any): InvoiceItem => {
+    if (!raw) return raw;
+    if (raw.invoice_number) {
+      // It's a BackendInvoice from billingService
+      const grandTotalNum = parseFloat(raw.grand_total) || 0;
+      const subtotalNum = parseFloat(raw.subtotal) || grandTotalNum;
+      const discountNum = parseFloat(raw.discount_amount || '0') || 0;
+      const paidNum = parseFloat(raw.total_paid || '0') || 0;
+      const pendingNum = parseFloat(raw.pending_amount || '0') || 0;
+      const isPaidStatus = raw.status === 'paid' || pendingNum <= 0;
+
+      return {
+        id: String(raw.id),
+        invoiceNo: raw.invoice_number,
+        name: raw.customer_name || 'Walk-in Customer',
+        customerPhone: raw.customer_phone || '',
+        customerAddress: '',
+        amount: `₹${grandTotalNum.toLocaleString()}`,
+        numericAmount: grandTotalNum,
+        subtotal: subtotalNum,
+        discountAmount: discountNum,
+        paidAmount: paidNum,
+        pendingAmount: pendingNum,
+        due: isPaidStatus ? 'Paid' : `Pending ₹${pendingNum.toLocaleString()}`,
+        date: raw.created_at ? new Date(raw.created_at).toLocaleDateString() : 'Today',
+        status: isPaidStatus ? 'PAID' : 'PENDING',
+        isOverdue: false,
+        deliveryStatus: isPaidStatus ? 'Delivered' : 'Pending',
+        items: (raw.items || []).map((it: any) => ({
+          id: String(it.id),
+          name: it.product_name,
+          qty: it.quantity,
+          price: parseFloat(it.unit_price) || 0,
+        })),
+        notes: raw.notes || '',
+      };
+    }
+    return raw;
+  };
+
   const [currentOrder, setCurrentOrder] = useState<InvoiceItem>(
-    invoice || {
+    mapBackendInvoiceToItem(invoice) || {
       id: 'inv-1',
       invoiceNo: 'ORD-2026-001',
       name: 'Ankit Sharma',
@@ -408,11 +448,41 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
             </View>
           )}
 
-          {/* Subtotal & GST */}
+          {/* Financial Breakdown: Subtotal, Discount, Grand Total, Paid, Pending */}
           <View style={styles.calcRow}>
             <Text style={styles.calcLabel}>Subtotal</Text>
-            <Text style={styles.calcVal}>₹{(currentOrder.subtotal || currentOrder.numericAmount || 1240).toLocaleString()}</Text>
+            <Text style={styles.calcVal}>₹{(currentOrder.subtotal || currentOrder.numericAmount || 0).toLocaleString()}</Text>
           </View>
+          {Boolean(currentOrder.discountAmount && currentOrder.discountAmount > 0) && (
+            <View style={styles.calcRow}>
+              <Text style={[styles.calcLabel, { color: '#059669', fontWeight: '700' }]}>Discount</Text>
+              <Text style={[styles.calcVal, { color: '#059669', fontWeight: '800' }]}>
+                - ₹{Number(currentOrder.discountAmount).toLocaleString()}
+              </Text>
+            </View>
+          )}
+          <View style={[styles.calcRow, { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 6, marginTop: 4 }]}>
+            <Text style={[styles.calcLabel, { fontWeight: '800', color: '#111827' }]}>Final Bill Amount</Text>
+            <Text style={[styles.calcVal, { fontWeight: '900', color: '#8C331A' }]}>
+              {currentOrder.amount || `₹${(currentOrder.numericAmount || 0).toLocaleString()}`}
+            </Text>
+          </View>
+          {currentOrder.paidAmount !== undefined && (
+            <View style={styles.calcRow}>
+              <Text style={styles.calcLabel}>Amount Received</Text>
+              <Text style={[styles.calcVal, { color: '#059669', fontWeight: '700' }]}>
+                ₹{Number(currentOrder.paidAmount).toLocaleString()}
+              </Text>
+            </View>
+          )}
+          {currentOrder.pendingAmount !== undefined && Number(currentOrder.pendingAmount) > 0 && (
+            <View style={styles.calcRow}>
+              <Text style={[styles.calcLabel, { color: '#DC2626', fontWeight: '700' }]}>Remaining Due</Text>
+              <Text style={[styles.calcVal, { color: '#DC2626', fontWeight: '800' }]}>
+                ₹{Number(currentOrder.pendingAmount).toLocaleString()}
+              </Text>
+            </View>
+          )}
           {currentOrder.tax ? (
             <View style={styles.calcRow}>
               <Text style={styles.calcLabel}>GST (5%)</Text>
