@@ -275,6 +275,7 @@ export interface AppContextType {
   clearAllNotifications: () => Promise<void> | void;
 
   /* Auth & User Profile & Role strictly determined by Backend */
+  isAuthLoading: boolean;
   isAuthenticated: boolean;
   userMobile: string;
   setUserMobile: (mobile: string) => void;
@@ -407,9 +408,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     const loadPersistedData = async () => {
       try {
+        let parsed: any = null;
         const stored = await AsyncStorage.getItem(STORAGE_KEY);
         if (stored) {
-          const parsed = JSON.parse(stored);
+          parsed = JSON.parse(stored);
           if (parsed.customers) setCustomers(parsed.customers);
           if (parsed.products) {
             const defaultProductIds = ['1', '2', '3', '4'];
@@ -437,7 +439,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
         // Live JWT session check with backend & initial dynamic data fetch
         const token = await apiClient.getAccessToken();
-        if (token) {
+        const refreshToken = await apiClient.getRefreshToken();
+        if (token || refreshToken) {
           try {
             const currentUser = await authService.getCurrentUser();
             if (currentUser) {
@@ -510,23 +513,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
                 console.log('Error refreshing live backend data:', fetchErr);
               }
             }
-          } catch (sessionErr) {
-            console.log('Session verification expired or unreachable:', sessionErr);
-            // Attempt token renewal via refresh token
-            const refreshed = await apiClient.refreshAccessToken();
-            if (refreshed) {
-              try {
-                const refreshedUser = await authService.getCurrentUser();
-                if (refreshedUser) {
-                  const role = refreshedUser?.profile?.role || 'customer';
-                  setUserRole(role === 'delivery' ? 'DELIVERY_PARTNER' : 'ADMIN');
-                  setIsAuthenticated(true);
+          } catch (sessionErr: any) {
+            console.log('Session verification error:', sessionErr);
+            // Check if error is a 401 unauthorized or session expiry
+            const errMsg = sessionErr?.message || '';
+            const isAuthError = errMsg.includes('401') || errMsg.toLowerCase().includes('unauthorized') || errMsg.toLowerCase().includes('session expired');
+
+            if (isAuthError && refreshToken) {
+              // Attempt token renewal via refresh token
+              const refreshed = await apiClient.refreshAccessToken();
+              if (refreshed) {
+                try {
+                  const refreshedUser = await authService.getCurrentUser();
+                  if (refreshedUser) {
+                    const role = refreshedUser?.profile?.role || 'customer';
+                    setUserRole(role === 'delivery' ? 'DELIVERY_PARTNER' : 'ADMIN');
+                    setIsAuthenticated(true);
+                  }
+                } catch {
+                  // Failed to fetch user with refreshed token
+                  await apiClient.clearTokens();
+                  setIsAuthenticated(false);
                 }
-              } catch {
+              } else {
+                // Refresh token invalid or rejected by backend (401/400)
                 await apiClient.clearTokens();
                 setIsAuthenticated(false);
               }
+            } else if (!isAuthError) {
+              // Temporary network or connection error (offline/timeout): PRESERVE session
+              console.log('Network unreachable during boot. Preserving saved authentication session.');
+              // If user was previously authenticated or has tokens, maintain authenticated state
+              if (parsed?.isAuthenticated !== false) {
+                setIsAuthenticated(true);
+              }
             } else {
+              // 401 and no refresh token available
               await apiClient.clearTokens();
               setIsAuthenticated(false);
             }
@@ -1422,6 +1444,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         addSchedule,
         completeSchedule,
 
+        /* Auth & User Profile & Role strictly determined by Backend */
+        isAuthLoading: !isLoaded,
         isAuthenticated,
         userMobile,
         setUserMobile,

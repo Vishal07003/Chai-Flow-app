@@ -11,6 +11,8 @@ import {
   Modal,
   Alert,
   ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -171,6 +173,18 @@ export default function OrdersScreen({ navigation }: any) {
     setDeliveryAddress(comp.billing_address || '');
   };
 
+  const selectedItemCount = useMemo(() => {
+    return Object.values(selectedItems).reduce((sum, q) => sum + q, 0);
+  }, [selectedItems]);
+
+  const estimatedOrderTotal = useMemo(() => {
+    return Object.entries(selectedItems).reduce((sum, [pid, qty]) => {
+      const prod = products.find(p => p.id === Number(pid));
+      const rate = prod ? parseFloat(prod.price) || 0 : 0;
+      return sum + rate * qty;
+    }, 0);
+  }, [selectedItems, products]);
+
   const handleSubmitNewOrder = async () => {
     const itemsPayload = Object.entries(selectedItems).map(([pid, qty]) => ({
       product_id: Number(pid),
@@ -324,96 +338,191 @@ export default function OrdersScreen({ navigation }: any) {
       {/* Floating Button for New Commercial Order */}
       <FloatingButton onPress={handleOpenCreateModal} />
 
-      {/* Commercial Order Creation Modal */}
+      {/* Commercial / Customer Order Creation Bottom Sheet */}
       <Modal visible={createModalVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalSheet, { maxHeight: '90%' }]}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.modalSheet}>
+            {/* Header: Title and Simple Close Icon */}
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>New Company Order</Text>
-              <TouchableOpacity onPress={() => setCreateModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#2A2421" />
+              <View>
+                <Text style={styles.modalTitle}>New Customer Order</Text>
+                <Text style={styles.modalSubtitle}>Select customer, destination and products</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.closeIconBtn}
+                onPress={() => setCreateModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={20} color="#6B5E55" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {/* Company Picker */}
-              <Text style={styles.fieldSectionLabel}>SELECT TARGET COMPANY</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-                {companies.map(c => (
-                  <TouchableOpacity
-                    key={c.id}
-                    style={[styles.compChip, selectedCompanyId === c.id && styles.compChipActive]}
-                    onPress={() => handleSelectCompany(c)}
-                  >
-                    <Text style={[styles.compChipText, selectedCompanyId === c.id && styles.compChipTextActive]}>
-                      {c.name}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 16 }}
+            >
+              {/* Customer Selector */}
+              <Text style={styles.fieldSectionLabel}>SELECT CUSTOMER</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.customerScroll}
+                contentContainerStyle={{ paddingVertical: 2 }}
+              >
+                {companies.map(c => {
+                  const isSelected = selectedCompanyId === c.id;
+                  return (
+                    <TouchableOpacity
+                      key={c.id}
+                      style={[styles.compChip, isSelected && styles.compChipActive]}
+                      onPress={() => handleSelectCompany(c)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name="business-outline"
+                        size={13}
+                        color={isSelected ? '#FFFFFF' : '#8C331A'}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text style={[styles.compChipText, isSelected && styles.compChipTextActive]}>
+                        {c.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </ScrollView>
 
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Delivery Address *"
-                placeholderTextColor="#8E8278"
-                value={deliveryAddress}
-                onChangeText={setDeliveryAddress}
-              />
+              {/* Delivery Address & Notes Inputs */}
+              <Text style={styles.fieldSectionLabel}>DELIVERY DETAILS</Text>
+              <View style={styles.inputContainer}>
+                <Ionicons name="location-outline" size={16} color="#8E8278" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="Delivery Address *"
+                  placeholderTextColor="#A0958D"
+                  value={deliveryAddress}
+                  onChangeText={setDeliveryAddress}
+                />
+              </View>
 
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Order Instructions / Notes (Optional)"
-                placeholderTextColor="#8E8278"
-                value={orderNotes}
-                onChangeText={setOrderNotes}
-              />
+              <View style={styles.inputContainer}>
+                <Ionicons name="document-text-outline" size={16} color="#8E8278" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="Order instructions / notes (Optional)"
+                  placeholderTextColor="#A0958D"
+                  value={orderNotes}
+                  onChangeText={setOrderNotes}
+                />
+              </View>
 
-              {/* Product Selection with Quantity Adjusters */}
-              <Text style={styles.fieldSectionLabel}>SELECT PRODUCTS & QUANTITIES</Text>
-              {products.map(p => {
-                const qty = selectedItems[p.id] || 0;
-                return (
-                  <View key={p.id} style={styles.prodRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.prodName}>{p.name}</Text>
-                      <Text style={styles.prodBaseRate}>Catalog Rate: ₹{p.price} (volume slab resolved on submit)</Text>
+              {/* Product Selection with Clean Compact Row */}
+              <View style={styles.productSectionHeader}>
+                <Text style={styles.fieldSectionLabel}>SELECT PRODUCTS</Text>
+                {selectedItemCount > 0 && (
+                  <Text style={styles.selectedCountBadge}>
+                    {selectedItemCount} {selectedItemCount === 1 ? 'item' : 'items'}
+                  </Text>
+                )}
+              </View>
+
+              <View style={styles.productsCard}>
+                {products.map((p, idx) => {
+                  const qty = selectedItems[p.id] || 0;
+                  const isSelected = qty > 0;
+                  const isLast = idx === products.length - 1;
+                  return (
+                    <View
+                      key={p.id}
+                      style={[
+                        styles.prodRow,
+                        isLast && { borderBottomWidth: 0 },
+                        isSelected && styles.prodRowSelected,
+                      ]}
+                    >
+                      <View style={{ flex: 1, marginRight: 12 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Text style={styles.prodName}>{p.name}</Text>
+                          <Text style={styles.prodIdTag}>#{p.id}</Text>
+                        </View>
+                        <Text style={styles.prodBaseRate}>
+                          ₹{p.price} / unit
+                        </Text>
+                      </View>
+
+                      {/* Minimal, compact quantity controls */}
+                      <View style={styles.qtyControl}>
+                        <TouchableOpacity
+                          style={[styles.qtyBtn, qty === 0 && styles.qtyBtnDisabled]}
+                          onPress={() => handleItemQtyChange(p.id, -1)}
+                          disabled={qty === 0}
+                          activeOpacity={0.6}
+                        >
+                          <Ionicons
+                            name="remove"
+                            size={14}
+                            color={qty === 0 ? '#C4BCB5' : '#8C331A'}
+                          />
+                        </TouchableOpacity>
+
+                        <Text style={[styles.qtyText, isSelected && styles.qtyTextActive]}>
+                          {qty}
+                        </Text>
+
+                        <TouchableOpacity
+                          style={styles.qtyBtn}
+                          onPress={() => handleItemQtyChange(p.id, 1)}
+                          activeOpacity={0.6}
+                        >
+                          <Ionicons name="add" size={14} color="#8C331A" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                    <View style={styles.qtyControl}>
-                      <TouchableOpacity
-                        style={styles.qtyBtn}
-                        onPress={() => handleItemQtyChange(p.id, -1)}
-                      >
-                        <Text style={styles.qtyBtnText}>-</Text>
-                      </TouchableOpacity>
-                      <Text style={styles.qtyText}>{qty}</Text>
-                      <TouchableOpacity
-                        style={styles.qtyBtn}
-                        onPress={() => handleItemQtyChange(p.id, 1)}
-                      >
-                        <Text style={styles.qtyBtnText}>+</Text>
-                      </TouchableOpacity>
-                    </View>
+                  );
+                })}
+              </View>
+
+              {/* Compact Order Summary Bar */}
+              {selectedItemCount > 0 && (
+                <View style={styles.orderSummaryBar}>
+                  <View>
+                    <Text style={styles.summaryCountText}>
+                      {selectedItemCount} {selectedItemCount === 1 ? 'unit selected' : 'units selected'}
+                    </Text>
+                    <Text style={styles.summarySubtext}>Volume pricing applied at generation</Text>
                   </View>
-                );
-              })}
+                  <Text style={styles.summaryTotalText}>
+                    ~₹{estimatedOrderTotal.toLocaleString()}
+                  </Text>
+                </View>
+              )}
 
+              {/* Confirm / Create Order Button */}
               <TouchableOpacity
-                style={styles.confirmGenerateBtn}
+                style={[
+                  styles.confirmGenerateBtn,
+                  selectedItemCount === 0 && styles.confirmGenerateBtnDisabled,
+                ]}
                 onPress={handleSubmitNewOrder}
-                disabled={creatingOrder}
+                disabled={creatingOrder || selectedItemCount === 0}
+                activeOpacity={0.8}
               >
                 {creatingOrder ? (
-                  <ActivityIndicator color="#FFFFFF" />
+                  <ActivityIndicator color="#FFFFFF" size="small" />
                 ) : (
                   <>
-                    <Ionicons name="cart" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.confirmGenerateBtnText}>Create Order (Auto-Calculate Pricing)</Text>
+                    <Ionicons name="checkmark-circle" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.confirmGenerateBtnText}>Create Customer Order</Text>
                   </>
                 )}
               </TouchableOpacity>
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Manual Invoice Review Modal */}
@@ -664,48 +773,74 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
     justifyContent: 'flex-end',
   },
   modalSheet: {
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    maxHeight: '85%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 16,
+    paddingHorizontal: 20,
+    maxHeight: '88%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 16,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2EFEB',
     marginBottom: 12,
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: '#2A2421',
+    letterSpacing: -0.3,
   },
   modalSubtitle: {
     fontSize: 12,
     color: '#8E8278',
     marginTop: 2,
   },
+  closeIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FAF8F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
   fieldSectionLabel: {
     fontSize: 11,
     fontWeight: '800',
     color: '#8E8278',
-    marginTop: 8,
+    marginTop: 10,
     marginBottom: 6,
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  customerScroll: {
+    marginBottom: 12,
   },
   compChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingVertical: 7,
+    borderRadius: 20,
     backgroundColor: '#FAF8F5',
     borderWidth: 1,
     borderColor: '#EFEAE4',
-    marginRight: 6,
+    marginRight: 8,
   },
   compChipActive: {
     backgroundColor: '#8C331A',
@@ -713,68 +848,173 @@ const styles = StyleSheet.create({
   },
   compChipText: {
     fontSize: 12,
-    color: '#8E8278',
+    color: '#6B5E55',
     fontWeight: '600',
   },
   compChipTextActive: {
     color: '#FFFFFF',
     fontWeight: '700',
   },
-  modalInput: {
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#FAF8F5',
     borderWidth: 1,
     borderColor: '#EFEAE4',
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
     height: 44,
-    marginBottom: 8,
+    marginBottom: 10,
+  },
+  inputIcon: {
+    marginRight: 8,
+  },
+  modalInput: {
+    flex: 1,
     fontSize: 13,
     color: '#2A2421',
+    paddingVertical: 0,
+  },
+  productSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  selectedCountBadge: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8C331A',
+    backgroundColor: '#FDF6F3',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#F5DDD3',
+  },
+  productsCard: {
+    backgroundColor: '#FAF8F5',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    overflow: 'hidden',
+    marginBottom: 12,
   },
   prodRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#FAF8F5',
+    borderBottomColor: '#EFEAE4',
+    backgroundColor: '#FFFFFF',
+  },
+  prodRowSelected: {
+    backgroundColor: '#FCFAF8',
   },
   prodName: {
     fontSize: 13,
     fontWeight: '700',
     color: '#2A2421',
   },
-  prodBaseRate: {
+  prodIdTag: {
     fontSize: 10,
-    color: '#8E8278',
-    marginTop: 1,
+    fontWeight: '600',
+    color: '#A0958D',
+    marginLeft: 6,
+    backgroundColor: '#F3EFEA',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  prodBaseRate: {
+    fontSize: 11,
+    color: '#8C331A',
+    fontWeight: '600',
+    marginTop: 2,
   },
   qtyControl: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    padding: 2,
   },
   qtyBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#FAF8F5',
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#EFEAE4',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  qtyBtnText: {
-    fontSize: 16,
+  qtyBtnDisabled: {
+    opacity: 0.4,
+    backgroundColor: '#FAF8F5',
+  },
+  qtyText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#8E8278',
+    marginHorizontal: 8,
+    minWidth: 16,
+    textAlign: 'center',
+  },
+  qtyTextActive: {
+    color: '#8C331A',
+    fontWeight: '800',
+  },
+  orderSummaryBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FDF6F3',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F5DDD3',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  summaryCountText: {
+    fontSize: 12,
     fontWeight: '700',
     color: '#8C331A',
   },
-  qtyText: {
-    fontSize: 14,
+  summarySubtext: {
+    fontSize: 10,
+    color: '#A86C5B',
+    marginTop: 1,
+  },
+  summaryTotalText: {
+    fontSize: 15,
     fontWeight: '800',
-    color: '#2A2421',
-    marginHorizontal: 10,
-    minWidth: 16,
-    textAlign: 'center',
+    color: '#8C331A',
+  },
+  confirmGenerateBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#8C331A',
+    borderRadius: 12,
+    height: 46,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  confirmGenerateBtnDisabled: {
+    backgroundColor: '#C4BCB5',
+  },
+  confirmGenerateBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
+    letterSpacing: 0.2,
   },
   previewContent: {
     marginTop: 4,
@@ -854,20 +1094,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
     color: '#8C331A',
-  },
-  confirmGenerateBtn: {
-    flexDirection: 'row',
-    backgroundColor: '#8C331A',
-    borderRadius: 12,
-    height: 48,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 12,
-    marginBottom: 16,
-  },
-  confirmGenerateBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
   },
 });

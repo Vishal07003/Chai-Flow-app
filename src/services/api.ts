@@ -52,7 +52,9 @@ class ApiClient {
   }
 
   /**
-   * Refreshes JWT token without duplicate refresh storms
+   * Refreshes JWT token without duplicate refresh storms.
+   * Only clears tokens if server explicitly rejects refresh token (HTTP 401 / 400).
+   * Temporary network errors (offline, timeout) DO NOT delete tokens.
    */
   async refreshAccessToken(): Promise<string | null> {
     const refreshToken = await this.getRefreshToken();
@@ -69,17 +71,25 @@ class ApiClient {
       });
 
       if (!response.ok) {
-        await this.clearTokens();
+        // If 401 or 400 (invalid or blacklisted refresh token), revoke tokens
+        if (response.status === 401 || response.status === 400) {
+          await this.clearTokens();
+        }
         return null;
       }
 
       const data = await response.json();
-      await AsyncStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access);
-      if (data.refresh) {
-        await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh);
+      if (data?.access) {
+        await AsyncStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access);
+        if (data.refresh) {
+          await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh);
+        }
+        return data.access;
       }
-      return data.access;
-    } catch {
+      return null;
+    } catch (networkErr) {
+      // Network failure or offline: keep saved tokens intact
+      console.log('[ApiClient] Token refresh network error (preserving tokens):', networkErr);
       return null;
     }
   }
