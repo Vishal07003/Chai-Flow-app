@@ -1,130 +1,359 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   View,
   Text,
   TouchableOpacity,
   ScrollView,
-  FlatList,
   Modal,
   TextInput,
   ActivityIndicator,
   Alert,
+  Linking,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import Header from '../../components/common/Header';
-import companyService, { Company, MonthlyLedgerStatement } from '../../services/company.service';
-import billingService, { BackendInvoice } from '../../services/billing.service';
+import billingService, { BackendInvoice, BillingCustomer } from '../../services/billing.service';
+import orderService, {
+  BackendOrder,
+  BackendRecurringOrder,
+} from '../../services/order.service';
+import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 
 export default function CustomerDetailScreen({ route, navigation }: any) {
-  const companyId = route.params?.companyId || route.params?.company?.id;
+  // Support either customer object, customerId, or companyId passed in route params
+  const initialCustomer = route.params?.customer || null;
+  const rawId = route.params?.customerId || initialCustomer?.id || route.params?.companyId || route.params?.company?.id;
+  const customerId = rawId ? Number(rawId) : null;
 
-  const [company, setCompany] = useState<Company | null>(route.params?.company || null);
-  const [loading, setLoading] = useState<boolean>(!route.params?.company);
-  const [activeTab, setActiveTab] = useState<'Ledger' | 'Invoices' | 'Pricing' | 'Info'>('Ledger');
+  // Screen State
+  const [customer, setCustomer] = useState<BillingCustomer | null>(null);
+  const [customerSummary, setCustomerSummary] = useState<{
+    customer_id: number;
+    name: string;
+    phone: string;
+    address: string;
+    total_invoices: number;
+    total_orders: number;
+    total_billed: string;
+    total_paid: string;
+    total_pending: string;
+    last_purchase_date: string | null;
+  } | null>(null);
 
-  // Ledger Statement State
-  const [ledgerStatement, setLedgerStatement] = useState<MonthlyLedgerStatement | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+
+  // Financial Ledger & Invoices
+  const [ledgerStatement, setLedgerStatement] = useState<any | null>(null);
   const [ledgerLoading, setLedgerLoading] = useState<boolean>(false);
-  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [selectedYear] = useState<number>(new Date().getFullYear());
 
-  // Invoices List State
   const [invoices, setInvoices] = useState<BackendInvoice[]>([]);
-  const [invoicesLoading, setInvoicesLoading] = useState<boolean>(false);
 
-  // Payment Collection Modal
+  // Orders & Recurring Orders
+  const [recentOrders, setRecentOrders] = useState<BackendOrder[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
+
+  const [recurringTemplates, setRecurringTemplates] = useState<BackendRecurringOrder[]>([]);
+  const [recurringLoading, setRecurringLoading] = useState<boolean>(false);
+
+  // Modals State
+  const [editCustomerModalVisible, setEditCustomerModalVisible] = useState<boolean>(false);
   const [collectModalVisible, setCollectModalVisible] = useState<boolean>(false);
   const [collectAmount, setCollectAmount] = useState<string>('');
-  const [paymentMethod, setPaymentMethod] = useState<string>('bank_transfer');
-  const [refNumber, setRefNumber] = useState<string>('');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'online' | 'upi' | 'bank_transfer'>('cash');
+  const [paymentNotes, setPaymentNotes] = useState<string>('');
   const [submittingPayment, setSubmittingPayment] = useState<boolean>(false);
 
-  const fetchCompanyDetails = useCallback(async () => {
-    if (!companyId) return;
+  // Repeat Order Selection Modal State
+  const [repeatOrderModalVisible, setRepeatOrderModalVisible] = useState<boolean>(false);
+
+  // Full Ledger Timeline Modal
+  const [ledgerModalVisible, setLedgerModalVisible] = useState<boolean>(false);
+
+  // 1. Fetch Customer Profile & Summary
+  const fetchCustomerData = useCallback(async () => {
+    if (!customerId) {
+      setLoading(false);
+      return;
+    }
     try {
-      setLoading(true);
-      const data = await companyService.getCompanyById(companyId);
-      setCompany(data);
-      setCollectAmount(data.current_outstanding || '0');
-    } catch (err: any) {
-      console.log('Error fetching company:', err);
+      const [cust, summary] = await Promise.all([
+        billingService.getCustomerById(customerId).catch(() => null),
+        billingService.getCustomerSummary(customerId).catch(() => null),
+      ]);
+
+      if (cust) {
+        setCustomer(cust);
+      } else if (initialCustomer) {
+        setCustomer({
+          id: customerId,
+          name: initialCustomer.name || 'Customer',
+          phone: initialCustomer.phone || '',
+          address: initialCustomer.address || '',
+          created_at: new Date().toISOString(),
+          total_bills: 0,
+          total_billed_amount: '0.00',
+          total_pending_amount: String(initialCustomer.amount || '0'),
+        });
+      }
+
+      if (summary) {
+        setCustomerSummary(summary);
+        setCollectAmount(summary.total_pending || '0');
+      } else if (cust) {
+        setCollectAmount(cust.total_pending_amount || '0');
+      }
+    } catch (err) {
+      console.log('Error fetching customer profile:', err);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [companyId]);
+  }, [customerId, initialCustomer]);
 
-  const fetchLedger = useCallback(async () => {
-    if (!companyId) return;
+  // 2. Fetch Customer Invoices & Ledger
+  const fetchLedgerAndInvoices = useCallback(async () => {
+    if (!customerId) return;
     try {
       setLedgerLoading(true);
-      const stmt = await companyService.getMonthlyLedger(companyId, selectedYear, selectedMonth);
+      const [stmt, invList] = await Promise.all([
+        billingService.getCustomerLedger(customerId, selectedYear, selectedMonth).catch(() => null),
+        billingService.getCustomerInvoices(customerId).catch(() => []),
+      ]);
       setLedgerStatement(stmt);
-    } catch (err: any) {
-      console.log('Error fetching ledger statement:', err);
+      setInvoices(invList || []);
+    } catch (err) {
+      console.log('Error loading customer ledger & invoices:', err);
     } finally {
       setLedgerLoading(false);
     }
-  }, [companyId, selectedYear, selectedMonth]);
+  }, [customerId, selectedYear, selectedMonth]);
 
-  const fetchInvoices = useCallback(async () => {
-    if (!companyId) return;
+  // 3. Fetch Customer Orders
+  const fetchOrders = useCallback(async () => {
+    if (!customerId) return;
     try {
-      setInvoicesLoading(true);
-      const invs = await billingService.getInvoices();
-      // Filter for this company
-      setInvoices(invs.filter(i => (i as any).company === companyId));
-    } catch (err: any) {
-      console.log('Error fetching invoices:', err);
+      setOrdersLoading(true);
+      const orders = await orderService.getOrders({ customer: customerId });
+      setRecentOrders(orders || []);
+    } catch (err) {
+      console.log('Error fetching customer orders:', err);
     } finally {
-      setInvoicesLoading(false);
+      setOrdersLoading(false);
     }
-  }, [companyId]);
+  }, [customerId]);
+
+  // 4. Fetch Customer Recurring Templates
+  const fetchRecurringTemplates = useCallback(async () => {
+    if (!customerId) return;
+    try {
+      setRecurringLoading(true);
+      const templates = await orderService.getRecurringOrders({ customer: customerId });
+      setRecurringTemplates(templates || []);
+    } catch (err) {
+      console.log('Error fetching recurring templates:', err);
+    } finally {
+      setRecurringLoading(false);
+    }
+  }, [customerId]);
 
   useEffect(() => {
-    fetchCompanyDetails();
-  }, [fetchCompanyDetails]);
+    fetchCustomerData();
+    fetchLedgerAndInvoices();
+    fetchOrders();
+    fetchRecurringTemplates();
+  }, [fetchCustomerData, fetchLedgerAndInvoices, fetchOrders, fetchRecurringTemplates]);
 
-  useEffect(() => {
-    if (activeTab === 'Ledger') fetchLedger();
-    if (activeTab === 'Invoices') fetchInvoices();
-  }, [activeTab, fetchLedger, fetchInvoices]);
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchCustomerData();
+    fetchLedgerAndInvoices();
+    fetchOrders();
+    fetchRecurringTemplates();
+  }, [fetchCustomerData, fetchLedgerAndInvoices, fetchOrders, fetchRecurringTemplates]);
 
-  const handleCollectPayment = async () => {
+  // --- Actions ---
+
+  // Edit Customer
+  const handleEditCustomerSubmit = async (formData: AddCustomerFormData) => {
+    if (!customerId) return;
+    try {
+      const updated = await billingService.updateCustomer(customerId, {
+        name: formData.name,
+        phone: formData.phone,
+        address: formData.address,
+      });
+      setCustomer(updated);
+      setEditCustomerModalVisible(false);
+      Alert.alert('Updated', 'Customer profile updated successfully.');
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to update customer.');
+    }
+  };
+
+  // Collect Payment with FIFO Allocation
+  const handleConfirmCollectPayment = async () => {
+    if (!customerId) return;
     const amt = parseFloat(collectAmount);
     if (!amt || amt <= 0) {
-      Alert.alert('Invalid Amount', 'Please enter a valid payment amount greater than zero.');
+      Alert.alert('Invalid Amount', 'Please enter a valid amount greater than zero.');
       return;
     }
 
     try {
       setSubmittingPayment(true);
-      const res = await companyService.collectPayment(companyId, {
+      const res = await billingService.collectCustomerPayment(customerId, {
         amount: amt,
         method: paymentMethod,
-        reference_number: refNumber.trim(),
+        notes: paymentNotes.trim() || `Payment collection for ${customer?.name || 'Customer'}`,
       });
 
       setCollectModalVisible(false);
-      setRefNumber('');
-      fetchCompanyDetails();
-      fetchLedger();
+      setPaymentNotes('');
+      fetchCustomerData();
+      fetchLedgerAndInvoices();
       Alert.alert(
         'Payment Recorded',
-        `₹${res.allocated_to_invoices} allocated to invoices via FIFO.\nAdvance Credit: ₹${res.unallocated_advance_credit}`,
+        `₹${res.amount_allocated} allocated to open invoices via FIFO.\nAdvance Credit: ₹${res.unallocated_credit}`,
       );
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to record payment.');
+      Alert.alert('Error', err?.message || 'Failed to collect payment.');
     } finally {
       setSubmittingPayment(false);
     }
   };
 
-  if (loading || !company) {
+  // Quick Action 1: New Order -> Navigate directly to QuickBillingScreen
+  const handleOpenNewOrder = () => {
+    const custToPass = customer || initialCustomer || {
+      id: customerId,
+      name: displayName,
+      phone: displayPhone,
+      address: displayAddress,
+    };
+    navigation.navigate('QuickBilling', {
+      customer: custToPass,
+    });
+  };
+
+  // Quick Action 2: Collect Payment
+  const handleOpenCollectPayment = () => {
+    setCollectAmount(String(amountDue > 0 ? amountDue : ''));
+    setCollectModalVisible(true);
+  };
+
+  // Quick Action 3: Repeat Order
+  const handleRepeatOrder = () => {
+    if (recentOrders.length === 0) {
+      Alert.alert(
+        'No Previous Orders',
+        'This customer has no prior orders to repeat. Opening Quick Billing to create a new order.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Open Quick Billing',
+            onPress: () => {
+              navigation.navigate('QuickBilling', {
+                customer: customer || initialCustomer,
+              });
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    if (recentOrders.length === 1) {
+      repeatSpecificOrder(recentOrders[0]);
+    } else {
+      setRepeatOrderModalVisible(true);
+    }
+  };
+
+  const repeatSpecificOrder = (order: BackendOrder) => {
+    setRepeatOrderModalVisible(false);
+    const prefilledItems = (order.items || []).map(it => ({
+      product_id: Number(it.product || it.product_details?.id),
+      product_name: it.product_details?.name || 'Item',
+      quantity: it.quantity,
+    }));
+
+    navigation.navigate('QuickBilling', {
+      customer: customer || initialCustomer,
+      prefilledItems,
+    });
+  };
+
+  // Recurring Order Templates
+  const handleOpenCreateRecurring = () => {
+    navigation.navigate('RecurringOrder', {
+      customer: customer || initialCustomer,
+      customerId,
+    });
+  };
+
+  const handleOpenEditRecurring = (template: BackendRecurringOrder) => {
+    navigation.navigate('RecurringOrder', {
+      template,
+      customer: customer || initialCustomer,
+      customerId,
+    });
+  };
+
+  const handleTogglePauseRecurring = async (template: BackendRecurringOrder) => {
+    try {
+      if (template.is_paused) {
+        await orderService.resumeRecurringOrder(template.id);
+        Alert.alert('Resumed', 'Recurring order schedule is active.');
+      } else {
+        await orderService.pauseRecurringOrder(template.id);
+        Alert.alert('Paused', 'Recurring order schedule is paused.');
+      }
+      fetchRecurringTemplates();
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to update recurring status.');
+    }
+  };
+
+  // Header More Options Menu
+  const handleHeaderMore = () => {
+    Alert.alert(
+      displayName,
+      'Select action:',
+      [
+        { text: 'Edit Profile', onPress: () => setEditCustomerModalVisible(true) },
+        { text: 'Collect Payment', onPress: handleOpenCollectPayment },
+        { text: 'Create Recurring Template', onPress: handleOpenCreateRecurring },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+      { cancelable: true }
+    );
+  };
+
+  // Derived Values
+  const displayName = customer?.name || initialCustomer?.name || 'Customer';
+  const displayPhone = customer?.phone || initialCustomer?.phone || '';
+  const displayAddress = customer?.address || initialCustomer?.address || 'No Address Provided';
+  const amountDue = parseFloat(customerSummary?.total_pending || customer?.total_pending_amount || '0') || 0;
+  const totalOrdersCount = customerSummary?.total_orders ?? recentOrders.length;
+
+  if (loading && !customer) {
     return (
       <SafeAreaView style={styles.container}>
-        <Header title="Company Details" showBack />
+        <View style={styles.customHeaderBar}>
+          <TouchableOpacity
+            style={styles.headerBackBtn}
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-back" size={22} color="#8C331A" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Customer Profile</Text>
+        </View>
         <View style={styles.centerBox}>
           <ActivityIndicator size="large" color="#8C331A" />
         </View>
@@ -132,246 +361,625 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     );
   }
 
-  const outstandingNum = parseFloat(company.current_outstanding) || 0;
-
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <Header title={company.name} showBack />
-
-      {/* Top Company Profile Card */}
-      <View style={styles.profileCard}>
-        <View style={styles.avatarRow}>
-          <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>{company.name.substring(0, 2).toUpperCase()}</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.companyTitle}>{company.name}</Text>
-            <Text style={styles.companySub}>{company.phone} • {company.billing_cycle} CYCLE</Text>
-            {company.gstin ? <Text style={styles.gstinText}>GSTIN: {company.gstin}</Text> : null}
-          </View>
-        </View>
-
-        {/* Financial KPI Row */}
-        <View style={styles.kpiRow}>
-          <View style={styles.kpiCol}>
-            <Text style={styles.kpiLabel}>Total Billed</Text>
-            <Text style={styles.kpiVal}>₹{parseFloat(company.total_billed || '0').toLocaleString()}</Text>
-          </View>
-          <View style={styles.kpiCol}>
-            <Text style={styles.kpiLabel}>Total Paid</Text>
-            <Text style={[styles.kpiVal, { color: '#059669' }]}>
-              ₹{parseFloat(company.total_paid || '0').toLocaleString()}
-            </Text>
-          </View>
-          <View style={styles.kpiCol}>
-            <Text style={styles.kpiLabel}>Current Outstanding</Text>
-            <Text style={[styles.kpiVal, { color: outstandingNum > 0 ? '#DC2626' : '#059669' }]}>
-              ₹{outstandingNum.toLocaleString()}
-            </Text>
-          </View>
+      {/* 1. Header with Back button, Title: Customer Profile, and More Options */}
+      <View style={styles.customHeaderBar}>
+        <View style={styles.headerLeftGroup}>
+          <TouchableOpacity
+            style={styles.headerBackBtn}
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-back" size={20} color="#8C331A" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Customer Profile</Text>
         </View>
 
         <TouchableOpacity
-          style={styles.collectBtn}
-          onPress={() => setCollectModalVisible(true)}
+          style={styles.headerMoreBtn}
+          onPress={handleHeaderMore}
+          activeOpacity={0.7}
         >
-          <Ionicons name="card-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-          <Text style={styles.collectBtnText}>Collect Payment (FIFO Allocation)</Text>
+          <Ionicons name="ellipsis-vertical" size={19} color="#2A2421" />
         </TouchableOpacity>
       </View>
 
-      {/* Segmented Tabs */}
-      <View style={styles.tabRow}>
-        {(['Ledger', 'Invoices', 'Pricing', 'Info'] as const).map(t => (
-          <TouchableOpacity
-            key={t}
-            style={[styles.tabBtn, activeTab === t && styles.tabBtnActive]}
-            onPress={() => setActiveTab(t)}
-          >
-            <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>{t}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Tab Contents */}
-      {activeTab === 'Ledger' && (
-        <View style={{ flex: 1, paddingHorizontal: 16 }}>
-          {ledgerLoading ? (
-            <View style={styles.centerBox}>
-              <ActivityIndicator size="large" color="#8C331A" />
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#8C331A']} />
+        }
+      >
+        {/* 2. Customer Profile Card */}
+        <View style={styles.profileCard}>
+          <View style={styles.profileMainRow}>
+            {/* Circular initials avatar */}
+            <View style={styles.avatarCircle}>
+              <Text style={styles.avatarInitials}>
+                {displayName.substring(0, 2).toUpperCase()}
+              </Text>
             </View>
-          ) : ledgerStatement ? (
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-              {/* Passbook Month Summary Banner */}
-              <View style={styles.statementBox}>
-                <View style={styles.stmtHeader}>
-                  <Text style={styles.stmtTitle}>MONTHLY PASSBOOK LEDGER</Text>
-                  <Text style={styles.stmtPeriod}>{ledgerStatement.period.start_date} to {ledgerStatement.period.end_date}</Text>
-                </View>
-                <View style={styles.stmtRow}>
-                  <Text style={styles.stmtLabel}>Opening Balance B/F</Text>
-                  <Text style={styles.stmtVal}>₹{ledgerStatement.summary.opening_balance}</Text>
-                </View>
-                <View style={styles.stmtRow}>
-                  <Text style={styles.stmtLabel}>Total Invoiced (Debits)</Text>
-                  <Text style={[styles.stmtVal, { color: '#DC2626' }]}>+ ₹{ledgerStatement.summary.total_debit}</Text>
-                </View>
-                <View style={styles.stmtRow}>
-                  <Text style={styles.stmtLabel}>Total Collections (Credits)</Text>
-                  <Text style={[styles.stmtVal, { color: '#059669' }]}>- ₹{ledgerStatement.summary.total_credit}</Text>
-                </View>
-                <View style={[styles.stmtRow, { borderTopWidth: 1, borderTopColor: '#EFEAE4', paddingTop: 6, marginTop: 4 }]}>
-                  <Text style={styles.stmtClosingLabel}>Closing Balance</Text>
-                  <Text style={styles.stmtClosingVal}>₹{ledgerStatement.summary.closing_balance}</Text>
-                </View>
-              </View>
 
-              {/* Chronological Passbook Transactions */}
-              <Text style={styles.sectionHeader}>TRANSACTION TIMELINE</Text>
-              {ledgerStatement.transactions.length === 0 ? (
-                <Text style={styles.emptyNote}>No ledger transactions recorded in this period.</Text>
+            {/* Profile Info */}
+            <View style={styles.profileInfoCol}>
+              <Text style={styles.profileName} numberOfLines={1}>
+                {displayName}
+              </Text>
+
+              {displayPhone ? (
+                <TouchableOpacity
+                  style={styles.phonePill}
+                  onPress={() => Linking.openURL(`tel:${displayPhone}`).catch(() => {})}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="call" size={11} color="#8C331A" style={{ marginRight: 4 }} />
+                  <Text style={styles.phonePillText}>{displayPhone}</Text>
+                </TouchableOpacity>
               ) : (
-                ledgerStatement.transactions.map((tx, idx) => {
-                  const isDebit = parseFloat(tx.debit) > 0;
-                  return (
-                    <View key={idx} style={styles.txRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.txRef}>{tx.reference_no}</Text>
-                        <Text style={styles.txDesc}>{tx.description}</Text>
-                        <Text style={styles.txDate}>{new Date(tx.date).toLocaleDateString()}</Text>
-                      </View>
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={[styles.txAmount, isDebit ? styles.txDebit : styles.txCredit]}>
-                          {isDebit ? `+ ₹${tx.debit}` : `- ₹${tx.credit}`}
-                        </Text>
-                        <Text style={styles.runningBal}>Bal: ₹{tx.running_balance}</Text>
-                      </View>
-                    </View>
-                  );
-                })
+                <Text style={styles.noPhoneText}>No mobile number</Text>
               )}
-            </ScrollView>
-          ) : null}
-        </View>
-      )}
 
-      {activeTab === 'Invoices' && (
-        <View style={{ flex: 1, paddingHorizontal: 16 }}>
-          {invoicesLoading ? (
-            <View style={styles.centerBox}>
-              <ActivityIndicator size="large" color="#8C331A" />
+              <View style={styles.addressRow}>
+                <Ionicons name="location-outline" size={13} color="#8E8278" style={{ marginRight: 3, marginTop: 1 }} />
+                <Text style={styles.addressText} numberOfLines={1}>
+                  {displayAddress}
+                </Text>
+              </View>
+            </View>
+
+            {/* Edit Customer Action */}
+            <TouchableOpacity
+              style={styles.editCustomerBtn}
+              onPress={() => setEditCustomerModalVisible(true)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="pencil-outline" size={14} color="#8C331A" />
+              <Text style={styles.editCustomerBtnText}>Edit</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* 3. Account Overview (Two balanced cards) */}
+        <View style={styles.overviewContainer}>
+          <View style={[styles.overviewCard, styles.overviewDueCard]}>
+            <View style={styles.overviewIconBox}>
+              <Ionicons name="alert-circle-outline" size={18} color="#8C331A" />
+            </View>
+            <Text style={styles.overviewCardLabel}>AMOUNT DUE</Text>
+            <Text style={[styles.overviewCardValue, amountDue > 0 ? styles.dueHighlight : styles.clearHighlight]}>
+              ₹{amountDue.toLocaleString()}
+            </Text>
+            <Text style={styles.overviewCardSubtext}>
+              {amountDue > 0 ? 'Pending Collection' : 'All Clear / Settled'}
+            </Text>
+          </View>
+
+          <View style={styles.overviewCard}>
+            <View style={[styles.overviewIconBox, { backgroundColor: '#F3EFEA' }]}>
+              <Ionicons name="receipt-outline" size={18} color="#6B5E55" />
+            </View>
+            <Text style={styles.overviewCardLabel}>TOTAL ORDERS</Text>
+            <Text style={styles.overviewCardValue}>{totalOrdersCount}</Text>
+            <Text style={styles.overviewCardSubtext}>
+              {customerSummary ? `Billed: ₹${parseFloat(customerSummary.total_billed).toLocaleString()}` : 'Recorded Orders'}
+            </Text>
+          </View>
+        </View>
+
+        {/* 4. Quick Actions (3 compact actions) */}
+        <View style={styles.actionsContainer}>
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.actionPrimaryBtn]}
+            onPress={handleOpenNewOrder}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="cart" size={16} color="#FFFFFF" style={{ marginRight: 5 }} />
+            <Text style={styles.actionPrimaryText}>New Order</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={handleOpenCollectPayment}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="wallet-outline" size={16} color="#8C331A" style={{ marginRight: 5 }} />
+            <Text style={styles.actionBtnText}>Collect Payment</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={handleRepeatOrder}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="repeat" size={16} color="#8C331A" style={{ marginRight: 5 }} />
+            <Text style={styles.actionBtnText}>Repeat Order</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* 5. Recurring Orders */}
+        <View style={styles.sectionWrap}>
+          <View style={styles.sectionTitleRow}>
+            <View style={styles.titleWithIcon}>
+              <Ionicons name="repeat-outline" size={16} color="#8C331A" style={{ marginRight: 5 }} />
+              <Text style={styles.sectionHeading}>RECURRING ORDERS</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.headerActionPill}
+              onPress={handleOpenCreateRecurring}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="add" size={14} color="#8C331A" />
+              <Text style={styles.headerActionPillText}>Add Template</Text>
+            </TouchableOpacity>
+          </View>
+
+          {recurringLoading ? (
+            <ActivityIndicator size="small" color="#8C331A" style={{ marginVertical: 12 }} />
+          ) : recurringTemplates.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Ionicons name="calendar-outline" size={24} color="#C4BCB5" />
+              <Text style={styles.emptyCardTitle}>No Recurring Templates</Text>
+              <Text style={styles.emptyCardSub}>Save daily or weekday orders to automate delivery.</Text>
             </View>
           ) : (
-            <FlatList
-              data={invoices}
-              keyExtractor={i => String(i.id)}
-              renderItem={({ item }) => (
-                <View style={styles.invoiceItemCard}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.invNumber}>{item.invoice_number}</Text>
-                    <Text style={styles.invDate}>{new Date(item.created_at).toLocaleDateString()}</Text>
+            recurringTemplates.map(template => {
+              const freqLabel = template.frequency === 'daily'
+                ? 'Daily'
+                : (template.weekdays
+                    ? template.weekdays.split(',').map(d => d.trim().slice(0, 3).toUpperCase()).join(', ')
+                    : 'Specific Days');
+
+              return (
+                <View key={template.id} style={[styles.compactTemplateCard, template.is_paused && styles.cardPaused]}>
+                  <View style={styles.templateTopRow}>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Text style={styles.templateFreqTitle}>{freqLabel}</Text>
+                        {template.is_paused ? (
+                          <View style={styles.pausedTag}>
+                            <Text style={styles.pausedTagText}>PAUSED</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.activeTag}>
+                            <Text style={styles.activeTagText}>ACTIVE</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.templatePartnerLine} numberOfLines={1}>
+                        <Ionicons name="bicycle-outline" size={12} color="#8E8278" />{' '}
+                        {template.delivery_partner_name ? `Driver: ${template.delivery_partner_name}` : 'Unassigned driver'}
+                      </Text>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.templateManageBtn}
+                      onPress={() => handleOpenEditRecurring(template)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="pencil-outline" size={13} color="#8C331A" />
+                      <Text style={styles.templateManageText}>Edit</Text>
+                    </TouchableOpacity>
                   </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.invAmount}>₹{parseFloat(item.grand_total).toLocaleString()}</Text>
-                    <Text style={[styles.invStatus, { color: item.status === 'paid' ? '#059669' : '#DC2626' }]}>
-                      {item.status.toUpperCase()}
+
+                  {/* Items Summary */}
+                  <View style={styles.templatePillsRow}>
+                    {template.items && template.items.length > 0 ? (
+                      template.items.map((it, idx) => (
+                        <View key={it.id || idx} style={styles.templateProductPill}>
+                          <Text style={styles.templateProductText}>
+                            {it.quantity}x {it.product_name}
+                          </Text>
+                        </View>
+                      ))
+                    ) : (
+                      <Text style={styles.emptyItemText}>No products specified</Text>
+                    )}
+                  </View>
+
+                  {/* Quick Toggle Pause/Resume */}
+                  <View style={styles.templateBottomBar}>
+                    <Text style={styles.templateSubAddress} numberOfLines={1}>
+                      {template.delivery_address || 'Standard Delivery'}
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.pauseToggleBtn, template.is_paused && styles.pauseToggleActive]}
+                      onPress={() => handleTogglePauseRecurring(template)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={template.is_paused ? 'play' : 'pause'}
+                        size={11}
+                        color={template.is_paused ? '#059669' : '#6B5E55'}
+                        style={{ marginRight: 3 }}
+                      />
+                      <Text style={[styles.pauseToggleText, template.is_paused && { color: '#059669' }]}>
+                        {template.is_paused ? 'Resume' : 'Pause'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
+
+        {/* 6. Recent Orders */}
+        <View style={styles.sectionWrap}>
+          <View style={styles.sectionTitleRow}>
+            <View style={styles.titleWithIcon}>
+              <Ionicons name="bag-check-outline" size={16} color="#8C331A" style={{ marginRight: 5 }} />
+              <Text style={styles.sectionHeading}>RECENT ORDERS ({recentOrders.length})</Text>
+            </View>
+
+            {recentOrders.length > 0 && (
+              <TouchableOpacity
+                onPress={() => navigation.navigate('Orders')}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.viewLinkText}>View All Orders →</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {ordersLoading ? (
+            <ActivityIndicator size="small" color="#8C331A" style={{ marginVertical: 12 }} />
+          ) : recentOrders.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Ionicons name="receipt-outline" size={24} color="#C4BCB5" />
+              <Text style={styles.emptyCardTitle}>No Orders Yet</Text>
+              <Text style={styles.emptyCardSub}>Tap 'New Order' above to start billing.</Text>
+            </View>
+          ) : (
+            recentOrders.slice(0, 4).map(order => (
+              <TouchableOpacity
+                key={order.id}
+                style={styles.cleanOrderCard}
+                onPress={() => {
+                  if (order.has_invoice && order.invoice_number) {
+                    navigation.navigate('InvoiceDetail', {
+                      invoice: {
+                        id: String(order.id),
+                        invoiceNo: order.invoice_number,
+                        name: order.customer_name,
+                        amount: `₹${parseFloat(order.total_amount).toLocaleString()}`,
+                        numericAmount: parseFloat(order.total_amount),
+                        deliveryStatus: order.status,
+                        items: order.items.map(it => ({
+                          id: String(it.id),
+                          name: it.product_details?.name || 'Item',
+                          qty: it.quantity,
+                          price: parseFloat(it.price),
+                        })),
+                      },
+                    });
+                  } else {
+                    navigation.navigate('Orders');
+                  }
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={styles.orderCardHeader}>
+                  <View>
+                    <Text style={styles.orderIdTitle}>Order #{order.id}</Text>
+                    <Text style={styles.orderDateSubtitle}>
+                      {new Date(order.created_at).toLocaleDateString('en-IN', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
                     </Text>
                   </View>
+
+                  <View style={styles.orderStatusBadge}>
+                    <Text style={styles.orderStatusText}>{order.status.toUpperCase()}</Text>
+                  </View>
                 </View>
-              )}
-              ListEmptyComponent={<Text style={styles.emptyNote}>No invoices generated for this company.</Text>}
-            />
+
+                <Text style={styles.orderItemsPreview} numberOfLines={1}>
+                  {order.items && order.items.length > 0
+                    ? order.items.map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`).join(' • ')
+                    : 'Order Delivery'}
+                </Text>
+
+                <View style={styles.orderCardFooter}>
+                  <Text style={styles.orderTotalAmount}>
+                    ₹{parseFloat(order.total_amount || '0').toLocaleString()}
+                  </Text>
+
+                  {order.has_invoice ? (
+                    <View style={styles.invoicedTag}>
+                      <Ionicons name="checkmark-done" size={12} color="#059669" style={{ marginRight: 2 }} />
+                      <Text style={styles.invoicedTagText}>{order.invoice_number || 'INVOICED'}</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.pendingInvoiceTag}>Pending Invoicing</Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+            ))
           )}
         </View>
-      )}
 
-      {activeTab === 'Pricing' && (
-        <ScrollView style={{ flex: 1, paddingHorizontal: 16 }}>
-          <Text style={styles.sectionHeader}>CONTRACTED QUANTITY SLABS</Text>
-          {company.contracted_prices && company.contracted_prices.length > 0 ? (
-            company.contracted_prices.map(p => (
-              <View key={p.id} style={styles.priceRow}>
-                <View>
-                  <Text style={styles.priceProdName}>{p.product_name}</Text>
-                  <Text style={styles.priceSlabText}>Min quantity slab: {p.min_quantity} units</Text>
-                </View>
-                <Text style={styles.contractPriceVal}>₹{p.custom_price} / unit</Text>
-              </View>
-            ))
-          ) : (
-            <Text style={styles.emptyNote}>Standard catalog rates apply. No custom volume slabs configured.</Text>
-          )}
-        </ScrollView>
-      )}
+        {/* 7. Customer Ledger (Compact Financial Summary) */}
+        <View style={styles.sectionWrap}>
+          <View style={styles.sectionTitleRow}>
+            <View style={styles.titleWithIcon}>
+              <Ionicons name="book-outline" size={16} color="#8C331A" style={{ marginRight: 5 }} />
+              <Text style={styles.sectionHeading}>CUSTOMER LEDGER</Text>
+            </View>
 
-      {activeTab === 'Info' && (
-        <ScrollView style={{ flex: 1, paddingHorizontal: 16 }}>
-          <View style={styles.infoCard}>
-            <Text style={styles.infoLabel}>Billing Address</Text>
-            <Text style={styles.infoVal}>{company.billing_address || 'Not provided'}</Text>
-            <Text style={styles.infoLabel}>GSTIN</Text>
-            <Text style={styles.infoVal}>{company.gstin || 'Unregistered'}</Text>
-            <Text style={styles.infoLabel}>Payment Terms</Text>
-            <Text style={styles.infoVal}>{company.payment_terms_days} days</Text>
-            <Text style={styles.infoLabel}>Credit Limit</Text>
-            <Text style={styles.infoVal}>₹{parseFloat(company.credit_limit || '0').toLocaleString()}</Text>
+            <TouchableOpacity
+              onPress={() => setLedgerModalVisible(true)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.viewLinkText}>View Full Ledger →</Text>
+            </TouchableOpacity>
           </View>
-        </ScrollView>
-      )}
 
-      {/* Collect Payment Modal */}
+          {ledgerLoading ? (
+            <ActivityIndicator size="small" color="#8C331A" style={{ marginVertical: 12 }} />
+          ) : ledgerStatement ? (
+            <View style={styles.ledgerCompactCard}>
+              <View style={styles.ledgerGrid}>
+                <View style={styles.ledgerGridCol}>
+                  <Text style={styles.ledgerColLabel}>OPENING BAL</Text>
+                  <Text style={styles.ledgerColValue}>
+                    ₹{parseFloat(ledgerStatement.summary.opening_balance || '0').toLocaleString()}
+                  </Text>
+                </View>
+
+                <View style={styles.ledgerGridCol}>
+                  <Text style={styles.ledgerColLabel}>TOTAL INVOICED</Text>
+                  <Text style={[styles.ledgerColValue, { color: '#DC2626' }]}>
+                    +₹{parseFloat(ledgerStatement.summary.total_debit || '0').toLocaleString()}
+                  </Text>
+                </View>
+
+                <View style={styles.ledgerGridCol}>
+                  <Text style={styles.ledgerColLabel}>COLLECTIONS</Text>
+                  <Text style={[styles.ledgerColValue, { color: '#059669' }]}>
+                    -₹{parseFloat(ledgerStatement.summary.total_credit || '0').toLocaleString()}
+                  </Text>
+                </View>
+
+                <View style={[styles.ledgerGridCol, { borderRightWidth: 0 }]}>
+                  <Text style={styles.ledgerColLabel}>AMOUNT DUE</Text>
+                  <Text style={[styles.ledgerColValue, { color: '#8C331A', fontWeight: '800' }]}>
+                    ₹{parseFloat(ledgerStatement.summary.closing_balance || '0').toLocaleString()}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.ledgerFooterRow}>
+                <Text style={styles.ledgerPeriodText}>
+                  Passbook: {new Date(ledgerStatement.period.start_date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
+                </Text>
+                <TouchableOpacity
+                  style={styles.collectMiniBtn}
+                  onPress={handleOpenCollectPayment}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="wallet-outline" size={12} color="#8C331A" style={{ marginRight: 4 }} />
+                  <Text style={styles.collectMiniBtnText}>Collect Payment</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyCardSub}>No ledger passbook entries recorded yet.</Text>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      {/* --- MODALS --- */}
+
+      {/* 1. Edit Customer Modal */}
+      <AddCustomerModal
+        visible={editCustomerModalVisible}
+        title="Edit Customer"
+        isEditing={true}
+        initialData={{
+          name: customer?.name || '',
+          phone: customer?.phone || '',
+          address: customer?.address || '',
+          openingBalance: 0,
+        }}
+        onClose={() => setEditCustomerModalVisible(false)}
+        onSubmit={handleEditCustomerSubmit}
+      />
+
+      {/* 2. Select Order to Repeat Modal */}
+      <Modal visible={repeatOrderModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalSheetHeader}>
+              <View>
+                <Text style={styles.modalSheetTitle}>Repeat Previous Order</Text>
+                <Text style={styles.modalSheetSubtitle}>
+                  Choose an order to prefill items into Quick Billing
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setRepeatOrderModalVisible(false)}>
+                <Ionicons name="close" size={22} color="#6B5E55" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
+              {recentOrders.map(ord => (
+                <TouchableOpacity
+                  key={ord.id}
+                  style={styles.repeatOrderCard}
+                  onPress={() => repeatSpecificOrder(ord)}
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={styles.repeatOrderId}>Order #{ord.id}</Text>
+                      <Text style={styles.repeatOrderDate}>
+                        • {new Date(ord.created_at).toLocaleDateString('en-IN', {
+                          day: 'numeric',
+                          month: 'short',
+                        })}
+                      </Text>
+                    </View>
+                    <Text style={styles.repeatOrderSummary} numberOfLines={2}>
+                      {ord.items && ord.items.length > 0
+                        ? ord.items.map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`).join(', ')
+                        : 'No item summary'}
+                    </Text>
+                  </View>
+
+                  <View style={{ alignItems: 'flex-end', marginLeft: 10 }}>
+                    <Text style={styles.repeatOrderTotal}>
+                      ₹{parseFloat(ord.total_amount).toLocaleString()}
+                    </Text>
+                    <View style={styles.repeatSelectBtn}>
+                      <Text style={styles.repeatSelectText}>Select</Text>
+                      <Ionicons name="arrow-forward" size={11} color="#8C331A" />
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 3. Collect Payment Modal */}
       <Modal visible={collectModalVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>Collect Payment</Text>
-            <Text style={styles.modalSubtitle}>Auto-allocated to oldest invoices (FIFO) • Excess recorded as advance</Text>
+            <View style={styles.modalSheetHeader}>
+              <View>
+                <Text style={styles.modalSheetTitle}>Collect Payment</Text>
+                <Text style={styles.modalSheetSubtitle}>
+                  FIFO Allocation • Settles oldest open invoices first
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setCollectModalVisible(false)}>
+                <Ionicons name="close" size={22} color="#6B5E55" />
+              </TouchableOpacity>
+            </View>
 
+            <Text style={styles.fieldLabel}>AMOUNT TO COLLECT (₹)</Text>
             <TextInput
               style={styles.modalInput}
-              placeholder="Amount to Collect *"
-              placeholderTextColor="#8E8278"
+              placeholder="Enter amount (e.g. 500)"
+              placeholderTextColor="#A0958D"
               keyboardType="numeric"
               value={collectAmount}
               onChangeText={setCollectAmount}
             />
 
-            <TextInput
-              style={styles.modalInput}
-              placeholder="UTR / Cheque / Ref Number"
-              placeholderTextColor="#8E8278"
-              value={refNumber}
-              onChangeText={setRefNumber}
-            />
-
-            <View style={styles.methodRow}>
-              {(['bank_transfer', 'online', 'cash', 'upi'] as const).map(m => (
+            <Text style={styles.fieldLabel}>PAYMENT METHOD</Text>
+            <View style={styles.methodChipsRow}>
+              {(['cash', 'online', 'upi', 'bank_transfer'] as const).map(m => (
                 <TouchableOpacity
                   key={m}
                   style={[styles.methodChip, paymentMethod === m && styles.methodChipActive]}
                   onPress={() => setPaymentMethod(m)}
+                  activeOpacity={0.7}
                 >
-                  <Text style={[styles.methodText, paymentMethod === m && styles.methodTextActive]}>
-                    {m.replace('_', ' ').toUpperCase()}
+                  <Text style={[styles.methodChipText, paymentMethod === m && styles.methodChipTextActive]}>
+                    {m === 'bank_transfer' ? 'Bank' : m.toUpperCase()}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
+            <Text style={styles.fieldLabel}>NOTES / REFERENCE (OPTIONAL)</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. UPI Ref / Cash receipt"
+              placeholderTextColor="#A0958D"
+              value={paymentNotes}
+              onChangeText={setPaymentNotes}
+            />
+
             <TouchableOpacity
-              style={styles.confirmBtn}
-              onPress={handleCollectPayment}
+              style={styles.primarySubmitBtn}
+              onPress={handleConfirmCollectPayment}
               disabled={submittingPayment}
+              activeOpacity={0.8}
             >
               {submittingPayment ? (
-                <ActivityIndicator color="#FFFFFF" />
+                <ActivityIndicator color="#FFFFFF" size="small" />
               ) : (
-                <Text style={styles.confirmBtnText}>Record & Allocate Payment</Text>
+                <Text style={styles.primarySubmitText}>Record Payment</Text>
               )}
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => setCollectModalVisible(false)}>
-              <Text style={styles.cancelBtnText}>Cancel</Text>
-            </TouchableOpacity>
+      {/* 4. Full Ledger Passbook Modal */}
+      <Modal visible={ledgerModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { maxHeight: '88%' }]}>
+            <View style={styles.modalSheetHeader}>
+              <View>
+                <Text style={styles.modalSheetTitle}>Customer Ledger Passbook</Text>
+                <Text style={styles.modalSheetSubtitle}>
+                  Chronological financial transactions for {displayName}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setLedgerModalVisible(false)}>
+                <Ionicons name="close" size={22} color="#6B5E55" />
+              </TouchableOpacity>
+            </View>
+
+            {ledgerStatement ? (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {/* Ledger Period Summary Box */}
+                <View style={styles.modalLedgerSummary}>
+                  <View style={styles.summaryLine}>
+                    <Text style={styles.sumLineLabel}>Opening Balance</Text>
+                    <Text style={styles.sumLineValue}>₹{ledgerStatement.summary.opening_balance}</Text>
+                  </View>
+                  <View style={styles.summaryLine}>
+                    <Text style={styles.sumLineLabel}>Total Invoiced (Debits)</Text>
+                    <Text style={[styles.sumLineValue, { color: '#DC2626' }]}>+₹{ledgerStatement.summary.total_debit}</Text>
+                  </View>
+                  <View style={styles.summaryLine}>
+                    <Text style={styles.sumLineLabel}>Total Collections (Credits)</Text>
+                    <Text style={[styles.sumLineValue, { color: '#059669' }]}>-₹{ledgerStatement.summary.total_credit}</Text>
+                  </View>
+                  <View style={[styles.summaryLine, { borderTopWidth: 1, borderTopColor: '#EFEAE4', paddingTop: 6, marginTop: 4 }]}>
+                    <Text style={styles.sumLineClosingLabel}>Current Balance</Text>
+                    <Text style={styles.sumLineClosingValue}>₹{ledgerStatement.summary.closing_balance}</Text>
+                  </View>
+                </View>
+
+                <Text style={styles.timelineHeader}>TRANSACTION TIMELINE</Text>
+                {ledgerStatement.transactions.length === 0 ? (
+                  <Text style={styles.emptyNote}>No transactions recorded in this period.</Text>
+                ) : (
+                  ledgerStatement.transactions.map((tx: any, idx: number) => {
+                    const isDebit = parseFloat(tx.debit) > 0;
+                    return (
+                      <View key={idx} style={styles.timelineRow}>
+                        <View style={{ flex: 1, marginRight: 8 }}>
+                          <Text style={styles.timelineRef}>{tx.reference_no}</Text>
+                          <Text style={styles.timelineDesc} numberOfLines={1}>{tx.description}</Text>
+                          <Text style={styles.timelineDate}>{new Date(tx.date).toLocaleDateString()}</Text>
+                        </View>
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <Text style={[styles.timelineAmount, isDebit ? styles.txDebit : styles.txCredit]}>
+                            {isDebit ? `+ ₹${tx.debit}` : `- ₹${tx.credit}`}
+                          </Text>
+                          <Text style={styles.timelineBal}>Bal: ₹{tx.running_balance}</Text>
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
+              </ScrollView>
+            ) : (
+              <ActivityIndicator size="small" color="#8C331A" style={{ marginVertical: 20 }} />
+            )}
           </View>
         </View>
       </Modal>
@@ -384,21 +992,74 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FAF8F5',
   },
+  scrollContent: {
+    paddingBottom: 36,
+  },
   centerBox: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
+
+  /* 1. Header */
+  customHeaderBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#FAF8F5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFEAE4',
+  },
+  headerLeftGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerBackBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F5EBE6',
+    borderWidth: 1,
+    borderColor: '#EFE3D9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#2A2421',
+    letterSpacing: -0.3,
+  },
+  headerMoreBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  /* 2. Customer Profile Card */
   profileCard: {
     backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
-    marginVertical: 10,
+    marginTop: 12,
     borderRadius: 16,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#EFEAE4',
+    shadowColor: '#2A2421',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  avatarRow: {
+  profileMainRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -407,168 +1068,718 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     backgroundColor: '#F5EBE6',
+    borderWidth: 1,
+    borderColor: '#EFE3D9',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
-  avatarText: {
-    color: '#8C331A',
-    fontWeight: '800',
+  avatarInitials: {
     fontSize: 18,
-  },
-  companyTitle: {
-    fontSize: 17,
     fontWeight: '800',
-    color: '#2A2421',
-  },
-  companySub: {
-    fontSize: 12,
-    color: '#8E8278',
-    marginTop: 2,
-  },
-  gstinText: {
-    fontSize: 11,
     color: '#8C331A',
-    fontWeight: '600',
-    marginTop: 2,
   },
-  kpiRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#FAF8F5',
-    borderRadius: 12,
-    padding: 12,
-    marginVertical: 12,
-  },
-  kpiCol: {
-    alignItems: 'center',
-  },
-  kpiLabel: {
-    fontSize: 10,
-    color: '#8E8278',
-    textTransform: 'uppercase',
-  },
-  kpiVal: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#2A2421',
-    marginTop: 2,
-  },
-  collectBtn: {
-    flexDirection: 'row',
-    backgroundColor: '#8C331A',
-    borderRadius: 10,
-    height: 42,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  collectBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  tabRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    marginBottom: 10,
-  },
-  tabBtn: {
+  profileInfoCol: {
     flex: 1,
-    paddingVertical: 8,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
   },
-  tabBtnActive: {
-    borderBottomColor: '#8C331A',
-  },
-  tabText: {
-    fontSize: 13,
-    color: '#8E8278',
-    fontWeight: '600',
-  },
-  tabTextActive: {
-    color: '#8C331A',
-    fontWeight: '800',
-  },
-  statementBox: {
-    backgroundColor: '#7A2E19',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 14,
-  },
-  stmtHeader: {
-    marginBottom: 8,
-  },
-  stmtTitle: {
-    fontSize: 11,
-    color: '#FBBF24',
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  stmtPeriod: {
-    fontSize: 11,
-    color: '#E5D6D0',
-    marginTop: 2,
-  },
-  stmtRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginVertical: 2,
-  },
-  stmtLabel: {
-    fontSize: 12,
-    color: '#E5D6D0',
-  },
-  stmtVal: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  stmtClosingLabel: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  stmtClosingVal: {
+  profileName: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#FBBF24',
+    color: '#2A2421',
+    letterSpacing: -0.2,
   },
-  sectionHeader: {
+  phonePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#FDF6F3',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 3,
+  },
+  phonePillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  noPhoneText: {
+    fontSize: 11,
+    color: '#A0958D',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  addressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 3,
+  },
+  addressText: {
+    fontSize: 11,
+    color: '#8E8278',
+    flex: 1,
+  },
+  editCustomerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  editCustomerBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8C331A',
+    marginLeft: 3,
+  },
+
+  /* 3. Account Overview (Balanced Cards) */
+  overviewContainer: {
+    flexDirection: 'row',
+    gap: 10,
+    marginHorizontal: 16,
+    marginTop: 10,
+  },
+  overviewCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    shadowColor: '#2A2421',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  overviewDueCard: {
+    backgroundColor: '#FDF6F3',
+    borderColor: '#F5DDD3',
+  },
+  overviewIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#F5EBE6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  overviewCardLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#8E8278',
+    letterSpacing: 0.5,
+  },
+  overviewCardValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#2A2421',
+    marginTop: 2,
+    letterSpacing: -0.3,
+  },
+  dueHighlight: {
+    color: '#8C331A',
+  },
+  clearHighlight: {
+    color: '#059669',
+  },
+  overviewCardSubtext: {
+    fontSize: 10,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+
+  /* 4. Quick Actions */
+  actionsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 10,
+  },
+  actionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    borderRadius: 12,
+    paddingVertical: 10,
+    shadowColor: '#2A2421',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  actionPrimaryBtn: {
+    backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
+  },
+  actionPrimaryText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  actionBtnText: {
+    color: '#8C331A',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  /* Section Structure */
+  sectionWrap: {
+    marginHorizontal: 16,
+    marginTop: 14,
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  titleWithIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sectionHeading: {
     fontSize: 11,
     fontWeight: '800',
     color: '#8E8278',
-    marginBottom: 8,
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
-  txRow: {
+  headerActionPill: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  headerActionPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8C331A',
+    marginLeft: 2,
+  },
+  viewLinkText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+
+  /* Empty State */
+  emptyCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  emptyCardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2A2421',
+    marginTop: 5,
+  },
+  emptyCardSub: {
+    fontSize: 11,
+    color: '#8E8278',
+    textAlign: 'center',
+    marginTop: 2,
+  },
+
+  /* 5. Recurring Orders (Compact Cards) */
+  compactTemplateCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 12,
     marginBottom: 8,
     borderWidth: 1,
     borderColor: '#EFEAE4',
+    shadowColor: '#2A2421',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  txRef: {
-    fontSize: 13,
+  cardPaused: {
+    opacity: 0.8,
+    backgroundColor: '#FAFAF9',
+  },
+  templateTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  templateFreqTitle: {
+    fontSize: 12,
     fontWeight: '800',
-    color: '#2A2421',
+    color: '#8C331A',
   },
-  txDesc: {
+  activeTag: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginLeft: 6,
+  },
+  activeTagText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  pausedTag: {
+    backgroundColor: '#F3EFEA',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginLeft: 6,
+  },
+  pausedTagText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#8E8278',
+  },
+  templatePartnerLine: {
     fontSize: 11,
     color: '#8E8278',
     marginTop: 2,
   },
-  txDate: {
+  templateManageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  templateManageText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8C331A',
+    marginLeft: 2,
+  },
+  templatePillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    marginVertical: 7,
+  },
+  templateProductPill: {
+    backgroundColor: '#FAF8F5',
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  templateProductText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#2A2421',
+  },
+  emptyItemText: {
+    fontSize: 11,
+    color: '#8E8278',
+    fontStyle: 'italic',
+  },
+  templateBottomBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#FAF8F5',
+  },
+  templateSubAddress: {
     fontSize: 10,
+    color: '#8E8278',
+    flex: 1,
+    marginRight: 6,
+  },
+  pauseToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  pauseToggleActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  pauseToggleText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#6B5E55',
+  },
+
+  /* 6. Recent Orders */
+  cleanOrderCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    shadowColor: '#2A2421',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  orderCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  orderIdTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  orderDateSubtitle: {
+    fontSize: 10,
+    color: '#8E8278',
+    marginTop: 1,
+  },
+  orderStatusBadge: {
+    backgroundColor: '#F5EBE6',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  orderStatusText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#8C331A',
+  },
+  orderItemsPreview: {
+    fontSize: 12,
+    color: '#4B3F38',
+    marginVertical: 5,
+  },
+  orderCardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#FAF8F5',
+  },
+  orderTotalAmount: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  invoicedTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+  },
+  invoicedTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  pendingInvoiceTag: {
+    fontSize: 10,
+    color: '#8E8278',
+    fontStyle: 'italic',
+  },
+
+  /* 7. Customer Ledger */
+  ledgerCompactCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    shadowColor: '#2A2421',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  ledgerGrid: {
+    flexDirection: 'row',
+    backgroundColor: '#FAF8F5',
+    borderRadius: 10,
+    padding: 8,
+  },
+  ledgerGridCol: {
+    flex: 1,
+    alignItems: 'center',
+    borderRightWidth: 1,
+    borderRightColor: '#EFEAE4',
+    paddingHorizontal: 2,
+  },
+  ledgerColLabel: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#8E8278',
+    textAlign: 'center',
+  },
+  ledgerColValue: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2A2421',
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  ledgerFooterRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#FAF8F5',
+  },
+  ledgerPeriodText: {
+    fontSize: 10,
+    color: '#8E8278',
+    fontWeight: '600',
+  },
+  collectMiniBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FDF6F3',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#F5DDD3',
+  },
+  collectMiniBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+
+  /* Modals */
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 18,
+    maxHeight: '90%',
+  },
+  modalSheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  modalSheetTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  modalSheetSubtitle: {
+    fontSize: 11,
     color: '#8E8278',
     marginTop: 2,
   },
-  txAmount: {
+  fieldLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#8E8278',
+    letterSpacing: 0.5,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  modalInput: {
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 42,
+    fontSize: 13,
+    color: '#2A2421',
+  },
+  methodChipsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  methodChip: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  methodChipActive: {
+    backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
+  },
+  methodChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B5E55',
+  },
+  methodChipTextActive: {
+    color: '#FFFFFF',
+  },
+  primarySubmitBtn: {
+    backgroundColor: '#8C331A',
+    borderRadius: 12,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  primarySubmitText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  /* Repeat Order Modal */
+  repeatOrderCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 8,
+  },
+  repeatOrderId: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  repeatOrderDate: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginLeft: 4,
+  },
+  repeatOrderSummary: {
+    fontSize: 11,
+    color: '#4B3F38',
+    marginTop: 2,
+  },
+  repeatOrderTotal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  repeatSelectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FDF6F3',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#F5DDD3',
+    marginTop: 3,
+  },
+  repeatSelectText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#8C331A',
+    marginRight: 2,
+  },
+
+  /* Ledger Modal Timeline */
+  modalLedgerSummary: {
+    backgroundColor: '#FAF8F5',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    marginBottom: 12,
+  },
+  summaryLine: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginVertical: 2,
+  },
+  sumLineLabel: {
+    fontSize: 12,
+    color: '#8E8278',
+  },
+  sumLineValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  sumLineClosingLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  sumLineClosingValue: {
     fontSize: 14,
+    fontWeight: '800',
+    color: '#8C331A',
+  },
+  timelineHeader: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#8E8278',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  emptyNote: {
+    fontSize: 11,
+    color: '#8E8278',
+    textAlign: 'center',
+    marginVertical: 12,
+  },
+  timelineRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#FAF8F5',
+  },
+  timelineRef: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  timelineDesc: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 1,
+  },
+  timelineDate: {
+    fontSize: 9,
+    color: '#A0958D',
+    marginTop: 1,
+  },
+  timelineAmount: {
+    fontSize: 12,
     fontWeight: '800',
   },
   txDebit: {
@@ -577,168 +1788,9 @@ const styles = StyleSheet.create({
   txCredit: {
     color: '#059669',
   },
-  runningBal: {
-    fontSize: 10,
+  timelineBal: {
+    fontSize: 9,
     color: '#8E8278',
-    marginTop: 2,
-  },
-  invoiceItemCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-  },
-  invNumber: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#2A2421',
-  },
-  invDate: {
-    fontSize: 11,
-    color: '#8E8278',
-    marginTop: 2,
-  },
-  invAmount: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#2A2421',
-  },
-  invStatus: {
-    fontSize: 10,
-    fontWeight: '800',
-    marginTop: 2,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-  },
-  priceProdName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#2A2421',
-  },
-  priceSlabText: {
-    fontSize: 11,
-    color: '#8E8278',
-    marginTop: 2,
-  },
-  contractPriceVal: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#8C331A',
-  },
-  infoCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-  },
-  infoLabel: {
-    fontSize: 11,
-    color: '#8E8278',
-    fontWeight: '600',
-    marginTop: 8,
-  },
-  infoVal: {
-    fontSize: 13,
-    color: '#2A2421',
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  emptyNote: {
-    fontSize: 12,
-    color: '#8E8278',
-    textAlign: 'center',
-    marginVertical: 16,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalSheet: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#2A2421',
-  },
-  modalSubtitle: {
-    fontSize: 11,
-    color: '#8E8278',
-    marginVertical: 6,
-  },
-  modalInput: {
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    height: 44,
-    marginBottom: 10,
-    fontSize: 14,
-    color: '#2A2421',
-  },
-  methodRow: {
-    flexDirection: 'row',
-    marginBottom: 14,
-  },
-  methodChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    marginRight: 6,
-  },
-  methodChipActive: {
-    backgroundColor: '#8C331A',
-    borderColor: '#8C331A',
-  },
-  methodText: {
-    fontSize: 10,
-    color: '#8E8278',
-    fontWeight: '700',
-  },
-  methodTextActive: {
-    color: '#FFFFFF',
-  },
-  confirmBtn: {
-    backgroundColor: '#8C331A',
-    borderRadius: 12,
-    height: 46,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  confirmBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  cancelBtn: {
-    marginTop: 8,
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cancelBtnText: {
-    color: '#8E8278',
-    fontSize: 13,
+    marginTop: 1,
   },
 });
