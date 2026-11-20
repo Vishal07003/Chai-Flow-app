@@ -21,6 +21,7 @@ import { useApp } from '../../context/AppContext';
 import billingService, { BillingCustomer } from '../../services/billing.service';
 import orderService from '../../services/order.service';
 import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
+import draftService, { DraftInvoice } from '../../services/draft.service';
 import { CustomDialog, ConfirmDialog, DeliveryPartnerDropdown } from '../../components/common';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 
@@ -58,6 +59,14 @@ export default function QuickBillingScreen({ route, navigation }: any) {
   const routeCustomer = route?.params?.customer;
   const initialCustomerId = route?.params?.customerId;
   const prefilledItems = route?.params?.prefilledItems;
+  const routeDraftId = route?.params?.draftId;
+
+  // Draft Edit State
+  const [editingDraft, setEditingDraft] = useState<DraftInvoice | null>(null);
+  const [loadingDraftDetail, setLoadingDraftDetail] = useState<boolean>(false);
+  const [dueDate, setDueDate] = useState<string>('');
+  const [draftNotes, setDraftNotes] = useState<string>('');
+  const [customUnitPrices, setCustomUnitPrices] = useState<{ [productId: string]: string }>({});
 
   // Search filter for products
   const [productSearchQuery, setProductSearchQuery] = useState<string>('');
@@ -160,24 +169,27 @@ export default function QuickBillingScreen({ route, navigation }: any) {
 
   // Line items (Derived from selected products in addedOrder)
   const lineItems = useMemo(() => {
-    const items: Array<{ id: string; name: string; qty: number; price: number; rawQtyStr: string }> = [];
+    const items: Array<{ id: string; name: string; qty: number; price: number; rawQtyStr: string; rawPriceStr: string }> = [];
     addedOrder.forEach(pId => {
       const rawVal = cartQuantities[pId];
       const parsedQty = typeof rawVal === 'number' ? rawVal : parseInt(rawVal || '0', 10);
       const effectiveQty = isNaN(parsedQty) || parsedQty < 0 ? 0 : parsedQty;
       const prod = products.find(p => p.id === pId);
       if (prod) {
+        const customP = customUnitPrices[pId];
+        const effectivePrice = customP !== undefined ? (parseFloat(customP) || 0) : parseProductPrice(prod.price);
         items.push({
           id: prod.id,
           name: prod.name,
           qty: effectiveQty,
           rawQtyStr: rawVal !== undefined ? String(rawVal) : '1',
-          price: parseProductPrice(prod.price),
+          price: effectivePrice,
+          rawPriceStr: customP !== undefined ? String(customP) : String(effectivePrice),
         });
       }
     });
     return items;
-  }, [addedOrder, cartQuantities, products, parseProductPrice]);
+  }, [addedOrder, cartQuantities, products, customUnitPrices, parseProductPrice]);
 
   const subtotal = useMemo(() => {
     return lineItems.reduce((acc, curr) => acc + curr.qty * curr.price, 0);
@@ -196,24 +208,118 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     return lineItems.reduce((acc, curr) => acc + curr.qty, 0);
   }, [lineItems]);
 
-  // Fetch delivery partners when in order mode
+  // Fetch delivery partners when in order mode or billing mode (optional delivery partner for quick billing drafts)
   useEffect(() => {
-    if (isOrderMode) {
-      setLoadingPartners(true);
-      deliveryService
-        .getDeliveryPartners()
-        .then(res => {
-          setPartners(res || []);
-        })
-        .catch(err => {
-          console.log('Error fetching delivery partners:', err);
-          setPartners([]);
-        })
-        .finally(() => {
-          setLoadingPartners(false);
+    setLoadingPartners(true);
+    deliveryService
+      .getDeliveryPartners()
+      .then(res => {
+        setPartners(res || []);
+      })
+      .catch(err => {
+        console.log('Error fetching delivery partners:', err);
+        setPartners([]);
+      })
+      .finally(() => {
+        setLoadingPartners(false);
+      });
+  }, []);
+
+  // Fetch draft details if routeDraftId is provided (Edit Existing Draft)
+  useEffect(() => {
+    if (!routeDraftId) return;
+
+    let isMounted = true;
+    setLoadingDraftDetail(true);
+
+    draftService
+      .getDraftDetail(routeDraftId)
+      .then(draft => {
+        if (!isMounted) return;
+        setEditingDraft(draft);
+
+        // Populate customer
+        if (draft.customer) {
+          setSelectedCustomer({
+            id: Number(draft.customer),
+            name: draft.customer_name || 'Customer',
+            phone: draft.customer_phone || '',
+            address: '',
+            created_at: draft.created_at,
+            total_bills: 0,
+            total_billed_amount: '0',
+            total_pending_amount: '0',
+          });
+        } else {
+          setSelectedCustomer(null);
+        }
+
+        // Populate Delivery Partner
+        if (draft.delivery_partner_id || draft.delivery_partner) {
+          setSelectedPartnerId(Number(draft.delivery_partner_id || draft.delivery_partner));
+        } else {
+          setSelectedPartnerId(null);
+        }
+
+        // Populate Discount, Due Date, Notes
+        if (draft.discount_amount && parseFloat(draft.discount_amount) > 0) {
+          setDiscount(String(parseFloat(draft.discount_amount)));
+        } else {
+          setDiscount('');
+        }
+
+        if (draft.due_date) {
+          setDueDate(draft.due_date);
+        } else {
+          setDueDate('');
+        }
+
+        if (draft.notes) {
+          setDraftNotes(draft.notes);
+        } else {
+          setDraftNotes('');
+        }
+
+        // Populate Line Items
+        const newQtys: { [productId: string]: string } = {};
+        const newPrices: { [productId: string]: string } = {};
+        const newOrder: string[] = [];
+
+        (draft.items || []).forEach(item => {
+          let matchedProd = products.find(
+            p =>
+              (item.product && String(p.id) === String(item.product)) ||
+              (item.product_name && p.name.toLowerCase() === item.product_name.toLowerCase())
+          );
+
+          const pId = matchedProd ? String(matchedProd.id) : String(item.product || item.id);
+          newQtys[pId] = String(item.quantity || 1);
+          newPrices[pId] = String(parseFloat(item.unit_price || '0'));
+          if (!newOrder.includes(pId)) {
+            newOrder.push(pId);
+          }
         });
-    }
-  }, [isOrderMode]);
+
+        setCartQuantities(newQtys);
+        setCustomUnitPrices(newPrices);
+        setAddedOrder(newOrder);
+      })
+      .catch(err => {
+        console.log('Error loading draft details:', err);
+        Toast.show({
+          type: 'error',
+          text1: 'Failed to load draft',
+          text2: err?.message || 'Could not fetch draft details.',
+        });
+      })
+      .finally(() => {
+        if (isMounted) setLoadingDraftDetail(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [routeDraftId, products]);
 
   // Preselect customer and prefill items from navigation params
   useEffect(() => {
@@ -384,6 +490,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
 
   const handleClearCart = useCallback(() => {
     setCartQuantities({});
+    setCustomUnitPrices({});
     setAddedOrder([]);
     setSelectedCustomer(null);
     setReceivedAmount('0');
@@ -392,6 +499,8 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     setDeliveryAddress('');
     setSelectedPartnerId(null);
     setOrderNotes('');
+    setDueDate('');
+    setDraftNotes('');
   }, []);
 
   const handlePromptClearCart = () => {
@@ -459,6 +568,26 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     });
   };
 
+  // Direct editing of unit price in text input
+  const handleDirectPriceChange = (productId: string, text: string) => {
+    const cleanText = text.replace(/[^0-9.]/g, '');
+    setCustomUnitPrices(prev => ({
+      ...prev,
+      [productId]: cleanText,
+    }));
+  };
+
+  const handlePriceBlur = (productId: string, defaultPrice: number) => {
+    setCustomUnitPrices(prev => {
+      const cur = prev[productId];
+      const parsed = parseFloat(cur);
+      if (isNaN(parsed) || parsed < 0) {
+        return { ...prev, [productId]: String(defaultPrice) };
+      }
+      return { ...prev, [productId]: String(parsed) };
+    });
+  };
+
   // Explicit product removal
   const handleRemoveItem = (productId: string) => {
     setCartQuantities(prev => {
@@ -466,71 +595,12 @@ export default function QuickBillingScreen({ route, navigation }: any) {
       delete next[productId];
       return next;
     });
+    setCustomUnitPrices(prev => {
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
     setAddedOrder(prev => prev.filter(id => id !== productId));
-  };
-
-  // Execute Invoice Creation in Django Backend
-  const executeSaveBill = async () => {
-    closeDialog();
-    closeConfirmDialog();
-    if (isSaving) return;
-    setIsSaving(true);
-
-    const numericReceived = parseFloat(receivedAmount) || 0;
-    const remainingDue = Math.max(0, grandTotal - numericReceived);
-
-    try {
-      const payload = {
-        customer_id: selectedCustomer ? selectedCustomer.id : null,
-        customer_name: selectedCustomer ? selectedCustomer.name : 'Walk-in Customer',
-        customer_phone: selectedCustomer ? selectedCustomer.phone : '',
-        discount_amount: discountAmount,
-        items: lineItems.map(item => ({
-          product_id: Number(item.id) || null,
-          product_name: item.name,
-          unit_price: item.price,
-          quantity: item.qty,
-        })),
-        initial_payment_amount: numericReceived,
-        initial_payment_method: paymentStatus === 'UNPAID' ? 'cash' : paymentMethod,
-      };
-
-      const createdInvoice = await billingService.createInvoice(payload);
-
-      // Reset Quick Billing screen immediately for the next customer
-      handleClearCart();
-
-      // Trigger global state refresh from backend
-      refreshBackendData();
-
-      // Show toast notification based on payment status
-      if (paymentStatus === 'FULL' || remainingDue === 0) {
-        Toast.show({
-          type: 'success',
-          text1: 'Bill saved successfully – Fully Paid',
-          text2: `Invoice #${createdInvoice.invoice_number || 'Generated'}`,
-        });
-      } else {
-        Toast.show({
-          type: 'info',
-          text1: `Bill saved – Payment Pending ₹${remainingDue}`,
-          text2: `Invoice #${createdInvoice.invoice_number || 'Generated'}`,
-        });
-      }
-
-      // Navigate to Invoice Details screen after saving
-      setTimeout(() => {
-        navigation.navigate('InvoiceDetail', { invoice: createdInvoice });
-      }, 500);
-    } catch (err: any) {
-      Toast.show({
-        type: 'error',
-        text1: 'Failed to save bill',
-        text2: err.message || 'Please check your connection and try again.',
-      });
-    } finally {
-      setIsSaving(false);
-    }
   };
 
   // Execute Order Creation in Django Backend (Order Mode)
@@ -573,6 +643,89 @@ export default function QuickBillingScreen({ route, navigation }: any) {
       Toast.show({
         type: 'error',
         text1: 'Failed to create order',
+        text2: err.message || err.detail || 'Please check your connection and try again.',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Execute Draft Creation / Update in Django Backend (Draft Billing Mode)
+  const executeSaveDraft = async () => {
+    closeDialog();
+    closeConfirmDialog();
+    if (isSaving) return;
+    setIsSaving(true);
+
+    try {
+      const itemsPayload = lineItems.map(item => ({
+        product_id: Number(item.id) || null,
+        product_name: item.name,
+        quantity: item.qty,
+        unit_price: item.price,
+      }));
+
+      const cleanDueDate = dueDate.trim() || null;
+      const cleanNotes = draftNotes.trim();
+
+      if (editingDraft) {
+        // Edit existing draft -> PATCH /api/v1/billing/drafts/{id}/
+        await draftService.updateDraft(editingDraft.id, {
+          customer_id: selectedCustomer ? selectedCustomer.id : null,
+          delivery_partner_id: selectedPartnerId,
+          items: itemsPayload,
+          discount_amount: discountAmount,
+          due_date: cleanDueDate,
+          notes: cleanNotes,
+        });
+
+        // Reset form
+        handleClearCart();
+
+        // Refresh backend datasets
+        refreshBackendData();
+
+        Toast.show({
+          type: 'success',
+          text1: 'Draft Updated',
+          text2: `Draft ${editingDraft.draft_number} saved successfully.`,
+        });
+
+        setTimeout(() => {
+          navigation.navigate('Orders');
+        }, 400);
+      } else {
+        // Create new draft -> POST /api/v1/billing/drafts/
+        const createdDraft = await draftService.createDraft({
+          customer_id: selectedCustomer ? selectedCustomer.id : null,
+          delivery_partner_id: selectedPartnerId,
+          billing_source: 'quick_billing',
+          items: itemsPayload,
+          discount_amount: discountAmount,
+          due_date: cleanDueDate,
+          notes: cleanNotes,
+        });
+
+        // Reset form
+        handleClearCart();
+
+        // Refresh backend datasets
+        refreshBackendData();
+
+        Toast.show({
+          type: 'success',
+          text1: 'Draft Bill Created',
+          text2: `Draft ${createdDraft.draft_number} saved in Draft Bills.`,
+        });
+
+        setTimeout(() => {
+          navigation.navigate('Orders');
+        }, 400);
+      }
+    } catch (err: any) {
+      Toast.show({
+        type: 'error',
+        text1: editingDraft ? 'Failed to update draft' : 'Failed to create draft',
         text2: err.message || err.detail || 'Please check your connection and try again.',
       });
     } finally {
@@ -631,35 +784,22 @@ export default function QuickBillingScreen({ route, navigation }: any) {
       return;
     }
 
-    const numericReceived = parseFloat(receivedAmount) || 0;
-    if (numericReceived < 0) {
-      Toast.show({
-        type: 'error',
-        text1: 'Invalid Amount',
-        text2: 'Received amount cannot be negative.',
-      });
-      return;
-    }
-    if (numericReceived > grandTotal) {
-      Toast.show({
-        type: 'error',
-        text1: 'Invalid Amount',
-        text2: `Received amount cannot exceed total (₹${grandTotal})`,
-      });
-      return;
-    }
+    // Quick Billing Mode -> Save as Draft (New or Edit)
+    const assignedPartnerName = selectedPartnerId
+      ? partners.find(p => p.id === selectedPartnerId)?.name || 'Assigned Delivery Partner'
+      : 'None (Self pickup / Counter)';
 
-    const remainingDue = Math.max(0, grandTotal - numericReceived);
+    const isEditing = !!editingDraft;
 
     setConfirmDialogConfig({
       visible: true,
-      title: 'Confirm Bill Save?',
-      description: `Customer: ${selectedCustomer ? selectedCustomer.name : 'Walk-in Customer'}\nSubtotal: ₹${subtotal}${discountAmount > 0 ? ` • Discount: -₹${discountAmount}` : ''}\nFinal Bill Amount: ₹${grandTotal}\nPayment: ${paymentStatus === 'FULL' ? 'Paid in Full' : paymentStatus === 'PARTIAL' ? `Partially Paid (₹${numericReceived})` : 'Unpaid / Credit'}\nRemaining Due: ₹${remainingDue}`,
-      confirmLabel: 'Save & Issue Bill',
+      title: isEditing ? `Update Draft ${editingDraft.draft_number}?` : 'Save as Billing Draft?',
+      description: `Customer: ${selectedCustomer ? selectedCustomer.name : 'Walk-in Customer'}\nItems: ${totalItemsCount} units\nSubtotal: ₹${subtotal}${discountAmount > 0 ? ` • Discount: -₹${discountAmount}` : ''}\nEstimated Grand Total: ₹${grandTotal}\nDelivery Partner: ${assignedPartnerName}${dueDate ? `\nDue Date: ${dueDate}` : ''}\n\nNotice: This saves a flexible Draft Bill. Official invoice finalization and ledger posting occur from Draft Bills in the Orders Hub.`,
+      confirmLabel: isEditing ? 'Update Draft' : 'Save Draft',
       cancelLabel: 'Cancel',
       type: 'info',
       icon: 'receipt-outline',
-      onConfirm: executeSaveBill,
+      onConfirm: executeSaveDraft,
     });
   };
 
@@ -677,23 +817,25 @@ export default function QuickBillingScreen({ route, navigation }: any) {
           </TouchableOpacity>
 
           <View style={styles.teaLogoIconContainer}>
-            <Ionicons name={isOrderMode ? "cart" : "cafe"} size={16} color="#8C331A" />
+            <Ionicons name={isOrderMode ? "cart" : editingDraft ? "document-text" : "cafe"} size={16} color="#8C331A" />
           </View>
-          <Text style={styles.headerTitleText}>{isOrderMode ? 'New Order' : 'Quick Billing'}</Text>
+          <Text style={styles.headerTitleText}>
+            {isOrderMode ? 'New Order' : editingDraft ? `Edit Draft (${editingDraft.draft_number})` : 'Quick Billing Draft'}
+          </Text>
         </View>
 
         <TouchableOpacity
           activeOpacity={0.85}
           style={styles.historyBtn}
-          onPress={() => navigation.navigate(isOrderMode ? 'Orders' : 'Invoices')}
+          onPress={() => navigation.navigate('Orders')}
         >
           <Ionicons
-            name={isOrderMode ? 'receipt-outline' : 'receipt-outline'}
+            name="receipt-outline"
             size={16}
             color="#8C331A"
             style={{ marginRight: 4 }}
           />
-          <Text style={styles.historyBtnText}>{isOrderMode ? 'Orders' : 'Invoices'}</Text>
+          <Text style={styles.historyBtnText}>{isOrderMode ? 'Orders' : 'Draft Bills'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -708,17 +850,23 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         </View>
       )}
 
-      <KeyboardAwareScrollView
-        ref={scrollRef}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        enableOnAndroid={true}
-        enableAutomaticScroll={true}
-        extraScrollHeight={Platform.OS === 'android' ? 140 : 100}
-        extraHeight={Platform.OS === 'android' ? 140 : 100}
-        keyboardOpeningTime={0}
-        keyboardShouldPersistTaps="handled"
-      >
+      {loadingDraftDetail ? (
+        <View style={styles.centerLoadingBox}>
+          <ActivityIndicator size="large" color="#8C331A" />
+          <Text style={styles.loadingDraftText}>Loading draft details...</Text>
+        </View>
+      ) : (
+        <KeyboardAwareScrollView
+          ref={scrollRef}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          enableOnAndroid={true}
+          enableAutomaticScroll={true}
+          extraScrollHeight={Platform.OS === 'android' ? 140 : 100}
+          extraHeight={Platform.OS === 'android' ? 140 : 100}
+          keyboardOpeningTime={0}
+          keyboardShouldPersistTaps="handled"
+        >
         {/* CUSTOMER SELECTION BAR */}
         <View style={styles.customerCard}>
           <View style={styles.customerInfoRow}>
@@ -769,18 +917,16 @@ export default function QuickBillingScreen({ route, navigation }: any) {
           </View>
         </View>
 
-        {/* SECTION 2: DELIVERY PARTNER SELECTION (ONLY IN ORDER MODE - IMMEDIATELY BELOW CUSTOMER) */}
-        {isOrderMode && (
-          <View style={styles.partnerSelectionCard}>
-            <DeliveryPartnerDropdown
-              selectedPartnerId={selectedPartnerId}
-              onSelectPartner={(partnerId) => setSelectedPartnerId(partnerId)}
-              label="DELIVERY PARTNER (OPTIONAL)"
-              placeholder="Select Delivery Partner (Optional)"
-              optional={true}
-            />
-          </View>
-        )}
+        {/* SECTION 2: DELIVERY PARTNER SELECTION (OPTIONAL FOR BOTH ORDER AND QUICK BILLING DRAFT) */}
+        <View style={styles.partnerSelectionCard}>
+          <DeliveryPartnerDropdown
+            selectedPartnerId={selectedPartnerId}
+            onSelectPartner={(partnerId) => setSelectedPartnerId(partnerId)}
+            label="DELIVERY PARTNER (OPTIONAL)"
+            placeholder="Select Delivery Partner (Optional)"
+            optional={true}
+          />
+        </View>
 
         {/* PRODUCTS SECTION HEADER & VIEW TOGGLE */}
         <View style={styles.productsHeaderRow}>
@@ -955,13 +1101,22 @@ export default function QuickBillingScreen({ route, navigation }: any) {
             <View style={styles.billItemsList}>
               {lineItems.map(item => (
                 <View key={item.id} style={styles.billItemRow}>
-                  {/* Left Side: Product Name, Unit Price and Line Total */}
+                  {/* Left Side: Product Name, Editable Unit Price and Line Total */}
                   <View style={styles.billItemLeftCol}>
                     <Text style={styles.billItemName} numberOfLines={1}>{item.name}</Text>
                     <View style={styles.billItemPricingRow}>
-                      <Text style={styles.billItemSubPrice}>
-                        ₹{item.price} / unit
-                      </Text>
+                      <View style={styles.unitPriceEditWrapper}>
+                        <Text style={styles.unitPricePrefix}>₹</Text>
+                        <TextInput
+                          style={styles.unitPriceInput}
+                          keyboardType="numeric"
+                          value={item.rawPriceStr}
+                          onChangeText={text => handleDirectPriceChange(item.id, text)}
+                          onBlur={() => handlePriceBlur(item.id, item.price)}
+                          selectTextOnFocus={true}
+                        />
+                        <Text style={styles.unitPriceSuffix}>/ unit</Text>
+                      </View>
                       <Text style={styles.billItemDotSeparator}>•</Text>
                       <Text style={styles.billItemLineTotalText}>
                         Total: <Text style={styles.billItemLineTotalBold}>₹{item.price * item.qty}</Text>
@@ -1105,167 +1260,50 @@ export default function QuickBillingScreen({ route, navigation }: any) {
             </View>
           )}
 
-          {/* PAYMENT CUSTOMIZATION: STATUS SELECTOR - ONLY FOR BILLING MODE */}
+          {/* DRAFT BILLING OPTIONS: DUE DATE & NOTES - ONLY FOR QUICK BILLING DRAFT MODE */}
           {!isOrderMode && (
-            <View style={styles.paymentMethodSection}>
-              <Text style={styles.paymentSectionLabel}>Payment Status</Text>
-              <View style={styles.paymentStatusRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.paymentStatusTab,
-                    paymentStatus === 'FULL' && styles.paymentStatusTabActive,
-                  ]}
-                  onPress={() => handleSelectPaymentStatus('FULL')}
-                >
-                  <Ionicons
-                    name="checkmark-circle"
-                    size={14}
-                    color={paymentStatus === 'FULL' ? '#FFFFFF' : '#059669'}
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text
-                    style={[
-                      styles.paymentStatusText,
-                      paymentStatus === 'FULL' && styles.paymentStatusTextActive,
-                    ]}
-                  >
-                    Paid in Full
-                  </Text>
-                </TouchableOpacity>
+            <View style={styles.draftOptionsSection}>
+              <View style={styles.dottedDivider} />
 
-                <TouchableOpacity
-                  style={[
-                    styles.paymentStatusTab,
-                    paymentStatus === 'PARTIAL' && styles.paymentStatusTabActive,
-                  ]}
-                  onPress={() => handleSelectPaymentStatus('PARTIAL')}
-                >
-                  <Ionicons
-                    name="pie-chart"
-                    size={14}
-                    color={paymentStatus === 'PARTIAL' ? '#FFFFFF' : '#D97706'}
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text
-                    style={[
-                      styles.paymentStatusText,
-                      paymentStatus === 'PARTIAL' && styles.paymentStatusTextActive,
-                    ]}
-                  >
-                    Partially Paid
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.paymentStatusTab,
-                    paymentStatus === 'UNPAID' && styles.paymentStatusTabActive,
-                  ]}
-                  onPress={() => handleSelectPaymentStatus('UNPAID')}
-                >
-                  <Ionicons
-                    name="time"
-                    size={14}
-                    color={paymentStatus === 'UNPAID' ? '#FFFFFF' : '#DC2626'}
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text
-                    style={[
-                      styles.paymentStatusText,
-                      paymentStatus === 'UNPAID' && styles.paymentStatusTextActive,
-                    ]}
-                  >
-                    Unpaid / Credit
-                  </Text>
-                </TouchableOpacity>
+              <View style={styles.deliverySectionHeader}>
+                <Ionicons name="receipt" size={16} color="#8C331A" style={{ marginRight: 6 }} />
+                <Text style={styles.deliverySectionTitle}>Draft Bill Settings</Text>
               </View>
 
-              {/* PAYMENT METHOD (CASH OR ONLINE) - HIDDEN IF UNPAID */}
-              {paymentStatus !== 'UNPAID' && (
-                <View style={styles.methodContainer}>
-                  <Text style={styles.paymentSectionSubLabel}>Payment Method</Text>
-                  <View style={styles.paymentMethodRow}>
-                    <TouchableOpacity
-                      style={[styles.paymentMethodTab, paymentMethod === 'cash' && styles.paymentMethodTabActive]}
-                      onPress={() => setPaymentMethod('cash')}
-                    >
-                      <Ionicons
-                        name="cash-outline"
-                        size={15}
-                        color={paymentMethod === 'cash' ? '#FFFFFF' : '#4B5563'}
-                        style={{ marginRight: 6 }}
-                      />
-                      <Text
-                        style={[styles.paymentMethodText, paymentMethod === 'cash' && styles.paymentMethodTextActive]}
-                      >
-                        Cash
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[styles.paymentMethodTab, paymentMethod === 'online' && styles.paymentMethodTabActive]}
-                      onPress={() => setPaymentMethod('online')}
-                    >
-                      <Ionicons
-                        name="card-outline"
-                        size={15}
-                        color={paymentMethod === 'online' ? '#FFFFFF' : '#4B5563'}
-                        style={{ marginRight: 6 }}
-                      />
-                      <Text
-                        style={[styles.paymentMethodText, paymentMethod === 'online' && styles.paymentMethodTextActive]}
-                      >
-                        Online (Manual)
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-
-              {/* RECEIVED AMOUNT & REMAINING SUMMARY */}
-              <View style={styles.receivedAmountRow}>
-                <View style={{ flex: 1, marginRight: 10 }}>
-                  <Text style={styles.receivedAmountLabel}>
-                    {paymentStatus === 'UNPAID'
-                      ? 'Received Amount (₹0)'
-                      : paymentStatus === 'FULL'
-                        ? 'Received Amount (₹ Full)'
-                        : 'Received Amount (₹ Partial)'}
-                  </Text>
-                  <TextInput
-                    style={[
-                      styles.receivedAmountInput,
-                      styles.receivedAmountInputEditable,
-                      paymentStatus === 'UNPAID' && styles.receivedAmountInputDisabled,
-                    ]}
-                    keyboardType="numeric"
-                    editable={paymentStatus !== 'UNPAID'}
-                    placeholder="0"
-                    placeholderTextColor="#9CA3AF"
-                    value={receivedAmount}
-                    onChangeText={handleReceivedAmountChange}
-                    selectTextOnFocus={true}
-                    onFocus={() => {
-                      setTimeout(() => {
-                        scrollRef.current?.scrollToEnd({ animated: true });
-                      }, 150);
-                    }}
-                  />
-                </View>
-
-                <View style={styles.dueSummaryBox}>
-                  <Text style={styles.dueSummaryLabel}>Remaining Due</Text>
-                  <Text style={styles.dueSummaryValue}>
-                    ₹{Math.max(0, grandTotal - (parseFloat(receivedAmount) || 0))}
-                  </Text>
-                </View>
+              {/* Payment Due Date */}
+              <Text style={styles.orderFieldLabel}>PAYMENT DUE DATE (OPTIONAL - YYYY-MM-DD)</Text>
+              <View style={styles.draftInputBox}>
+                <Ionicons
+                  name="calendar-outline"
+                  size={18}
+                  color="#8C331A"
+                  style={{ marginRight: 8 }}
+                />
+                <TextInput
+                  style={styles.draftInputField}
+                  placeholder="YYYY-MM-DD (e.g. 2026-12-01)"
+                  placeholderTextColor="#9CA3AF"
+                  value={dueDate}
+                  onChangeText={setDueDate}
+                />
               </View>
+
+              {/* Draft Notes */}
+              <Text style={styles.orderFieldLabel}>DRAFT NOTES (OPTIONAL)</Text>
+              <TextInput
+                style={styles.orderNotesInput}
+                placeholder="Remarks, terms, or customer special requests..."
+                placeholderTextColor="#9CA3AF"
+                value={draftNotes}
+                onChangeText={setDraftNotes}
+              />
             </View>
           )}
         </View>
       </KeyboardAwareScrollView>
+      )}
 
-      {/* BOTTOM ACTION BUTTON: SAVE BILL OR CREATE ORDER */}
+      {/* BOTTOM ACTION BUTTON: SAVE DRAFT OR CREATE ORDER */}
       <View style={[styles.fixedBottomDock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <TouchableOpacity
           activeOpacity={0.85}
@@ -1278,13 +1316,17 @@ export default function QuickBillingScreen({ route, navigation }: any) {
           ) : (
             <>
               <Ionicons
-                name={isOrderMode ? "bag-check-outline" : "checkmark-circle-outline"}
+                name={isOrderMode ? "bag-check-outline" : editingDraft ? "save-outline" : "receipt-outline"}
                 size={20}
                 color="#FFFFFF"
                 style={{ marginRight: 8 }}
               />
               <Text style={styles.saveBillBtnText}>
-                {isOrderMode ? `Create Order (₹${subtotal})` : `Save Bill (₹${grandTotal})`}
+                {isOrderMode
+                  ? `Create Order (₹${subtotal})`
+                  : editingDraft
+                    ? `Update Draft (₹${grandTotal})`
+                    : `Save Draft (₹${grandTotal})`}
               </Text>
             </>
           )}
@@ -2364,5 +2406,69 @@ const styles = StyleSheet.create({
   modalSubmitText: {
     color: '#FFFFFF',
     fontWeight: '800',
+  },
+  /* Unit Price Edit Styles */
+  unitPriceEditWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  unitPricePrefix: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8C331A',
+    marginRight: 2,
+  },
+  unitPriceInput: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#111827',
+    paddingVertical: 0,
+    paddingHorizontal: 2,
+    minWidth: 35,
+    textAlign: 'center',
+  },
+  unitPriceSuffix: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginLeft: 2,
+  },
+  /* Draft Options Styles */
+  draftOptionsSection: {
+    marginTop: 4,
+  },
+  draftInputBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 8,
+  },
+  draftInputField: {
+    flex: 1,
+    fontSize: 13,
+    color: '#111827',
+    paddingVertical: 4,
+  },
+  centerLoadingBox: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  loadingDraftText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#8E8278',
+    fontWeight: '600',
   },
 });
