@@ -32,7 +32,7 @@ export type OwnerStackParamList = {
   Orders: undefined;
   PendingPayments: undefined;
   CreateInvoice: { customer?: any; prefilledItems?: Array<{ product_id: number; product_name?: string; quantity: number }> } | undefined;
-  QuickBilling: { customer?: any; prefilledItems?: Array<{ product_id: number; product_name?: string; quantity: number }>; mode?: 'billing' | 'order' } | undefined;
+  QuickBilling: { customer?: any; prefilledItems?: Array<{ product_id: number; product_name?: string; quantity: number }>; mode?: 'billing' | 'order'; draftId?: number | string } | undefined;
   InvoiceDetail: { invoice?: any } | undefined;
   Products: undefined;
   ProductDetail: { product?: any; mode?: 'add' | 'edit' } | undefined;

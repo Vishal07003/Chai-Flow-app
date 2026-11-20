@@ -23,6 +23,8 @@ import orderService, {
 import billingService, { BillingCustomer } from '../../services/billing.service';
 import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
 import productService, { BackendProduct } from '../../services/product.service';
+import draftService, { DraftInvoice, DraftStatus } from '../../services/draft.service';
+import { useApp } from '../../context/AppContext';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import AppToast from '../../utils/toast';
 
@@ -44,9 +46,17 @@ const historyStatusTabs = [
   { key: 'FAILED', label: 'Failed' },
 ];
 
+const draftStatusTabs = [
+  { key: 'ALL', label: 'All' },
+  { key: 'draft', label: 'Active Drafts' },
+  { key: 'finalized', label: 'Finalized' },
+  { key: 'cancelled', label: 'Cancelled' },
+];
+
 export default function OrdersScreen({ navigation }: any) {
-  // Main Top Section: 'today' | 'recurring' | 'history'
-  const [sectionMode, setSectionMode] = useState<'today' | 'recurring' | 'history'>('today');
+  const { refreshBackendData } = useApp();
+  // Main Top Section: 'today' | 'recurring' | 'history' | 'drafts'
+  const [sectionMode, setSectionMode] = useState<'today' | 'recurring' | 'history' | 'drafts'>('today');
 
   // Orders State
   const [orders, setOrders] = useState<BackendOrder[]>([]);
@@ -64,6 +74,14 @@ export default function OrdersScreen({ navigation }: any) {
   const [recurringOrders, setRecurringOrders] = useState<BackendRecurringOrder[]>([]);
   const [loadingRecurring, setLoadingRecurring] = useState<boolean>(false);
   const [generatingRecurringId, setGeneratingRecurringId] = useState<number | null>(null);
+
+  // Draft Bills State
+  const [drafts, setDrafts] = useState<DraftInvoice[]>([]);
+  const [loadingDrafts, setLoadingDrafts] = useState<boolean>(false);
+  const [draftStatusFilter, setDraftStatusFilter] = useState<string>('draft');
+  const [selectedDraft, setSelectedDraft] = useState<DraftInvoice | null>(null);
+  const [draftModalVisible, setDraftModalVisible] = useState<boolean>(false);
+  const [finalizingDraftId, setFinalizingDraftId] = useState<number | null>(null);
 
   // Modal creation datasets
   const [customers, setCustomers] = useState<BillingCustomer[]>([]);
@@ -117,6 +135,18 @@ export default function OrdersScreen({ navigation }: any) {
     }
   }, []);
 
+  const fetchDrafts = useCallback(async () => {
+    try {
+      setLoadingDrafts(true);
+      const res = await draftService.getDrafts();
+      setDrafts(Array.isArray(res) ? res : (res as any).results || []);
+    } catch (err: any) {
+      console.log('Error fetching drafts:', err);
+    } finally {
+      setLoadingDrafts(false);
+    }
+  }, []);
+
   const loadCreationData = useCallback(async () => {
     try {
       const [custList, partnerList, prodList] = await Promise.all([
@@ -146,20 +176,23 @@ export default function OrdersScreen({ navigation }: any) {
     const unsubscribe = navigation.addListener?.('focus', () => {
       fetchOrders();
       fetchRecurringOrders();
+      fetchDrafts();
       loadCreationData();
     });
     fetchOrders();
     fetchRecurringOrders();
+    fetchDrafts();
     loadCreationData();
     return unsubscribe;
-  }, [navigation, fetchOrders, fetchRecurringOrders, loadCreationData]);
+  }, [navigation, fetchOrders, fetchRecurringOrders, fetchDrafts, loadCreationData]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchOrders();
     fetchRecurringOrders();
+    fetchDrafts();
     loadCreationData();
-  }, [fetchOrders, fetchRecurringOrders, loadCreationData]);
+  }, [fetchOrders, fetchRecurringOrders, fetchDrafts, loadCreationData]);
 
   // Date partition helper: Is an order created today?
   const isOrderFromToday = (orderDateStr: string) => {
@@ -266,6 +299,26 @@ export default function OrdersScreen({ navigation }: any) {
     );
   }, [recurringOrders, searchQuery]);
 
+  // 4. Draft Bills Filtered
+  const filteredDrafts = useMemo(() => {
+    return drafts.filter(d => {
+      // Status Filter
+      if (draftStatusFilter !== 'ALL') {
+        if (d.status !== draftStatusFilter) return false;
+      }
+
+      // Search Query
+      const q = searchQuery.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        d.draft_number?.toLowerCase().includes(q) ||
+        d.customer_name?.toLowerCase().includes(q) ||
+        d.delivery_partner_name?.toLowerCase().includes(q) ||
+        d.notes?.toLowerCase().includes(q)
+      );
+    });
+  }, [drafts, draftStatusFilter, searchQuery]);
+
   // Order Details Navigation
   const handleOpenOrderDetails = (order: BackendOrder) => {
     navigation.navigate('OrderDetails', {
@@ -274,10 +327,82 @@ export default function OrdersScreen({ navigation }: any) {
     });
   };
 
+  // Draft Actions
+  const handleOpenDraftDetails = (draft: DraftInvoice) => {
+    setSelectedDraft(draft);
+    setDraftModalVisible(true);
+  };
+
+  const handleEditDraft = (draft: DraftInvoice) => {
+    navigation.navigate('QuickBilling', {
+      draftId: draft.id,
+    });
+  };
+
+  const handleCancelDraft = (draft: DraftInvoice) => {
+    setConfirmDialogConfig({
+      visible: true,
+      title: 'Cancel Draft Bill?',
+      description: `Are you sure you want to cancel draft ${draft.draft_number}? Any attached orders will be unlinked and restored to unbilled status.`,
+      confirmLabel: 'Cancel Draft',
+      cancelLabel: 'Keep Draft',
+      type: 'danger',
+      icon: 'close-circle-outline',
+      onConfirm: async () => {
+        try {
+          await draftService.cancelDraft(draft.id);
+          AppToast.success('Draft Cancelled', `Draft ${draft.draft_number} has been cancelled.`);
+          fetchDrafts();
+          fetchOrders();
+          setDraftModalVisible(false);
+        } catch (err: any) {
+          AppToast.error('Cancellation Failed', err?.message || 'Failed to cancel draft bill.');
+        } finally {
+          setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
+        }
+      },
+    });
+  };
+
+  const handleFinalizeDraft = (draft: DraftInvoice) => {
+    setConfirmDialogConfig({
+      visible: true,
+      title: 'Finalize Official Invoice?',
+      description: `Convert draft ${draft.draft_number} into an official tax invoice? This will post debits to the customer ledger and automatically apply available customer advance balances.`,
+      confirmLabel: 'Finalize Invoice',
+      cancelLabel: 'Keep Draft',
+      type: 'info',
+      icon: 'checkmark-circle-outline',
+      onConfirm: async () => {
+        try {
+          setFinalizingDraftId(draft.id);
+          const res = await draftService.finalizeDraft(draft.id);
+          AppToast.success('Invoice Finalized', res.message || `Invoice ${res.invoice?.invoice_number || ''} generated successfully.`);
+          setDraftModalVisible(false);
+          await Promise.all([
+            fetchDrafts(),
+            fetchOrders(),
+            refreshBackendData?.(),
+          ]);
+          if (res.invoice) {
+            navigation.navigate('InvoiceDetail', { invoice: res.invoice });
+          }
+        } catch (err: any) {
+          AppToast.error('Finalization Failed', err?.message || 'Failed to finalize draft into official invoice.');
+        } finally {
+          setFinalizingDraftId(null);
+          setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
+        }
+      },
+    });
+  };
+
   // Floating Action Button Handler
   const handleOpenCreateFlow = () => {
     if (sectionMode === 'recurring') {
       handleOpenNewRecurring();
+    } else if (sectionMode === 'drafts') {
+      navigation.navigate('QuickBilling');
     } else {
       navigation.navigate('CreateOrder', { mode: 'order' });
     }
@@ -725,13 +850,165 @@ export default function OrdersScreen({ navigation }: any) {
     );
   };
 
+  // Render Draft Card
+  const renderDraftCard = ({ item }: { item: DraftInvoice }) => {
+    const isDraft = item.status === 'draft';
+    const isFinalized = item.status === 'finalized';
+    const isCancelled = item.status === 'cancelled';
+    const itemCount = item.items?.length || 0;
+    const orderCount = item.draft_orders?.length || 0;
+    const isFinalizing = finalizingDraftId === item.id;
+    const isQuickBilling = item.billing_source === 'quick_billing';
+
+    const getStatusStyle = () => {
+      switch (item.status) {
+        case 'finalized':
+          return { bg: '#ECFDF5', text: '#059669', label: 'FINALIZED' };
+        case 'cancelled':
+          return { bg: '#FEF2F2', text: '#DC2626', label: 'CANCELLED' };
+        default:
+          return { bg: '#FEF3C7', text: '#D97706', label: 'ACTIVE DRAFT' };
+      }
+    };
+
+    const statusInfo = getStatusStyle();
+
+    return (
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => handleOpenDraftDetails(item)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.cardHeader}>
+          <View style={{ flex: 1, marginRight: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={styles.orderIdText}>{item.draft_number}</Text>
+              <View
+                style={[
+                  styles.draftTypeBadge,
+                  isQuickBilling ? styles.draftTypeQuick : styles.draftTypeOrder,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.draftTypeBadgeText,
+                    isQuickBilling ? styles.draftTypeQuickText : styles.draftTypeOrderText,
+                  ]}
+                >
+                  {isQuickBilling ? 'Quick Bill' : 'Order Bill'}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.clientName}>{item.customer_name || 'Walk-in Customer'}</Text>
+            <Text style={styles.orderDateText}>
+              Created {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} •{' '}
+              {new Date(item.created_at).toLocaleDateString()}
+            </Text>
+          </View>
+
+          <View style={[styles.statusPill, { backgroundColor: statusInfo.bg }]}>
+            <Text style={[styles.statusPillText, { color: statusInfo.text }]}>{statusInfo.label}</Text>
+          </View>
+        </View>
+
+        <View style={styles.cardBody}>
+          <View style={styles.draftMetaRow}>
+            <View style={styles.draftMetaItem}>
+              <Ionicons name="cart-outline" size={13} color="#8E8278" style={{ marginRight: 3 }} />
+              <Text style={styles.draftMetaText}>
+                {itemCount} {itemCount === 1 ? 'item' : 'items'}
+                {orderCount > 0 ? ` • ${orderCount} ${orderCount === 1 ? 'order' : 'orders'}` : ''}
+              </Text>
+            </View>
+
+            {item.delivery_partner_name ? (
+              <View style={styles.draftMetaItem}>
+                <Ionicons name="bicycle-outline" size={13} color="#8E8278" style={{ marginRight: 3 }} />
+                <Text style={styles.draftMetaText}>{item.delivery_partner_name}</Text>
+              </View>
+            ) : null}
+
+            {item.due_date ? (
+              <View style={styles.draftMetaItem}>
+                <Ionicons name="calendar-outline" size={13} color="#8E8278" style={{ marginRight: 3 }} />
+                <Text style={styles.draftMetaText}>Due: {item.due_date}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {item.notes ? (
+            <Text style={styles.draftNotesText} numberOfLines={1}>
+              Note: {item.notes}
+            </Text>
+          ) : null}
+        </View>
+
+        <View style={styles.cardFooter}>
+          <View>
+            <Text style={styles.amountLabel}>Estimated Total</Text>
+            <Text style={styles.amountValue}>₹{Number(item.grand_total || 0).toLocaleString()}</Text>
+          </View>
+
+          <View style={styles.cardFooterActions}>
+            <TouchableOpacity
+              style={styles.compactActionBtn}
+              onPress={() => handleOpenDraftDetails(item)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="eye-outline" size={13} color="#4B5563" style={{ marginRight: 3 }} />
+              <Text style={styles.compactActionBtnText}>View</Text>
+            </TouchableOpacity>
+
+            {isDraft && (
+              <>
+                <TouchableOpacity
+                  style={styles.compactActionBtn}
+                  onPress={() => handleEditDraft(item)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="pencil" size={13} color="#8C331A" style={{ marginRight: 3 }} />
+                  <Text style={[styles.compactActionBtnText, { color: '#8C331A' }]}>Edit</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.compactActionBtn, styles.compactActionBtnDanger]}
+                  onPress={() => handleCancelDraft(item)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="close" size={13} color="#DC2626" style={{ marginRight: 2 }} />
+                  <Text style={[styles.compactActionBtnText, { color: '#DC2626' }]}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.compactGenerateBtn, isFinalizing && { opacity: 0.6 }]}
+                  onPress={() => handleFinalizeDraft(item)}
+                  disabled={isFinalizing}
+                  activeOpacity={0.8}
+                >
+                  {isFinalizing ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="checkmark-done" size={12} color="#FFFFFF" style={{ marginRight: 3 }} />
+                      <Text style={styles.compactGenerateBtnText}>Finalize</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <Header title="Orders Hub" showBack={false} />
 
       {/* Sticky Top Header Section (Segmented Toggle, Search Input Bar & Filter Row) */}
       <View style={styles.stickyHeaderSection}>
-        {/* 3-Section Premium Segmented Control */}
+        {/* 4-Section Premium Segmented Control */}
         <View style={styles.segmentedContainer}>
           <TouchableOpacity
             style={[styles.segmentBtn, sectionMode === 'today' && styles.segmentBtnActive]}
@@ -740,12 +1017,12 @@ export default function OrdersScreen({ navigation }: any) {
           >
             <Ionicons
               name="today-outline"
-              size={15}
+              size={14}
               color={sectionMode === 'today' ? '#FFFFFF' : '#8E8278'}
-              style={{ marginRight: 5 }}
+              style={{ marginRight: 4 }}
             />
             <Text style={[styles.segmentBtnText, sectionMode === 'today' && styles.segmentBtnTextActive]}>
-              Today's Orders
+              Today
             </Text>
           </TouchableOpacity>
 
@@ -756,9 +1033,9 @@ export default function OrdersScreen({ navigation }: any) {
           >
             <Ionicons
               name="repeat-outline"
-              size={15}
+              size={14}
               color={sectionMode === 'recurring' ? '#FFFFFF' : '#8E8278'}
-              style={{ marginRight: 5 }}
+              style={{ marginRight: 4 }}
             />
             <Text style={[styles.segmentBtnText, sectionMode === 'recurring' && styles.segmentBtnTextActive]}>
               Recurring
@@ -772,12 +1049,28 @@ export default function OrdersScreen({ navigation }: any) {
           >
             <Ionicons
               name="time-outline"
-              size={15}
+              size={14}
               color={sectionMode === 'history' ? '#FFFFFF' : '#8E8278'}
-              style={{ marginRight: 5 }}
+              style={{ marginRight: 4 }}
             />
             <Text style={[styles.segmentBtnText, sectionMode === 'history' && styles.segmentBtnTextActive]}>
               History
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.segmentBtn, sectionMode === 'drafts' && styles.segmentBtnActive]}
+            onPress={() => setSectionMode('drafts')}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name="receipt-outline"
+              size={14}
+              color={sectionMode === 'drafts' ? '#FFFFFF' : '#8E8278'}
+              style={{ marginRight: 4 }}
+            />
+            <Text style={[styles.segmentBtnText, sectionMode === 'drafts' && styles.segmentBtnTextActive]}>
+              Draft Bills
             </Text>
           </TouchableOpacity>
         </View>
@@ -792,7 +1085,9 @@ export default function OrdersScreen({ navigation }: any) {
                 ? "Search today's orders by ID, customer, driver..."
                 : sectionMode === 'recurring'
                   ? 'Search recurring templates by customer or address...'
-                  : 'Search historical orders by ID, client, driver...'
+                  : sectionMode === 'history'
+                    ? 'Search historical orders by ID, client, driver...'
+                    : 'Search drafts by number, customer, partner...'
             }
             placeholderTextColor="#8E8278"
             value={searchQuery}
@@ -880,6 +1175,30 @@ export default function OrdersScreen({ navigation }: any) {
               </ScrollView>
             </View>
           </>
+        )}
+
+        {sectionMode === 'drafts' && (
+          <View style={styles.tabContainer}>
+            <FlatList
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              data={draftStatusTabs}
+              keyExtractor={t => t.key}
+              renderItem={({ item: tab }) => {
+                const isActive = draftStatusFilter === tab.key;
+                return (
+                  <TouchableOpacity
+                    style={[styles.tabChip, isActive && styles.tabChipActive]}
+                    onPress={() => setDraftStatusFilter(tab.key)}
+                  >
+                    <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                      {tab.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
         )}
       </View>
 
@@ -969,8 +1288,181 @@ export default function OrdersScreen({ navigation }: any) {
         </>
       )}
 
+      {/* SECTION 4: DRAFT BILLS */}
+      {sectionMode === 'drafts' && (
+        <>
+          {loadingDrafts ? (
+            <View style={styles.centerBox}>
+              <ActivityIndicator size="large" color="#8C331A" />
+            </View>
+          ) : filteredDrafts.length === 0 ? (
+            <EmptyState
+              title="No Draft Bills"
+              subtitle={
+                searchQuery
+                  ? 'No drafts match your search or filter.'
+                  : draftStatusFilter === 'draft'
+                    ? 'No active draft bills found. Tap + below to create a quick bill or order bill.'
+                    : 'No draft bills in this status.'
+              }
+            />
+          ) : (
+            <FlatList
+              data={filteredDrafts}
+              keyExtractor={item => String(item.id)}
+              renderItem={renderDraftCard}
+              contentContainerStyle={styles.listContent}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#8C331A']} />
+              }
+            />
+          )}
+        </>
+      )}
+
       {/* Floating Action Button */}
       <FloatingButton onPress={handleOpenCreateFlow} />
+
+      {/* Draft Details Modal */}
+      <Modal visible={draftModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>{selectedDraft?.draft_number}</Text>
+                <Text style={styles.modalSubtitle}>
+                  {selectedDraft?.customer_name || 'Walk-in Customer'} • {selectedDraft?.billing_source === 'quick_billing' ? 'Quick Bill' : 'Order Bill'}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setDraftModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#2A2421" />
+              </TouchableOpacity>
+            </View>
+
+            {selectedDraft && (
+              <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+                {/* Status and Partner Info */}
+                <View style={styles.draftDetailInfoBox}>
+                  <View style={styles.draftDetailRow}>
+                    <Text style={styles.draftDetailLabel}>Status</Text>
+                    <Text
+                      style={[
+                        styles.draftDetailValue,
+                        {
+                          fontWeight: '800',
+                          color:
+                            selectedDraft.status === 'finalized'
+                              ? '#059669'
+                              : selectedDraft.status === 'cancelled'
+                                ? '#DC2626'
+                                : '#D97706',
+                        },
+                      ]}
+                    >
+                      {selectedDraft.status.toUpperCase()}
+                    </Text>
+                  </View>
+
+                  <View style={styles.draftDetailRow}>
+                    <Text style={styles.draftDetailLabel}>Created</Text>
+                    <Text style={styles.draftDetailValue}>
+                      {new Date(selectedDraft.created_at).toLocaleString()}
+                    </Text>
+                  </View>
+
+                  {selectedDraft.delivery_partner_name ? (
+                    <View style={styles.draftDetailRow}>
+                      <Text style={styles.draftDetailLabel}>Delivery Partner</Text>
+                      <Text style={styles.draftDetailValue}>{selectedDraft.delivery_partner_name}</Text>
+                    </View>
+                  ) : null}
+
+                  {selectedDraft.due_date ? (
+                    <View style={styles.draftDetailRow}>
+                      <Text style={styles.draftDetailLabel}>Payment Due Date</Text>
+                      <Text style={styles.draftDetailValue}>{selectedDraft.due_date}</Text>
+                    </View>
+                  ) : null}
+
+                  {selectedDraft.notes ? (
+                    <View style={styles.draftDetailRow}>
+                      <Text style={styles.draftDetailLabel}>Notes</Text>
+                      <Text style={[styles.draftDetailValue, { flex: 1, textAlign: 'right' }]}>
+                        {selectedDraft.notes}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {/* Attached Line Items */}
+                <Text style={styles.draftSectionTitle}>Items ({selectedDraft.items?.length || 0})</Text>
+                {(selectedDraft.items || []).map((it, idx) => (
+                  <View key={it.id || idx} style={styles.previewItemRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.previewItemName}>{it.product_name || `Product #${it.product}`}</Text>
+                      <Text style={styles.previewItemQty}>Qty: {it.quantity} units</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.previewItemPrice}>₹{it.total_price}</Text>
+                      <Text style={styles.previewItemRate}>@ ₹{it.unit_price}/ea</Text>
+                    </View>
+                  </View>
+                ))}
+
+                {/* Financial Summary */}
+                <View style={styles.financialSummaryBox}>
+                  <View style={styles.sumRow}>
+                    <Text style={styles.sumLabel}>Subtotal</Text>
+                    <Text style={styles.sumValue}>₹{selectedDraft.subtotal}</Text>
+                  </View>
+                  {parseFloat(selectedDraft.discount_amount || '0') > 0 && (
+                    <View style={styles.sumRow}>
+                      <Text style={[styles.sumLabel, { color: '#059669' }]}>Discount</Text>
+                      <Text style={[styles.sumValue, { color: '#059669' }]}>- ₹{selectedDraft.discount_amount}</Text>
+                    </View>
+                  )}
+                  <View style={[styles.sumRow, { borderTopWidth: 1, borderTopColor: '#EFEAE4', paddingTop: 6, marginTop: 4 }]}>
+                    <Text style={styles.grandLabel}>Grand Total</Text>
+                    <Text style={styles.grandValue}>₹{selectedDraft.grand_total}</Text>
+                  </View>
+                </View>
+
+                {/* Action Buttons if Active Draft */}
+                {selectedDraft.status === 'draft' && (
+                  <View style={styles.draftModalActionsRow}>
+                    <TouchableOpacity
+                      style={[styles.draftModalBtn, styles.draftModalBtnSecondary]}
+                      onPress={() => {
+                        setDraftModalVisible(false);
+                        handleEditDraft(selectedDraft);
+                      }}
+                    >
+                      <Ionicons name="pencil" size={15} color="#8C331A" style={{ marginRight: 4 }} />
+                      <Text style={styles.draftModalBtnSecondaryText}>Edit</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.draftModalBtn, styles.draftModalBtnDanger]}
+                      onPress={() => handleCancelDraft(selectedDraft)}
+                    >
+                      <Ionicons name="close-circle-outline" size={15} color="#DC2626" style={{ marginRight: 4 }} />
+                      <Text style={styles.draftModalBtnDangerText}>Cancel Draft</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.draftModalBtn, styles.draftModalBtnPrimary]}
+                      onPress={() => handleFinalizeDraft(selectedDraft)}
+                    >
+                      <Ionicons name="checkmark-done" size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.draftModalBtnPrimaryText}>Finalize</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* Manual Invoice Review Modal */}
       <Modal visible={previewModalVisible} transparent animationType="slide">
@@ -1817,5 +2309,132 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#EDE8E3',
     paddingBottom: 8,
+  },
+  /* Draft Bills Custom Styles */
+  draftTypeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginLeft: 6,
+  },
+  draftTypeBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  draftTypeQuick: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  draftTypeQuickText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  draftTypeOrder: {
+    backgroundColor: '#F3E8FF',
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
+  },
+  draftTypeOrderText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#7C3AED',
+  },
+  draftMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 4,
+  },
+  draftMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  draftMetaText: {
+    fontSize: 11,
+    color: '#6B5E55',
+    fontWeight: '500',
+  },
+  draftNotesText: {
+    fontSize: 11,
+    color: '#8E8278',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  compactActionBtnDanger: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  draftDetailInfoBox: {
+    backgroundColor: '#FAF8F5',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+  },
+  draftDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  draftDetailLabel: {
+    fontSize: 12,
+    color: '#8E8278',
+    fontWeight: '600',
+  },
+  draftDetailValue: {
+    fontSize: 12,
+    color: '#2A2421',
+    fontWeight: '600',
+  },
+  draftSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2A2421',
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  draftModalActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  draftModalBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  draftModalBtnSecondary: {
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  draftModalBtnSecondaryText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  draftModalBtnDanger: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  draftModalBtnDangerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  draftModalBtnPrimary: {
+    backgroundColor: '#8C331A',
+  },
+  draftModalBtnPrimaryText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });
