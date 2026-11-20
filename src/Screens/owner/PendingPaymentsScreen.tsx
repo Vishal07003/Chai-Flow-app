@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -19,6 +19,14 @@ import AppToast from '../../utils/toast';
 
 export default function PendingPaymentsScreen({ navigation }: any) {
   const { invoices, customers, collectInvoicePayment, refreshBackendData } = useApp();
+
+  // Focus-based auto-refresh
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      refreshBackendData();
+    });
+    return unsubscribe;
+  }, [navigation, refreshBackendData]);
 
   const [activeTab, setActiveTab] = useState<'ALL' | 'PENDING' | 'OVERDUE'>(
     'ALL',

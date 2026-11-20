@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -15,7 +15,15 @@ import { Header } from '../../components/common';
 import { useApp, InvoiceItem } from '../../context/AppContext';
 
 export default function InvoicesScreen({ navigation }: any) {
-  const { invoices, customers, markInvoiceAsPaid } = useApp();
+  const { invoices, customers, markInvoiceAsPaid, refreshBackendData } = useApp();
+
+  // Focus-based auto-refresh
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      refreshBackendData();
+    });
+    return unsubscribe;
+  }, [navigation, refreshBackendData]);
 
   const [activeTab, setActiveTab] = useState<
     'PENDING' | 'OVERDUE' | 'PAID' | 'ALL'

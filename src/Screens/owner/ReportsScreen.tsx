@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -23,7 +23,16 @@ export default function ReportsScreen({ navigation }: any) {
     totalRevenue,
     revenueGrowth,
     paymentHistory,
+    refreshBackendData,
   } = useApp();
+
+  // Focus-based auto-refresh
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      refreshBackendData();
+    });
+    return unsubscribe;
+  }, [navigation, refreshBackendData]);
 
   const [activeTab, setActiveTab] = useState<'HISTORY' | 'DELINQUENT'>(
     'HISTORY',

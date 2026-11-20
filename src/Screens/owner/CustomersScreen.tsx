@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -50,6 +50,14 @@ export default function CustomersScreen() {
   // Pull to refresh state
   const [refreshing, setRefreshing] = useState(false);
 
+  // Sync on screen focus
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      refreshBackendData();
+    });
+    return unsubscribe;
+  }, [navigation, refreshBackendData]);
+
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
     await refreshBackendData();
@@ -100,14 +108,18 @@ export default function CustomersScreen() {
     setCollectModalVisible(true);
   };
 
-  const handleCollectSubmit = (data: CollectPaymentFormData) => {
+  const handleCollectSubmit = async (data: CollectPaymentFormData) => {
     if (!selectedCustomer) return;
-    collectPayment(selectedCustomer.id, data.amount);
     setCollectModalVisible(false);
-    AppToast.success(
-      'Payment Recorded',
-      `₹${data.amount} recorded for ${selectedCustomer.name} via ${data.paymentMethod.toUpperCase()}`
-    );
+    try {
+      await collectPayment(selectedCustomer.id, data.amount, data.paymentMethod, data.notes);
+      AppToast.success(
+        'Payment Recorded',
+        `₹${data.amount} recorded for ${selectedCustomer.name} via ${data.paymentMethod.toUpperCase()}`
+      );
+    } catch (err: any) {
+      AppToast.error('Payment Error', err?.message || 'Failed to record payment.');
+    }
   };
 
   const toggleSortBy = () => {
@@ -142,6 +154,62 @@ export default function CustomersScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* Fixed Header */}
       <Header title="Customers" />
+
+      {/* Sticky Top Filter & Search Bar Container */}
+      <View style={styles.stickySearchContainer}>
+        {/* Dynamic Search Bar */}
+        <View style={styles.searchBar}>
+          <Ionicons
+            name="search-outline"
+            size={18}
+            color="#888"
+            style={styles.searchIcon}
+          />
+          <TextInput
+            placeholder="Search customers by name or area..."
+            placeholderTextColor="#988E85"
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Ionicons name="close-circle" size={18} color="#999" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Dynamic Filter Chips */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+        >
+          {filterTabs.map(tab => {
+            const isActive = activeFilter === tab;
+            return (
+              <TouchableOpacity
+                key={tab}
+                activeOpacity={0.8}
+                onPress={() => setActiveFilter(tab)}
+                style={[
+                  styles.filterChip,
+                  isActive ? styles.activeChip : styles.inactiveChip,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.chipText,
+                    isActive ? styles.activeChipText : styles.inactiveChipText,
+                  ]}
+                >
+                  {tab}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
 
       <KeyboardAwareScrollView
         contentContainerStyle={styles.scrollContent}
@@ -192,59 +260,6 @@ export default function CustomersScreen() {
           {/* Decorative graphic background bubble */}
           <View style={styles.cardBubbleGraphic} />
         </View>
-
-        {/* Dynamic Search Bar */}
-        <View style={styles.searchBar}>
-          <Ionicons
-            name="search-outline"
-            size={20}
-            color="#888"
-            style={styles.searchIcon}
-          />
-          <TextInput
-            placeholder="Search customers by name or area..."
-            placeholderTextColor="#988E85"
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={18} color="#999" />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Dynamic Filter Chips */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterRow}
-        >
-          {filterTabs.map(tab => {
-            const isActive = activeFilter === tab;
-            return (
-              <TouchableOpacity
-                key={tab}
-                activeOpacity={0.8}
-                onPress={() => setActiveFilter(tab)}
-                style={[
-                  styles.filterChip,
-                  isActive ? styles.activeChip : styles.inactiveChip,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    isActive ? styles.activeChipText : styles.inactiveChipText,
-                  ]}
-                >
-                  {tab}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
 
         {/* Section Header Row */}
         <View style={styles.sectionHeaderRow}>
@@ -489,6 +504,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 16,
+  },
+  stickySearchContainer: {
+    backgroundColor: '#FAF8F5',
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFECE8',
+    zIndex: 10,
   },
 
   /* Total Outstanding Card */

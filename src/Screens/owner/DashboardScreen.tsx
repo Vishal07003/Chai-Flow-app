@@ -36,7 +36,12 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     fetchLiveStats();
-  }, []);
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchLiveStats();
+      refreshBackendData();
+    });
+    return unsubscribe;
+  }, [navigation, refreshBackendData]);
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
@@ -60,12 +65,10 @@ export default function DashboardScreen() {
 
   const totalPendingNum = liveStats?.total_pending
     ? parseFloat(liveStats.total_pending)
-    : invoices.reduce((sum, item) => {
-        if (item.status !== 'PAID') {
-          return sum + (item.numericAmount || 0);
-        }
-        return sum;
-      }, 0);
+    : 0;
+
+  const todayOrdersCount = liveStats?.today_orders_count ?? 0;
+  const pendingOrdersCount = liveStats?.pending_orders_count ?? 0;
 
   // Recent 5 invoices sorted by id descending
   const recentInvoices = [...invoices].slice(0, 5);
@@ -134,7 +137,40 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* 2. PRIMARY ACTION: QUICK BILLING / NEW COUNTER BILL */}
+        {/* 2. OPERATIONAL STRIP: ORDERS & NEW COUNTER BILL */}
+        <View style={styles.orderStatusStrip}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            style={styles.orderMetricBadge}
+            onPress={() => navigation.navigate('Orders')}
+          >
+            <View style={styles.orderMetricIconBox}>
+              <Ionicons name="cart" size={18} color="#8C331A" />
+            </View>
+            <View>
+              <Text style={styles.orderMetricLabel}>TODAY'S ORDERS</Text>
+              <Text style={styles.orderMetricVal}>{todayOrdersCount}</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            activeOpacity={0.8}
+            style={styles.orderMetricBadge}
+            onPress={() => navigation.navigate('Orders')}
+          >
+            <View style={[styles.orderMetricIconBox, { backgroundColor: '#FEF3C7' }]}>
+              <Ionicons name="time" size={18} color="#D97706" />
+            </View>
+            <View>
+              <Text style={styles.orderMetricLabel}>PENDING ORDERS</Text>
+              <Text style={[styles.orderMetricVal, { color: pendingOrdersCount > 0 ? '#D97706' : '#1F1511' }]}>
+                {pendingOrdersCount}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* 3. PRIMARY ACTION: QUICK BILLING / NEW COUNTER BILL */}
         <TouchableOpacity
           activeOpacity={0.88}
           style={styles.primaryActionCard}
@@ -157,7 +193,7 @@ export default function DashboardScreen() {
           </View>
         </TouchableOpacity>
 
-        {/* 3. CORE MODULE SHORTCUTS 4-GRID */}
+        {/* 4. CORE MODULE SHORTCUTS 4-GRID */}
         <Text style={styles.sectionHeader}>QUICK SHORTCUTS</Text>
         <View style={styles.gridContainer}>
           <TouchableOpacity
@@ -237,7 +273,7 @@ export default function DashboardScreen() {
               due={inv.due}
               isOverdue={inv.isOverdue}
               status={inv.status}
-              onPress={() => navigation.navigate('InvoiceDetail', { invoice: inv })}
+              onPress={() => navigation.navigate('InvoiceDetail', { invoiceId: inv.id, invoice: inv })}
             />
           ))
         )}
@@ -345,6 +381,50 @@ const styles = StyleSheet.create({
     height: 32,
     backgroundColor: 'rgba(255, 255, 255, 0.16)',
     marginHorizontal: 16,
+  },
+
+  /* Operational Order Status Strip */
+  orderStatusStrip: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  orderMetricBadge: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    marginHorizontal: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EFECE9',
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+  },
+  orderMetricIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#FDEBE4',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  orderMetricLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#8A7E75',
+    letterSpacing: 0.5,
+  },
+  orderMetricVal: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1F1511',
+    marginTop: 1,
   },
 
   /* 2. Primary Action: New Counter Bill */

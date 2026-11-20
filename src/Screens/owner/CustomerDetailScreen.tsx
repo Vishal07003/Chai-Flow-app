@@ -8,7 +8,6 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
-  Alert,
   Linking,
   RefreshControl,
 } from 'react-native';
@@ -22,6 +21,7 @@ import orderService, {
 import { useApp } from '../../context/AppContext';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 import { CollectPaymentModal, type CollectPaymentFormData } from '../../components/payment';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import AppToast from '../../utils/toast';
 
 export default function CustomerDetailScreen({ route, navigation }: any) {
@@ -77,6 +77,22 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
 
   // Full Ledger Timeline Modal
   const [ledgerModalVisible, setLedgerModalVisible] = useState<boolean>(false);
+
+  // Custom Confirm Dialog State
+  const [confirmDialogConfig, setConfirmDialogConfig] = useState<{
+    visible: boolean;
+    title: string;
+    description?: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    type?: 'danger' | 'warning' | 'info' | 'success';
+    icon?: string;
+    onConfirm: () => void;
+  }>({
+    visible: false,
+    title: '',
+    onConfirm: () => {},
+  });
 
   // 1. Fetch Customer Profile & Summary
   const fetchCustomerData = useCallback(async () => {
@@ -166,11 +182,18 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
   }, [customerId]);
 
   useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchCustomerData();
+      fetchLedgerAndInvoices();
+      fetchOrders();
+      fetchRecurringTemplates();
+    });
     fetchCustomerData();
     fetchLedgerAndInvoices();
     fetchOrders();
     fetchRecurringTemplates();
-  }, [fetchCustomerData, fetchLedgerAndInvoices, fetchOrders, fetchRecurringTemplates]);
+    return unsubscribe;
+  }, [navigation, fetchCustomerData, fetchLedgerAndInvoices, fetchOrders, fetchRecurringTemplates]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -193,9 +216,9 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
       });
       setCustomer(updated);
       setEditCustomerModalVisible(false);
-      Alert.alert('Updated', 'Customer profile updated successfully.');
+      AppToast.success('Profile Updated', 'Customer details have been saved.');
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to update customer.');
+      AppToast.error('Update Failed', err?.message || 'Failed to update customer.');
     }
   };
 
@@ -249,21 +272,21 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
   // Quick Action 3: Repeat Order
   const handleRepeatOrder = () => {
     if (recentOrders.length === 0) {
-      Alert.alert(
-        'No Previous Orders',
-        'This customer has no prior orders to repeat. Opening Quick Billing to create a new order.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Open Quick Billing',
-            onPress: () => {
-              navigation.navigate('QuickBilling', {
-                customer: customer || initialCustomer,
-              });
-            },
-          },
-        ]
-      );
+      setConfirmDialogConfig({
+        visible: true,
+        title: 'No Prior Orders',
+        description: 'This customer has no prior orders to repeat. Would you like to open Quick Billing to create a fresh order?',
+        confirmLabel: 'Open Quick Billing',
+        cancelLabel: 'Cancel',
+        type: 'info',
+        icon: 'cart-outline',
+        onConfirm: () => {
+          setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
+          navigation.navigate('QuickBilling', {
+            customer: customer || initialCustomer,
+          });
+        },
+      });
       return;
     }
 
@@ -304,34 +327,41 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     });
   };
 
-  const handleTogglePauseRecurring = async (template: BackendRecurringOrder) => {
-    try {
-      if (template.is_paused) {
-        await orderService.resumeRecurringOrder(template.id);
-        Alert.alert('Resumed', 'Recurring order schedule is active.');
-      } else {
-        await orderService.pauseRecurringOrder(template.id);
-        Alert.alert('Paused', 'Recurring order schedule is paused.');
-      }
-      fetchRecurringTemplates();
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to update recurring status.');
-    }
+  const handleTogglePauseRecurring = (template: BackendRecurringOrder) => {
+    const willPause = !template.is_paused;
+    setConfirmDialogConfig({
+      visible: true,
+      title: willPause ? 'Pause Recurring Template?' : 'Resume Recurring Template?',
+      description: willPause
+        ? `Are you sure you want to pause auto-generating daily orders for ${template.customer_name || displayName}?`
+        : `Resume daily order generation for ${template.customer_name || displayName}?`,
+      confirmLabel: willPause ? 'Pause Template' : 'Resume Template',
+      cancelLabel: 'Cancel',
+      type: willPause ? 'warning' : 'info',
+      icon: willPause ? 'pause-circle-outline' : 'play-circle-outline',
+      onConfirm: async () => {
+        try {
+          if (template.is_paused) {
+            await orderService.resumeRecurringOrder(template.id);
+            AppToast.success('Schedule Resumed', 'Recurring order template is now active.');
+          } else {
+            await orderService.pauseRecurringOrder(template.id);
+            AppToast.info('Schedule Paused', 'Recurring order template has been paused.');
+          }
+          fetchRecurringTemplates();
+        } catch (err: any) {
+          AppToast.error('Error', err?.message || 'Failed to update recurring status.');
+        } finally {
+          setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
+        }
+      },
+    });
   };
 
   // Header More Options Menu
+  const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
   const handleHeaderMore = () => {
-    Alert.alert(
-      displayName,
-      'Select action:',
-      [
-        { text: 'Edit Profile', onPress: () => setEditCustomerModalVisible(true) },
-        { text: 'Collect Payment', onPress: handleOpenCollectPayment },
-        { text: 'Create Recurring Template', onPress: handleOpenCreateRecurring },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-      { cancelable: true }
-    );
+    setHeaderMenuVisible(true);
   };
 
   // Derived Values
@@ -926,6 +956,72 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
             )}
           </View>
         </View>
+      </Modal>
+
+      {/* Centralized Reusable Confirm Dialog */}
+      <ConfirmDialog
+        visible={confirmDialogConfig.visible}
+        title={confirmDialogConfig.title}
+        description={confirmDialogConfig.description}
+        confirmLabel={confirmDialogConfig.confirmLabel}
+        cancelLabel={confirmDialogConfig.cancelLabel}
+        type={confirmDialogConfig.type}
+        icon={confirmDialogConfig.icon}
+        onConfirm={confirmDialogConfig.onConfirm}
+        onCancel={() => setConfirmDialogConfig(prev => ({ ...prev, visible: false }))}
+      />
+
+      {/* Header Quick Menu Modal */}
+      <Modal visible={headerMenuVisible} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.menuBackdrop}
+          activeOpacity={1}
+          onPress={() => setHeaderMenuVisible(false)}
+        >
+          <View style={styles.menuCard}>
+            <View style={styles.menuHeader}>
+              <Text style={styles.menuTitle} numberOfLines={1}>{displayName}</Text>
+              <Text style={styles.menuSubtitle}>Quick Actions</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setHeaderMenuVisible(false);
+                setEditCustomerModalVisible(true);
+              }}
+            >
+              <Ionicons name="pencil-outline" size={18} color="#8C331A" style={{ marginRight: 12 }} />
+              <Text style={styles.menuItemText}>Edit Profile</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setHeaderMenuVisible(false);
+                handleOpenCollectPayment();
+              }}
+            >
+              <Ionicons name="wallet-outline" size={18} color="#8C331A" style={{ marginRight: 12 }} />
+              <Text style={styles.menuItemText}>Collect Payment</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setHeaderMenuVisible(false);
+                handleOpenCreateRecurring();
+              }}
+            >
+              <Ionicons name="repeat-outline" size={18} color="#8C331A" style={{ marginRight: 12 }} />
+              <Text style={styles.menuItemText}>Create Recurring Template</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.menuItem, { borderBottomWidth: 0 }]}
+              onPress={() => setHeaderMenuVisible(false)}
+            >
+              <Ionicons name="close-circle-outline" size={18} color="#8E8278" style={{ marginRight: 12 }} />
+              <Text style={[styles.menuItemText, { color: '#8E8278' }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
       </Modal>
     </SafeAreaView>
   );
@@ -1750,5 +1846,53 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: '#8E8278',
     marginTop: 1,
+  },
+  menuBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(17, 24, 39, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  menuCard: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  menuHeader: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3EFEA',
+    backgroundColor: '#FAF8F5',
+  },
+  menuTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  menuSubtitle: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#FAF8F5',
+  },
+  menuItemText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2A2421',
   },
 });

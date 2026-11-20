@@ -1,19 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Modal,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
   View,
-  KeyboardAvoidingView,
-  Platform,
-  Keyboard,
+  Text,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
-import Ionicons from 'react-native-vector-icons/Ionicons';
 
 import {
   Header,
@@ -25,21 +18,27 @@ import { CategoryChip, ProductCard } from '../../components/owner';
 
 import { useApp } from '../../context/AppContext';
 
-const CATEGORIES = [
-  'All Items',
-  'Masala Chai',
-  'Green Tea',
+export const PRODUCT_CATEGORIES = [
+  'All',
   'Snacks',
-  'Containers',
+  'Tiffin',
+  'Tea',
+  'Coffee',
+  'Packed Foods',
 ];
 
 export default function ProductsScreen({ navigation, route }: any) {
-  const { products, totalSKUs, lowStockCount, addProduct, deleteProduct } =
-    useApp();
+  const { products, deleteProduct, refreshBackendData } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState('All Items');
-  const [modalVisible, setModalVisible] = useState(false);
+  const [activeCategory, setActiveCategory] = useState('All');
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      refreshBackendData();
+    });
+    return unsubscribe;
+  }, [navigation, refreshBackendData]);
 
   useEffect(() => {
     if (route.params?.openAddModal) {
@@ -48,97 +47,38 @@ export default function ProductsScreen({ navigation, route }: any) {
     }
   }, [route.params?.openAddModal, navigation]);
 
-  // Form State for Add Product
-  const [name, setName] = useState('');
-  const [price, setPrice] = useState('');
-  const [unit, setUnit] = useState('kg');
-  const [description, setDescription] = useState('');
-  const [stockNumber, setStockNumber] = useState('');
-
   const filteredProducts = products.filter(item => {
-    const matchesSearch = item.name
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase());
-    if (activeCategory === 'All Items') return matchesSearch;
+    const q = searchQuery.toLowerCase().trim();
+    const matchesSearch = !q || item.name.toLowerCase().includes(q) || (item.description && item.description.toLowerCase().includes(q));
+    if (activeCategory === 'All') return matchesSearch;
     return (
       matchesSearch &&
-      (item.category === activeCategory || item.name.includes(activeCategory))
+      item.category?.toLowerCase() === activeCategory.toLowerCase()
     );
   });
-
-  const handleAddProduct = () => {
-    if (!name || !price || !stockNumber) return;
-
-    const num = parseInt(stockNumber, 10) || 0;
-    const isLow = num <= 15;
-
-    addProduct({
-      name,
-      price,
-      unit: unit || 'kg',
-      description: description || 'Fresh premium store inventory',
-      stock: `${num} ${unit}`,
-      stockNumber: num,
-      maxStock: 200,
-      isLowStock: isLow,
-      category: activeCategory !== 'All Items' ? activeCategory : 'Masala Chai',
-      imageUrl:
-        'https://images.unsplash.com/photo-1576092768241-dec231879fc3?auto=format&fit=crop&w=600&q=80',
-    });
-
-    setName('');
-    setPrice('');
-    setStockNumber('');
-    setDescription('');
-    setModalVisible(false);
-  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* Fixed Top Header */}
       <Header title="Products" />
 
-      <KeyboardAwareScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        enableOnAndroid={true}
-      >
-        {/* Top Summary Cards */}
-        <View style={styles.topCardsRow}>
-          {/* Card 1: Total SKUs */}
-          <View style={styles.statCard}>
-            <View style={styles.cardHeader}>
-              <Ionicons name="cube-outline" size={18} color="#6E6259" />
-              <Text style={styles.cardTitle}>Total SKUs</Text>
-            </View>
-            <Text style={styles.cardValue}>{totalSKUs}</Text>
-            <Text style={styles.cardSubTextBlue}>📈 +3 THIS MONTH</Text>
-          </View>
-
-          {/* Card 2: Low Stock */}
-          <View style={styles.statCard}>
-            <View style={styles.cardHeader}>
-              <Ionicons name="warning-outline" size={18} color="#D9381E" />
-              <Text style={styles.cardTitle}>Low Stock</Text>
-            </View>
-            <Text style={[styles.cardValue, styles.lowStockValue]}>
-              {lowStockCount} items
-            </Text>
-            <Text style={styles.cardSubTextRed}>⚠️ REORDER NEEDED</Text>
-          </View>
-        </View>
-
-        {/* Search Bar */}
-        <SearchBar value={searchQuery} onChangeText={setSearchQuery} />
+      {/* Sticky Search & Category Bar */}
+      <View style={styles.stickySearchContainer}>
+        <SearchBar
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search products by name..."
+          containerStyle={{ marginVertical: 0, marginBottom: 8 }}
+        />
 
         {/* Category Filters Horizontal Scroll */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           style={styles.categoriesRow}
+          contentContainerStyle={{ paddingVertical: 2 }}
         >
-          {CATEGORIES.map(cat => (
+          {PRODUCT_CATEGORIES.map(cat => (
             <CategoryChip
               key={cat}
               label={cat}
@@ -147,13 +87,20 @@ export default function ProductsScreen({ navigation, route }: any) {
             />
           ))}
         </ScrollView>
+      </View>
 
-        {/* Product Cards List */}
+      <KeyboardAwareScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        enableOnAndroid={true}
+      >
+        {/* Compact Product Cards List */}
         {filteredProducts.length === 0 ? (
           <EmptyState
-            icon="cube-outline"
+            icon="fast-food-outline"
             title="No Products Found"
-            subtitle="No items match your search or selected category."
+            subtitle={searchQuery ? 'No items match your search.' : `No products found under ${activeCategory}. Tap + to add a product.`}
           />
         ) : (
           filteredProducts.map(product => (
@@ -176,107 +123,6 @@ export default function ProductsScreen({ navigation, route }: any) {
       <FloatingButton
         onPress={() => navigation.navigate('ProductDetail', { mode: 'add' })}
       />
-
-      {/* Modal: Add New Product */}
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-        statusBarTranslucent={true}
-      >
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={() => setModalVisible(false)}
-          />
-
-          <KeyboardAvoidingView
-            style={styles.keyboardContainer}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            pointerEvents="box-none"
-          >
-            <View style={styles.modalCard}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Add New Product</Text>
-                <TouchableOpacity onPress={() => setModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="close" size={20} color="#6E6259" />
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={true}
-                bounces={false}
-              >
-                <Text style={styles.label}>Product Name *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Masala Chai Premix"
-                  placeholderTextColor="#999"
-                  value={name}
-                  onChangeText={setName}
-                />
-
-                <View style={styles.rowInputs}>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text style={styles.label}>Price (₹) *</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g. 280"
-                      placeholderTextColor="#999"
-                      keyboardType="numeric"
-                      value={price}
-                      onChangeText={setPrice}
-                    />
-                  </View>
-
-                  <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Text style={styles.label}>Unit</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g. kg / pc"
-                      placeholderTextColor="#999"
-                      value={unit}
-                      onChangeText={setUnit}
-                    />
-                  </View>
-                </View>
-
-                <Text style={styles.label}>Stock Quantity *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. 150"
-                  placeholderTextColor="#999"
-                  keyboardType="numeric"
-                  value={stockNumber}
-                  onChangeText={setStockNumber}
-                />
-
-                <Text style={styles.label}>Description</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Premium quality CTC tea leaves"
-                  placeholderTextColor="#999"
-                  value={description}
-                  onChangeText={setDescription}
-                />
-
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  style={styles.submitBtn}
-                  onPress={handleAddProduct}
-                >
-                  <Text style={styles.submitBtnText}>
-                    Add Product to Catalog
-                  </Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -288,136 +134,20 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 16,
+    paddingTop: 10,
+    paddingBottom: 90,
   },
-
-  /* Top Stat Cards */
-  topCardsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  statCard: {
-    width: '48%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  cardTitle: {
-    fontSize: 14,
-    color: '#6E6259',
-    marginLeft: 6,
-    fontWeight: '500',
-  },
-  cardValue: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: '#2C201A',
-    marginTop: 8,
-  },
-  lowStockValue: {
-    color: '#8C331A',
-  },
-  cardSubTextBlue: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#3B82F6',
-    marginTop: 6,
-    letterSpacing: 0.4,
-  },
-  cardSubTextRed: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#D9381E',
-    marginTop: 6,
-    letterSpacing: 0.4,
-  },
-
-  categoriesRow: {
-    marginVertical: 10,
-    flexDirection: 'row',
-  },
-
-  /* Modal */
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  keyboardContainer: {
-    width: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 440,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 18,
-    maxHeight: '85%',
-    shadowColor: '#2A2421',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    elevation: 10,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#2C201A',
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#554A42',
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  rowInputs: {
-    flexDirection: 'row',
-  },
-  input: {
+  stickySearchContainer: {
     backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFECE8',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    height: 44,
-    fontSize: 14,
-    color: '#2C201A',
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFECE8',
+    zIndex: 10,
   },
-
-  submitBtn: {
-    backgroundColor: '#8C331A',
-    height: 48,
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  submitBtnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  categoriesRow: {
+    marginVertical: 4,
+    flexDirection: 'row',
   },
 });

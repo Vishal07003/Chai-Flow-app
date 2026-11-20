@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -15,6 +15,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header, CustomDialog } from '../../components/common';
 import { useApp, InvoiceItem, DeliveryBoyItem } from '../../context/AppContext';
 import { pdfService } from '../../services/pdf.service';
+import billingService, { BackendInvoice } from '../../services/billing.service';
 
 export default function InvoiceDetailScreen({ route, navigation }: any) {
   const { invoice } = route.params || {};
@@ -92,6 +93,29 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
       notes: 'Thank you for ordering with ChaiFlow!',
     },
   );
+
+  const rawInvoiceId = invoice?.id || invoice?.invoice_number || route.params?.invoiceId;
+
+  // Live fetch to prevent stale invoice status
+  const fetchLiveInvoice = useCallback(async () => {
+    if (!rawInvoiceId) return;
+    try {
+      const live: BackendInvoice = await billingService.getInvoiceDetail(rawInvoiceId);
+      if (live) {
+        setCurrentOrder(mapBackendInvoiceToItem(live));
+      }
+    } catch (err) {
+      console.log('Error fetching live invoice detail:', err);
+    }
+  }, [rawInvoiceId]);
+
+  useEffect(() => {
+    fetchLiveInvoice();
+    const unsubscribe = navigation.addListener?.('focus', () => {
+      fetchLiveInvoice();
+    });
+    return unsubscribe;
+  }, [navigation, fetchLiveInvoice]);
 
   const [isPartnerModalVisible, setIsPartnerModalVisible] = useState(false);
   const [isPdfLoading, setIsPdfLoading] = useState(false);

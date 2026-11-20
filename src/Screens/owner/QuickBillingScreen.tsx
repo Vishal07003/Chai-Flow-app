@@ -8,17 +8,20 @@ import {
   Image,
   Modal,
   FlatList,
+  ScrollView,
   ActivityIndicator,
   Platform,
   Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Toast from 'react-native-toast-message';
 import { useApp } from '../../context/AppContext';
 import billingService, { BillingCustomer } from '../../services/billing.service';
-import { CustomDialog } from '../../components/common';
+import orderService from '../../services/order.service';
+import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
+import { CustomDialog, ConfirmDialog, DeliveryPartnerDropdown } from '../../components/common';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 
 const TEA_IMAGES: { [key: string]: string } = {
@@ -48,23 +51,26 @@ const DEFAULT_TEA_IMAGE =
   'https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=300&auto=format&fit=crop';
 
 export default function QuickBillingScreen({ route, navigation }: any) {
+  const insets = useSafeAreaInsets();
   const { products, addProduct, refreshBackendData } = useApp();
 
+  const isOrderMode = route?.params?.mode === 'order';
   const routeCustomer = route?.params?.customer;
+  const initialCustomerId = route?.params?.customerId;
   const prefilledItems = route?.params?.prefilledItems;
 
   // Search filter for products
   const [productSearchQuery, setProductSearchQuery] = useState<string>('');
   const [productViewMode, setProductViewMode] = useState<'grid' | 'list'>('grid');
 
-  // Cart Quantities: productId -> qty
-  const [cartQuantities, setCartQuantities] = useState<{ [productId: string]: number }>({});
+  // Cart Quantities: productId -> qty (string to support intermediate empty/typing states without losing product)
+  const [cartQuantities, setCartQuantities] = useState<{ [productId: string]: string }>({});
   const [addedOrder, setAddedOrder] = useState<string[]>([]);
 
   // Scroll ref for keyboard awareness
   const scrollRef = useRef<any>(null);
 
-  // Customer State (Optional selection)
+  // Customer State (Optional selection in billing mode, required in order mode)
   const [selectedCustomer, setSelectedCustomer] = useState<BillingCustomer | null>(null);
   const [showCustomerModal, setShowCustomerModal] = useState<boolean>(false);
   const [customerSearch, setCustomerSearch] = useState<string>('');
@@ -73,6 +79,13 @@ export default function QuickBillingScreen({ route, navigation }: any) {
 
   // New Customer Modal
   const [showAddCustomerModal, setShowAddCustomerModal] = useState<boolean>(false);
+
+  // Delivery Details (Used in Order Mode)
+  const [deliveryAddress, setDeliveryAddress] = useState<string>('');
+  const [selectedPartnerId, setSelectedPartnerId] = useState<number | null>(null);
+  const [orderNotes, setOrderNotes] = useState<string>('');
+  const [partners, setPartners] = useState<DeliveryPartnerProfile[]>([]);
+  const [loadingPartners, setLoadingPartners] = useState<boolean>(false);
 
   // Payment Options: Status (Full, Partial, Unpaid), Method (Cash, Online)
   const [paymentStatus, setPaymentStatus] = useState<'FULL' | 'PARTIAL' | 'UNPAID'>('FULL');
@@ -83,6 +96,26 @@ export default function QuickBillingScreen({ route, navigation }: any) {
 
   // Toast
   const [toastConfig, setToastConfig] = useState<{ msg: string; isError?: boolean } | null>(null);
+
+  // Premium Confirm Dialog State
+  const [confirmDialogConfig, setConfirmDialogConfig] = useState<{
+    visible: boolean;
+    title: string;
+    description?: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    type?: 'danger' | 'warning' | 'info' | 'success';
+    icon?: string;
+    onConfirm: () => void | Promise<void>;
+  }>({
+    visible: false,
+    title: '',
+    onConfirm: () => {},
+  });
+
+  const closeConfirmDialog = useCallback(() => {
+    setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
+  }, []);
 
   // Custom Popup Dialog State
   const [dialogConfig, setDialogConfig] = useState<{
@@ -125,21 +158,22 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     );
   }, [products, productSearchQuery]);
 
-  // Line items
+  // Line items (Derived from selected products in addedOrder)
   const lineItems = useMemo(() => {
-    const items: Array<{ id: string; name: string; qty: number; price: number }> = [];
+    const items: Array<{ id: string; name: string; qty: number; price: number; rawQtyStr: string }> = [];
     addedOrder.forEach(pId => {
-      const qty = cartQuantities[pId] || 0;
-      if (qty > 0) {
-        const prod = products.find(p => p.id === pId);
-        if (prod) {
-          items.push({
-            id: prod.id,
-            name: prod.name,
-            qty,
-            price: parseProductPrice(prod.price),
-          });
-        }
+      const rawVal = cartQuantities[pId];
+      const parsedQty = typeof rawVal === 'number' ? rawVal : parseInt(rawVal || '0', 10);
+      const effectiveQty = isNaN(parsedQty) || parsedQty < 0 ? 0 : parsedQty;
+      const prod = products.find(p => p.id === pId);
+      if (prod) {
+        items.push({
+          id: prod.id,
+          name: prod.name,
+          qty: effectiveQty,
+          rawQtyStr: rawVal !== undefined ? String(rawVal) : '1',
+          price: parseProductPrice(prod.price),
+        });
       }
     });
     return items;
@@ -162,6 +196,25 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     return lineItems.reduce((acc, curr) => acc + curr.qty, 0);
   }, [lineItems]);
 
+  // Fetch delivery partners when in order mode
+  useEffect(() => {
+    if (isOrderMode) {
+      setLoadingPartners(true);
+      deliveryService
+        .getDeliveryPartners()
+        .then(res => {
+          setPartners(res || []);
+        })
+        .catch(err => {
+          console.log('Error fetching delivery partners:', err);
+          setPartners([]);
+        })
+        .finally(() => {
+          setLoadingPartners(false);
+        });
+    }
+  }, [isOrderMode]);
+
   // Preselect customer and prefill items from navigation params
   useEffect(() => {
     if (routeCustomer) {
@@ -175,10 +228,26 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         total_billed_amount: String(routeCustomer.total_billed_amount || '0'),
         total_pending_amount: String(routeCustomer.total_pending_amount || routeCustomer.amount || '0'),
       });
+      if (routeCustomer.address && !deliveryAddress) {
+        setDeliveryAddress(routeCustomer.address);
+      }
+    } else if (initialCustomerId) {
+      billingService
+        .getCustomers()
+        .then(custs => {
+          const matched = custs.find(c => String(c.id) === String(initialCustomerId));
+          if (matched) {
+            setSelectedCustomer(matched);
+            if (matched.address && !deliveryAddress) {
+              setDeliveryAddress(matched.address);
+            }
+          }
+        })
+        .catch(err => console.log('Error prefetching customer:', err));
     }
 
     if (prefilledItems && Array.isArray(prefilledItems) && prefilledItems.length > 0 && products.length > 0) {
-      const newQtys: { [productId: string]: number } = {};
+      const newQtys: { [productId: string]: string } = {};
       const newOrder: string[] = [];
 
       prefilledItems.forEach(it => {
@@ -187,7 +256,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
           p => String(p.id) === String(it.product_id) || (it.product_name && p.name.toLowerCase() === it.product_name.toLowerCase())
         );
         if (found) {
-          newQtys[found.id] = it.quantity;
+          newQtys[found.id] = String(it.quantity || 1);
           if (!newOrder.includes(found.id)) {
             newOrder.push(found.id);
           }
@@ -199,7 +268,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         setAddedOrder(newOrder);
       }
     }
-  }, [routeCustomer, prefilledItems, products]);
+  }, [routeCustomer, initialCustomerId, prefilledItems, products]);
 
   // Auto-fill receivedAmount based on paymentStatus and grandTotal
   useEffect(() => {
@@ -282,6 +351,9 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         opening_balance: data.openingBalance,
       });
       setSelectedCustomer(created);
+      if (created.address && !deliveryAddress) {
+        setDeliveryAddress(created.address);
+      }
       setShowAddCustomerModal(false);
       setShowCustomerModal(false);
       showToast(`Customer ${created.name} added!`);
@@ -294,23 +366,20 @@ export default function QuickBillingScreen({ route, navigation }: any) {
   const updateQuantity = useCallback(
     (productId: string, delta: number) => {
       setCartQuantities(prev => {
-        const current = prev[productId] || 0;
-        const updated = Math.max(0, current + delta);
-        return { ...prev, [productId]: updated };
+        const rawCurrent = prev[productId];
+        const currentNum = rawCurrent !== undefined ? (parseInt(rawCurrent, 10) || 0) : 0;
+        const updatedNum = Math.max(0, currentNum + delta);
+        return { ...prev, [productId]: String(updatedNum) };
       });
 
       setAddedOrder(prev => {
-        const currentQty = cartQuantities[productId] || 0;
-        const updatedQty = Math.max(0, currentQty + delta);
-        if (updatedQty > 0 && !prev.includes(productId)) {
+        if (!prev.includes(productId)) {
           return [...prev, productId];
-        } else if (updatedQty === 0 && prev.includes(productId)) {
-          return prev.filter(id => id !== productId);
         }
         return prev;
       });
     },
-    [cartQuantities],
+    [],
   );
 
   const handleClearCart = useCallback(() => {
@@ -320,61 +389,77 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     setReceivedAmount('0');
     setPaymentStatus('FULL');
     setPaymentMethod('cash');
+    setDeliveryAddress('');
+    setSelectedPartnerId(null);
+    setOrderNotes('');
   }, []);
 
   const handlePromptClearCart = () => {
-    if (lineItems.length === 0) return;
-    Alert.alert(
-      'Clear Bill?',
-      'Are you sure you want to remove all items and reset this bill?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Clear All', style: 'destructive', onPress: handleClearCart },
-      ]
-    );
+    if (addedOrder.length === 0) return;
+    setDialogConfig({
+      visible: true,
+      title: isOrderMode ? 'Clear Order?' : 'Clear Bill?',
+      message: isOrderMode
+        ? 'Are you sure you want to remove all items and reset this order?'
+        : 'Are you sure you want to remove all items and reset this bill?',
+      type: 'danger',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: closeDialog },
+        {
+          text: 'Clear All',
+          style: 'destructive',
+          onPress: () => {
+            closeDialog();
+            handleClearCart();
+          },
+        },
+      ],
+    });
   };
 
+  // Direct editing of quantity in text input - preserves product in cart even if temporarily empty or zero
   const handleDirectQtyChange = (productId: string, text: string) => {
     const cleanText = text.replace(/[^0-9]/g, '');
-    if (cleanText === '') {
-      setCartQuantities(prev => {
-        const next = { ...prev };
-        delete next[productId];
-        return next;
-      });
-      setAddedOrder(prev => prev.filter(id => id !== productId));
-      return;
-    }
+    setCartQuantities(prev => ({
+      ...prev,
+      [productId]: cleanText,
+    }));
+    setAddedOrder(prev => (prev.includes(productId) ? prev : [...prev, productId]));
+  };
 
-    const val = parseInt(cleanText, 10);
-    if (isNaN(val) || val <= 0) {
-      setCartQuantities(prev => {
-        const next = { ...prev };
-        delete next[productId];
-        return next;
-      });
-      setAddedOrder(prev => prev.filter(id => id !== productId));
-    } else {
-      setCartQuantities(prev => ({ ...prev, [productId]: val }));
-      setAddedOrder(prev => (prev.includes(productId) ? prev : [...prev, productId]));
-    }
+  // When user finishes typing / blurs input, normalize empty or 0 to '1' (or min 1)
+  const handleQtyBlur = (productId: string) => {
+    setCartQuantities(prev => {
+      const cur = prev[productId];
+      const parsed = parseInt(cur, 10);
+      if (isNaN(parsed) || parsed <= 0) {
+        return { ...prev, [productId]: '1' };
+      }
+      return { ...prev, [productId]: String(parsed) };
+    });
   };
 
   const handlePromptRemoveItem = (productId: string, productName: string) => {
-    Alert.alert(
-      'Remove Product?',
-      `Are you sure you want to remove "${productName}" from the bill?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
+    setDialogConfig({
+      visible: true,
+      title: 'Remove Product?',
+      message: `Are you sure you want to remove "${productName}" from the ${isOrderMode ? 'order' : 'bill'}?`,
+      type: 'danger',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: closeDialog },
         {
           text: 'Remove',
           style: 'destructive',
-          onPress: () => handleRemoveItem(productId),
+          onPress: () => {
+            closeDialog();
+            handleRemoveItem(productId);
+          },
         },
-      ]
-    );
+      ],
+    });
   };
 
+  // Explicit product removal
   const handleRemoveItem = (productId: string) => {
     setCartQuantities(prev => {
       const next = { ...prev };
@@ -387,6 +472,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
   // Execute Invoice Creation in Django Backend
   const executeSaveBill = async () => {
     closeDialog();
+    closeConfirmDialog();
     if (isSaving) return;
     setIsSaving(true);
 
@@ -400,6 +486,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         customer_phone: selectedCustomer ? selectedCustomer.phone : '',
         discount_amount: discountAmount,
         items: lineItems.map(item => ({
+          product_id: Number(item.id) || null,
           product_name: item.name,
           unit_price: item.price,
           quantity: item.qty,
@@ -446,15 +533,100 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     }
   };
 
-  // Show Confirmation Popup on the same screen
+  // Execute Order Creation in Django Backend (Order Mode)
+  const executeSaveOrder = async () => {
+    closeDialog();
+    closeConfirmDialog();
+    if (isSaving) return;
+    setIsSaving(true);
+
+    try {
+      const itemsPayload = lineItems.map(item => ({
+        product_id: Number(item.id),
+        quantity: item.qty,
+      }));
+
+      const createdOrder = await orderService.createOrder({
+        customer_id: selectedCustomer ? selectedCustomer.id : null,
+        delivery_partner_id: selectedPartnerId,
+        delivery_address: deliveryAddress.trim() || selectedCustomer?.address || 'Counter Sale / Stalls',
+        notes: orderNotes.trim(),
+        items: itemsPayload,
+      });
+
+      // Reset form
+      handleClearCart();
+
+      // Refresh backend datasets
+      refreshBackendData();
+
+      Toast.show({
+        type: 'success',
+        text1: `Order #${createdOrder.id} Placed`,
+        text2: 'Order saved in PENDING status. No invoice or payment created.',
+      });
+
+      setTimeout(() => {
+        navigation.navigate('Orders');
+      }, 500);
+    } catch (err: any) {
+      Toast.show({
+        type: 'error',
+        text1: 'Failed to create order',
+        text2: err.message || err.detail || 'Please check your connection and try again.',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Show Confirmation Popup on the same screen using Premium ConfirmDialog
   const handleSaveBill = () => {
     if (isSaving) return;
 
     if (lineItems.length === 0) {
       Toast.show({
         type: 'error',
-        text1: 'Empty Bill',
-        text2: 'Please add at least 1 product to the bill!',
+        text1: isOrderMode ? 'Empty Order' : 'Empty Bill',
+        text2: `Please add at least 1 product to the ${isOrderMode ? 'order' : 'bill'}!`,
+      });
+      return;
+    }
+
+    // Verify all line items have a valid quantity greater than zero
+    const hasZeroOrInvalidQty = lineItems.some(it => it.qty <= 0);
+    if (hasZeroOrInvalidQty) {
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid Quantity',
+        text2: 'Please ensure all selected products have a quantity of at least 1.',
+      });
+      return;
+    }
+
+    if (isOrderMode) {
+      if (!selectedCustomer) {
+        Toast.show({
+          type: 'error',
+          text1: 'Customer Required',
+          text2: 'Please select a customer for this order.',
+        });
+        return;
+      }
+
+      const assignedPartnerName = selectedPartnerId
+        ? partners.find(p => p.id === selectedPartnerId)?.name || 'Assigned Partner'
+        : 'Unassigned (Kitchen queue)';
+
+      setConfirmDialogConfig({
+        visible: true,
+        title: 'Confirm Order Creation?',
+        description: `Customer: ${selectedCustomer.name}\nTotal Items: ${totalItemsCount}\nTotal Commercial Value: ₹${subtotal}\nDelivery Address: ${deliveryAddress.trim() || selectedCustomer.address || 'Standard Address'}\nPartner: ${assignedPartnerName}\n\nNotice: Order will be saved in PENDING status. No invoice is issued and no payment is collected until manually approved.`,
+        confirmLabel: 'Create Order',
+        cancelLabel: 'Cancel',
+        type: 'info',
+        icon: 'bag-check-outline',
+        onConfirm: executeSaveOrder,
       });
       return;
     }
@@ -479,23 +651,15 @@ export default function QuickBillingScreen({ route, navigation }: any) {
 
     const remainingDue = Math.max(0, grandTotal - numericReceived);
 
-    setDialogConfig({
+    setConfirmDialogConfig({
       visible: true,
-      title: 'Confirm Bill?',
-      message: `Customer: ${selectedCustomer ? selectedCustomer.name : 'Walk-in'}\nSubtotal: ₹${subtotal}${discountAmount > 0 ? `\nDiscount: -₹${discountAmount}` : ''}\nFinal Bill: ₹${grandTotal}\nPayment: ${paymentStatus === 'FULL' ? 'Paid in Full' : paymentStatus === 'PARTIAL' ? `Partial (₹${numericReceived})` : 'Unpaid / Credit'}\nRemaining: ₹${remainingDue}`,
-      type: 'confirm',
-      buttons: [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-          onPress: closeDialog,
-        },
-        {
-          text: 'Confirm Bill',
-          style: 'default',
-          onPress: executeSaveBill,
-        },
-      ],
+      title: 'Confirm Bill Save?',
+      description: `Customer: ${selectedCustomer ? selectedCustomer.name : 'Walk-in Customer'}\nSubtotal: ₹${subtotal}${discountAmount > 0 ? ` • Discount: -₹${discountAmount}` : ''}\nFinal Bill Amount: ₹${grandTotal}\nPayment: ${paymentStatus === 'FULL' ? 'Paid in Full' : paymentStatus === 'PARTIAL' ? `Partially Paid (₹${numericReceived})` : 'Unpaid / Credit'}\nRemaining Due: ₹${remainingDue}`,
+      confirmLabel: 'Save & Issue Bill',
+      cancelLabel: 'Cancel',
+      type: 'info',
+      icon: 'receipt-outline',
+      onConfirm: executeSaveBill,
     });
   };
 
@@ -513,18 +677,23 @@ export default function QuickBillingScreen({ route, navigation }: any) {
           </TouchableOpacity>
 
           <View style={styles.teaLogoIconContainer}>
-            <Ionicons name="cafe" size={16} color="#8C331A" />
+            <Ionicons name={isOrderMode ? "cart" : "cafe"} size={16} color="#8C331A" />
           </View>
-          <Text style={styles.headerTitleText}>Quick Billing</Text>
+          <Text style={styles.headerTitleText}>{isOrderMode ? 'New Order' : 'Quick Billing'}</Text>
         </View>
 
         <TouchableOpacity
           activeOpacity={0.85}
           style={styles.historyBtn}
-          onPress={() => navigation.navigate('Invoices')}
+          onPress={() => navigation.navigate(isOrderMode ? 'Orders' : 'Invoices')}
         >
-          <Ionicons name="receipt-outline" size={16} color="#8C331A" style={{ marginRight: 4 }} />
-          <Text style={styles.historyBtnText}>Invoices</Text>
+          <Ionicons
+            name={isOrderMode ? 'receipt-outline' : 'receipt-outline'}
+            size={16}
+            color="#8C331A"
+            style={{ marginRight: 4 }}
+          />
+          <Text style={styles.historyBtnText}>{isOrderMode ? 'Orders' : 'Invoices'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -558,12 +727,18 @@ export default function QuickBillingScreen({ route, navigation }: any) {
             </View>
             <View style={{ flex: 1, marginLeft: 10 }}>
               <Text style={styles.customerName}>
-                {selectedCustomer ? selectedCustomer.name : 'Walk-in Customer'}
+                {selectedCustomer
+                  ? selectedCustomer.name
+                  : isOrderMode
+                    ? 'Select Customer (Required)'
+                    : 'Walk-in Customer'}
               </Text>
               <Text style={styles.customerSub} numberOfLines={1}>
                 {selectedCustomer
                   ? `${selectedCustomer.phone ? selectedCustomer.phone + ' • ' : ''}${selectedCustomer.address || 'Counter Account'}`
-                  : 'Counter Sale (No account selected)'}
+                  : isOrderMode
+                    ? 'Tap Select / Add to assign order recipient'
+                    : 'Counter Sale (No account selected)'}
               </Text>
             </View>
 
@@ -593,6 +768,19 @@ export default function QuickBillingScreen({ route, navigation }: any) {
             )}
           </View>
         </View>
+
+        {/* SECTION 2: DELIVERY PARTNER SELECTION (ONLY IN ORDER MODE - IMMEDIATELY BELOW CUSTOMER) */}
+        {isOrderMode && (
+          <View style={styles.partnerSelectionCard}>
+            <DeliveryPartnerDropdown
+              selectedPartnerId={selectedPartnerId}
+              onSelectPartner={(partnerId) => setSelectedPartnerId(partnerId)}
+              label="DELIVERY PARTNER (OPTIONAL)"
+              placeholder="Select Delivery Partner (Optional)"
+              optional={true}
+            />
+          </View>
+        )}
 
         {/* PRODUCTS SECTION HEADER & VIEW TOGGLE */}
         <View style={styles.productsHeaderRow}>
@@ -642,8 +830,9 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         {productViewMode === 'grid' ? (
           <View style={styles.productThreeGrid}>
             {filteredProducts.map(p => {
-              const currentQty = cartQuantities[p.id] || 0;
-              const isSelected = currentQty > 0;
+              const rawQty = cartQuantities[p.id];
+              const numQty = rawQty !== undefined ? (parseInt(rawQty, 10) || 0) : 0;
+              const isSelected = addedOrder.includes(p.id) && numQty > 0;
               const imgUri = TEA_IMAGES[p.name] || DEFAULT_TEA_IMAGE;
 
               return (
@@ -653,9 +842,9 @@ export default function QuickBillingScreen({ route, navigation }: any) {
                   style={[styles.threeGridCard, isSelected && styles.threeGridCardSelected]}
                   onPress={() => updateQuantity(p.id, 1)}
                 >
-                  {currentQty > 0 && (
+                  {isSelected && (
                     <View style={styles.qtyBadge}>
-                      <Text style={styles.qtyBadgeText}>{currentQty}</Text>
+                      <Text style={styles.qtyBadgeText}>{numQty}</Text>
                     </View>
                   )}
 
@@ -675,8 +864,9 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         ) : (
           <View style={styles.productListView}>
             {filteredProducts.map(p => {
-              const currentQty = cartQuantities[p.id] || 0;
-              const isSelected = currentQty > 0;
+              const rawQty = cartQuantities[p.id];
+              const numQty = rawQty !== undefined ? (parseInt(rawQty, 10) || 0) : 0;
+              const isSelected = addedOrder.includes(p.id) && numQty > 0;
               const imgUri = TEA_IMAGES[p.name] || DEFAULT_TEA_IMAGE;
 
               return (
@@ -698,7 +888,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
                   </View>
 
                   <View style={styles.productListStepper}>
-                    {currentQty > 0 ? (
+                    {isSelected ? (
                       <>
                         <TouchableOpacity
                           style={styles.miniMinusBtn}
@@ -706,7 +896,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
                         >
                           <Ionicons name="remove" size={14} color="#8C331A" />
                         </TouchableOpacity>
-                        <Text style={styles.miniQtyText}>{currentQty}</Text>
+                        <Text style={styles.miniQtyText}>{numQty}</Text>
                         <TouchableOpacity
                           style={styles.miniPlusBtn}
                           onPress={() => updateQuantity(p.id, 1)}
@@ -734,8 +924,13 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         <View style={styles.mergedBillSummaryCard}>
           <View style={styles.billHeaderRow}>
             <View style={styles.billTitleGroup}>
-              <Ionicons name="cart-outline" size={18} color="#111827" style={{ marginRight: 6 }} />
-              <Text style={styles.billCardTitle}>Your Bill</Text>
+              <Ionicons
+                name={isOrderMode ? "receipt-outline" : "cart-outline"}
+                size={18}
+                color="#111827"
+                style={{ marginRight: 6 }}
+              />
+              <Text style={styles.billCardTitle}>{isOrderMode ? 'Order Summary' : 'Your Bill'}</Text>
               {totalItemsCount > 0 && (
                 <View style={styles.billCountBadge}>
                   <Text style={styles.billCountBadgeText}>{totalItemsCount}</Text>
@@ -753,7 +948,9 @@ export default function QuickBillingScreen({ route, navigation }: any) {
 
           {/* BILL ITEMS */}
           {lineItems.length === 0 ? (
-            <Text style={styles.noItemsText}>No items added to bill yet</Text>
+            <Text style={styles.noItemsText}>
+              {isOrderMode ? 'No items added to order yet' : 'No items added to bill yet'}
+            </Text>
           ) : (
             <View style={styles.billItemsList}>
               {lineItems.map(item => (
@@ -779,8 +976,9 @@ export default function QuickBillingScreen({ route, navigation }: any) {
                       <TextInput
                         style={styles.billItemQtyInput}
                         keyboardType="numeric"
-                        value={String(item.qty)}
+                        value={item.rawQtyStr}
                         onChangeText={text => handleDirectQtyChange(item.id, text)}
+                        onBlur={() => handleQtyBlur(item.id)}
                         selectTextOnFocus={true}
                       />
                     </View>
@@ -803,203 +1001,272 @@ export default function QuickBillingScreen({ route, navigation }: any) {
 
           <View style={styles.dottedDivider} />
 
-          {/* FINANCIAL BREAKDOWN: Subtotal, Discount, Grand Total */}
-          <View style={styles.calcSummarySection}>
-            <View style={styles.calcSummaryRow}>
-              <Text style={styles.calcSummaryLabel}>Product Subtotal</Text>
-              <Text style={styles.calcSummaryValue}>₹{subtotal}</Text>
-            </View>
-
-            <View style={styles.calcSummaryRow}>
-              <View style={styles.discountLabelCol}>
-                <Text style={styles.discountFieldLabel}>Discount (₹)</Text>
-                <Text style={styles.discountFieldSubLabel}>Deducted from bill</Text>
+          {/* FINANCIAL BREAKDOWN: Order Mode shows Total Commercial Value; Billing Mode shows Subtotal, Discount, Grand Total */}
+          {isOrderMode ? (
+            <View style={styles.calcSummarySection}>
+              <View style={styles.calcSummaryRow}>
+                <Text style={styles.calcSummaryLabel}>Total Items Count</Text>
+                <Text style={styles.calcSummaryValue}>{totalItemsCount} units</Text>
               </View>
-              <View style={styles.discountInputWrapper}>
-                <Text style={styles.discountCurrencyPrefix}>₹</Text>
-                <TextInput
-                  style={styles.discountInput}
-                  keyboardType="numeric"
-                  placeholder="0"
-                  placeholderTextColor="#9CA3AF"
-                  value={discount}
-                  onChangeText={handleDiscountChange}
-                  selectTextOnFocus={true}
-                />
+
+              <View style={[styles.calcSummaryRow, styles.grandTotalRowBorder]}>
+                <View>
+                  <Text style={styles.grandTotalLabel}>Total Commercial Value</Text>
+                  <Text style={styles.grandTotalSubLabel}>
+                    Official invoice debited separately upon manual review
+                  </Text>
+                </View>
+                <Text style={styles.grandTotalValue}>₹{subtotal}</Text>
+              </View>
+
+              <View style={styles.orderNoticeBox}>
+                <Ionicons name="information-circle-outline" size={15} color="#8C331A" style={{ marginRight: 6 }} />
+                <Text style={styles.orderNoticeText}>
+                  Order will be saved in PENDING status. No invoice is issued and no payment is collected until manually approved.
+                </Text>
               </View>
             </View>
-
-            <View style={[styles.calcSummaryRow, styles.grandTotalRowBorder]}>
-              <View>
-                <Text style={styles.grandTotalLabel}>Final Bill Amount</Text>
-                {discountAmount > 0 ? (
-                  <Text style={styles.discountSavedTag}>₹{discountAmount} discount applied</Text>
-                ) : null}
+          ) : (
+            <View style={styles.calcSummarySection}>
+              <View style={styles.calcSummaryRow}>
+                <Text style={styles.calcSummaryLabel}>Product Subtotal</Text>
+                <Text style={styles.calcSummaryValue}>₹{subtotal}</Text>
               </View>
-              <Text style={styles.grandTotalValue}>₹{grandTotal}</Text>
-            </View>
-          </View>
 
-          {/* PAYMENT CUSTOMIZATION: STATUS SELECTOR */}
-          <View style={styles.paymentMethodSection}>
-            <Text style={styles.paymentSectionLabel}>Payment Status</Text>
-            <View style={styles.paymentStatusRow}>
-              <TouchableOpacity
-                style={[
-                  styles.paymentStatusTab,
-                  paymentStatus === 'FULL' && styles.paymentStatusTabActive,
-                ]}
-                onPress={() => handleSelectPaymentStatus('FULL')}
-              >
-                <Ionicons
-                  name="checkmark-circle"
-                  size={14}
-                  color={paymentStatus === 'FULL' ? '#FFFFFF' : '#059669'}
-                  style={{ marginRight: 4 }}
-                />
-                <Text
-                  style={[
-                    styles.paymentStatusText,
-                    paymentStatus === 'FULL' && styles.paymentStatusTextActive,
-                  ]}
-                >
-                  Paid in Full
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.paymentStatusTab,
-                  paymentStatus === 'PARTIAL' && styles.paymentStatusTabActive,
-                ]}
-                onPress={() => handleSelectPaymentStatus('PARTIAL')}
-              >
-                <Ionicons
-                  name="pie-chart"
-                  size={14}
-                  color={paymentStatus === 'PARTIAL' ? '#FFFFFF' : '#D97706'}
-                  style={{ marginRight: 4 }}
-                />
-                <Text
-                  style={[
-                    styles.paymentStatusText,
-                    paymentStatus === 'PARTIAL' && styles.paymentStatusTextActive,
-                  ]}
-                >
-                  Partially Paid
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.paymentStatusTab,
-                  paymentStatus === 'UNPAID' && styles.paymentStatusTabActive,
-                ]}
-                onPress={() => handleSelectPaymentStatus('UNPAID')}
-              >
-                <Ionicons
-                  name="time"
-                  size={14}
-                  color={paymentStatus === 'UNPAID' ? '#FFFFFF' : '#DC2626'}
-                  style={{ marginRight: 4 }}
-                />
-                <Text
-                  style={[
-                    styles.paymentStatusText,
-                    paymentStatus === 'UNPAID' && styles.paymentStatusTextActive,
-                  ]}
-                >
-                  Unpaid / Credit
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* PAYMENT METHOD (CASH OR ONLINE) - HIDDEN IF UNPAID */}
-            {paymentStatus !== 'UNPAID' && (
-              <View style={styles.methodContainer}>
-                <Text style={styles.paymentSectionSubLabel}>Payment Method</Text>
-                <View style={styles.paymentMethodRow}>
-                  <TouchableOpacity
-                    style={[styles.paymentMethodTab, paymentMethod === 'cash' && styles.paymentMethodTabActive]}
-                    onPress={() => setPaymentMethod('cash')}
-                  >
-                    <Ionicons
-                      name="cash-outline"
-                      size={15}
-                      color={paymentMethod === 'cash' ? '#FFFFFF' : '#4B5563'}
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text
-                      style={[styles.paymentMethodText, paymentMethod === 'cash' && styles.paymentMethodTextActive]}
-                    >
-                      Cash
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.paymentMethodTab, paymentMethod === 'online' && styles.paymentMethodTabActive]}
-                    onPress={() => setPaymentMethod('online')}
-                  >
-                    <Ionicons
-                      name="card-outline"
-                      size={15}
-                      color={paymentMethod === 'online' ? '#FFFFFF' : '#4B5563'}
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text
-                      style={[styles.paymentMethodText, paymentMethod === 'online' && styles.paymentMethodTextActive]}
-                    >
-                      Online (Manual)
-                    </Text>
-                  </TouchableOpacity>
+              <View style={styles.calcSummaryRow}>
+                <View style={styles.discountLabelCol}>
+                  <Text style={styles.discountFieldLabel}>Discount (₹)</Text>
+                  <Text style={styles.discountFieldSubLabel}>Deducted from bill</Text>
+                </View>
+                <View style={styles.discountInputWrapper}>
+                  <Text style={styles.discountCurrencyPrefix}>₹</Text>
+                  <TextInput
+                    style={styles.discountInput}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    placeholderTextColor="#9CA3AF"
+                    value={discount}
+                    onChangeText={handleDiscountChange}
+                    selectTextOnFocus={true}
+                  />
                 </View>
               </View>
-            )}
 
-            {/* RECEIVED AMOUNT & REMAINING SUMMARY */}
-            <View style={styles.receivedAmountRow}>
-              <View style={{ flex: 1, marginRight: 10 }}>
-                <Text style={styles.receivedAmountLabel}>
-                  {paymentStatus === 'UNPAID'
-                    ? 'Received Amount (₹0)'
-                    : paymentStatus === 'FULL'
-                      ? 'Received Amount (₹ Full)'
-                      : 'Received Amount (₹ Partial)'}
-                </Text>
+              <View style={[styles.calcSummaryRow, styles.grandTotalRowBorder]}>
+                <View>
+                  <Text style={styles.grandTotalLabel}>Final Bill Amount</Text>
+                  {discountAmount > 0 ? (
+                    <Text style={styles.discountSavedTag}>₹{discountAmount} discount applied</Text>
+                  ) : null}
+                </View>
+                <Text style={styles.grandTotalValue}>₹{grandTotal}</Text>
+              </View>
+            </View>
+          )}
+
+          {/* DELIVERY DETAILS: VISIBLE IN ORDER MODE */}
+          {isOrderMode && (
+            <View style={styles.orderDeliverySection}>
+              <View style={styles.dottedDivider} />
+
+              <View style={styles.deliverySectionHeader}>
+                <Ionicons name="location" size={16} color="#8C331A" style={{ marginRight: 6 }} />
+                <Text style={styles.deliverySectionTitle}>Delivery Address & Notes</Text>
+              </View>
+
+              {/* Delivery Address */}
+              <Text style={styles.orderFieldLabel}>DELIVERY ADDRESS *</Text>
+              <View style={styles.orderAddressBox}>
+                <Ionicons
+                  name="location-outline"
+                  size={18}
+                  color="#8C331A"
+                  style={{ marginRight: 8, marginTop: 4 }}
+                />
                 <TextInput
-                  style={[
-                    styles.receivedAmountInput,
-                    styles.receivedAmountInputEditable,
-                    paymentStatus === 'UNPAID' && styles.receivedAmountInputDisabled,
-                  ]}
-                  keyboardType="numeric"
-                  editable={paymentStatus !== 'UNPAID'}
-                  placeholder="0"
+                  style={styles.orderAddressInput}
+                  multiline
+                  placeholder="Enter destination shop or office address..."
                   placeholderTextColor="#9CA3AF"
-                  value={receivedAmount}
-                  onChangeText={handleReceivedAmountChange}
-                  selectTextOnFocus={true}
-                  onFocus={() => {
-                    setTimeout(() => {
-                      scrollRef.current?.scrollToEnd({ animated: true });
-                    }, 150);
-                  }}
+                  value={deliveryAddress}
+                  onChangeText={setDeliveryAddress}
                 />
               </View>
 
-              <View style={styles.dueSummaryBox}>
-                <Text style={styles.dueSummaryLabel}>Remaining Due</Text>
-                <Text style={styles.dueSummaryValue}>
-                  ₹{Math.max(0, grandTotal - (parseFloat(receivedAmount) || 0))}
-                </Text>
+              {/* Order Notes */}
+              <Text style={styles.orderFieldLabel}>ORDER NOTES (OPTIONAL)</Text>
+              <TextInput
+                style={styles.orderNotesInput}
+                placeholder="Special instructions, delivery time window, etc."
+                placeholderTextColor="#9CA3AF"
+                value={orderNotes}
+                onChangeText={setOrderNotes}
+              />
+            </View>
+          )}
+
+          {/* PAYMENT CUSTOMIZATION: STATUS SELECTOR - ONLY FOR BILLING MODE */}
+          {!isOrderMode && (
+            <View style={styles.paymentMethodSection}>
+              <Text style={styles.paymentSectionLabel}>Payment Status</Text>
+              <View style={styles.paymentStatusRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.paymentStatusTab,
+                    paymentStatus === 'FULL' && styles.paymentStatusTabActive,
+                  ]}
+                  onPress={() => handleSelectPaymentStatus('FULL')}
+                >
+                  <Ionicons
+                    name="checkmark-circle"
+                    size={14}
+                    color={paymentStatus === 'FULL' ? '#FFFFFF' : '#059669'}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text
+                    style={[
+                      styles.paymentStatusText,
+                      paymentStatus === 'FULL' && styles.paymentStatusTextActive,
+                    ]}
+                  >
+                    Paid in Full
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.paymentStatusTab,
+                    paymentStatus === 'PARTIAL' && styles.paymentStatusTabActive,
+                  ]}
+                  onPress={() => handleSelectPaymentStatus('PARTIAL')}
+                >
+                  <Ionicons
+                    name="pie-chart"
+                    size={14}
+                    color={paymentStatus === 'PARTIAL' ? '#FFFFFF' : '#D97706'}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text
+                    style={[
+                      styles.paymentStatusText,
+                      paymentStatus === 'PARTIAL' && styles.paymentStatusTextActive,
+                    ]}
+                  >
+                    Partially Paid
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.paymentStatusTab,
+                    paymentStatus === 'UNPAID' && styles.paymentStatusTabActive,
+                  ]}
+                  onPress={() => handleSelectPaymentStatus('UNPAID')}
+                >
+                  <Ionicons
+                    name="time"
+                    size={14}
+                    color={paymentStatus === 'UNPAID' ? '#FFFFFF' : '#DC2626'}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text
+                    style={[
+                      styles.paymentStatusText,
+                      paymentStatus === 'UNPAID' && styles.paymentStatusTextActive,
+                    ]}
+                  >
+                    Unpaid / Credit
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* PAYMENT METHOD (CASH OR ONLINE) - HIDDEN IF UNPAID */}
+              {paymentStatus !== 'UNPAID' && (
+                <View style={styles.methodContainer}>
+                  <Text style={styles.paymentSectionSubLabel}>Payment Method</Text>
+                  <View style={styles.paymentMethodRow}>
+                    <TouchableOpacity
+                      style={[styles.paymentMethodTab, paymentMethod === 'cash' && styles.paymentMethodTabActive]}
+                      onPress={() => setPaymentMethod('cash')}
+                    >
+                      <Ionicons
+                        name="cash-outline"
+                        size={15}
+                        color={paymentMethod === 'cash' ? '#FFFFFF' : '#4B5563'}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text
+                        style={[styles.paymentMethodText, paymentMethod === 'cash' && styles.paymentMethodTextActive]}
+                      >
+                        Cash
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.paymentMethodTab, paymentMethod === 'online' && styles.paymentMethodTabActive]}
+                      onPress={() => setPaymentMethod('online')}
+                    >
+                      <Ionicons
+                        name="card-outline"
+                        size={15}
+                        color={paymentMethod === 'online' ? '#FFFFFF' : '#4B5563'}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text
+                        style={[styles.paymentMethodText, paymentMethod === 'online' && styles.paymentMethodTextActive]}
+                      >
+                        Online (Manual)
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
+              {/* RECEIVED AMOUNT & REMAINING SUMMARY */}
+              <View style={styles.receivedAmountRow}>
+                <View style={{ flex: 1, marginRight: 10 }}>
+                  <Text style={styles.receivedAmountLabel}>
+                    {paymentStatus === 'UNPAID'
+                      ? 'Received Amount (₹0)'
+                      : paymentStatus === 'FULL'
+                        ? 'Received Amount (₹ Full)'
+                        : 'Received Amount (₹ Partial)'}
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.receivedAmountInput,
+                      styles.receivedAmountInputEditable,
+                      paymentStatus === 'UNPAID' && styles.receivedAmountInputDisabled,
+                    ]}
+                    keyboardType="numeric"
+                    editable={paymentStatus !== 'UNPAID'}
+                    placeholder="0"
+                    placeholderTextColor="#9CA3AF"
+                    value={receivedAmount}
+                    onChangeText={handleReceivedAmountChange}
+                    selectTextOnFocus={true}
+                    onFocus={() => {
+                      setTimeout(() => {
+                        scrollRef.current?.scrollToEnd({ animated: true });
+                      }, 150);
+                    }}
+                  />
+                </View>
+
+                <View style={styles.dueSummaryBox}>
+                  <Text style={styles.dueSummaryLabel}>Remaining Due</Text>
+                  <Text style={styles.dueSummaryValue}>
+                    ₹{Math.max(0, grandTotal - (parseFloat(receivedAmount) || 0))}
+                  </Text>
+                </View>
               </View>
             </View>
-          </View>
+          )}
         </View>
       </KeyboardAwareScrollView>
 
-      {/* BOTTOM SAVE BILL BUTTON */}
-      <View style={styles.fixedBottomDock}>
+      {/* BOTTOM ACTION BUTTON: SAVE BILL OR CREATE ORDER */}
+      <View style={[styles.fixedBottomDock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <TouchableOpacity
           activeOpacity={0.85}
           style={[styles.saveBillBtn, (lineItems.length === 0 || isSaving) && styles.saveBillBtnDisabled]}
@@ -1010,8 +1277,15 @@ export default function QuickBillingScreen({ route, navigation }: any) {
             <ActivityIndicator size="small" color="#FFFFFF" />
           ) : (
             <>
-              <Ionicons name="checkmark-circle-outline" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-              <Text style={styles.saveBillBtnText}>Save Bill (₹{grandTotal})</Text>
+              <Ionicons
+                name={isOrderMode ? "bag-check-outline" : "checkmark-circle-outline"}
+                size={20}
+                color="#FFFFFF"
+                style={{ marginRight: 8 }}
+              />
+              <Text style={styles.saveBillBtnText}>
+                {isOrderMode ? `Create Order (₹${subtotal})` : `Save Bill (₹${grandTotal})`}
+              </Text>
             </>
           )}
         </TouchableOpacity>
@@ -1063,6 +1337,9 @@ export default function QuickBillingScreen({ route, navigation }: any) {
                     style={styles.customerSelectItem}
                     onPress={() => {
                       setSelectedCustomer(item);
+                      if (item.address && !deliveryAddress) {
+                        setDeliveryAddress(item.address);
+                      }
                       setShowCustomerModal(false);
                     }}
                   >
@@ -1090,6 +1367,20 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         visible={showAddCustomerModal}
         onClose={() => setShowAddCustomerModal(false)}
         onSubmit={handleCreateCustomer}
+      />
+
+      {/* PREMIUM CENTRALIZED CONFIRM DIALOG */}
+      <ConfirmDialog
+        visible={confirmDialogConfig.visible}
+        title={confirmDialogConfig.title}
+        description={confirmDialogConfig.description}
+        type={confirmDialogConfig.type}
+        icon={confirmDialogConfig.icon}
+        confirmLabel={confirmDialogConfig.confirmLabel}
+        cancelLabel={confirmDialogConfig.cancelLabel}
+        onConfirm={confirmDialogConfig.onConfirm}
+        onCancel={closeConfirmDialog}
+        loading={isSaving}
       />
 
       {/* CUSTOM BRANDED POPUP DIALOG */}
@@ -1683,10 +1974,112 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#111827',
   },
+  grandTotalSubLabel: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 2,
+  },
   grandTotalValue: {
     fontSize: 18,
     fontWeight: '900',
     color: '#8C331A',
+  },
+  orderNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FAF0EB',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 12,
+  },
+  orderNoticeText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#8C331A',
+    lineHeight: 16,
+    fontWeight: '500',
+  },
+
+  partnerSelectionCard: {
+    marginBottom: 12,
+  },
+
+  /* ORDER MODE DELIVERY STYLES */
+  orderDeliverySection: {
+    marginTop: 4,
+  },
+  deliverySectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  deliverySectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  orderFieldLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#6B7280',
+    marginBottom: 6,
+    marginTop: 8,
+    letterSpacing: 0.5,
+  },
+  orderAddressBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    minHeight: 56,
+  },
+  orderAddressInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#111827',
+    padding: 0,
+    textAlignVertical: 'top',
+  },
+  partnerScroll: {
+    marginVertical: 4,
+  },
+  partnerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginRight: 8,
+  },
+  partnerPillSelected: {
+    backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
+  },
+  partnerPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  partnerPillTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  orderNotesInput: {
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
+    color: '#111827',
   },
 
   paymentMethodSection: {

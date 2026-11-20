@@ -4,13 +4,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import { useApp } from '../../context/AppContext';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 
 export default function SettingsScreen({ navigation }: any) {
   const { logout } = useApp();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [locationSharing, setLocationSharing] = useState(true);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
-  const handleLogout = () => {
+  const confirmLogout = () => {
+    setShowLogoutConfirm(false);
     logout();
     navigation.reset({
       index: 0,
@@ -53,11 +56,23 @@ export default function SettingsScreen({ navigation }: any) {
           </View>
         </View>
 
-        <TouchableOpacity activeOpacity={0.8} style={styles.logoutBtn} onPress={handleLogout}>
+        <TouchableOpacity activeOpacity={0.8} style={styles.logoutBtn} onPress={() => setShowLogoutConfirm(true)}>
           <Ionicons name="log-out-outline" size={20} color="#EF4444" style={{ marginRight: 8 }} />
           <Text style={styles.logoutBtnText}>Logout from Fleet Portal</Text>
         </TouchableOpacity>
       </ScrollView>
+
+      <ConfirmDialog
+        visible={showLogoutConfirm}
+        title="Log Out of Fleet Portal?"
+        description="Are you sure you want to end your active session on this device?"
+        confirmLabel="Log Out"
+        cancelLabel="Cancel"
+        type="warning"
+        icon="log-out-outline"
+        onConfirm={confirmLogout}
+        onCancel={() => setShowLogoutConfirm(false)}
+      />
     </SafeAreaView>
   );
 }
