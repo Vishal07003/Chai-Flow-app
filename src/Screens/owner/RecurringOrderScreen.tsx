@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { CustomDialog, ConfirmDialog, DeliveryPartnerDropdown } from '../../components/common';
+import { CustomDialog, ConfirmDialog, DeliveryPartnerDropdown, TimePickerModal } from '../../components/common';
 import AddCustomerModal from '../../components/customer/AddCustomerModal';
 import orderService, { BackendRecurringOrder } from '../../services/order.service';
 import billingService, { BillingCustomer } from '../../services/billing.service';
@@ -56,6 +56,27 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
   );
   const [autoApprove, setAutoApprove] = useState<boolean>(existingTemplate?.auto_approve ?? false);
   const [notes, setNotes] = useState<string>(existingTemplate?.notes || '');
+
+  // Notification Schedule (Phase 2A)
+  const [useGlobalNotif, setUseGlobalNotif] = useState<boolean>(
+    existingTemplate?.use_global_notification_settings ?? true
+  );
+  const [customGenTime, setCustomGenTime] = useState<string>(
+    existingTemplate?.custom_order_generation_time || '06:00:00'
+  );
+  const [customOwnerTime, setCustomOwnerTime] = useState<string>(
+    existingTemplate?.custom_owner_notification_time || '06:05:00'
+  );
+  const [customPartnerTime, setCustomPartnerTime] = useState<string>(
+    existingTemplate?.custom_partner_notification_time || '06:10:00'
+  );
+  const [ownerNotifEnabled, setOwnerNotifEnabled] = useState<boolean>(
+    existingTemplate?.owner_notification_enabled ?? true
+  );
+  const [partnerNotifEnabled, setPartnerNotifEnabled] = useState<boolean>(
+    existingTemplate?.partner_notification_enabled ?? true
+  );
+  const [timePickerTarget, setTimePickerTarget] = useState<'gen' | 'owner' | 'partner' | null>(null);
 
   // itemQuantities: productId -> string quantity (preserves editing when temporarily empty)
   const [itemQuantities, setItemQuantities] = useState<{ [productId: number]: string }>({});
@@ -326,6 +347,18 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
       return;
     }
 
+    // Phase 2A: Timing validation if custom schedule selected
+    if (!useGlobalNotif) {
+      if (customOwnerTime < customGenTime) {
+        Alert.alert('Invalid Timing', 'Owner notification time cannot be earlier than order generation time.');
+        return;
+      }
+      if (customPartnerTime < customGenTime) {
+        Alert.alert('Invalid Timing', 'Delivery partner notification time cannot be earlier than order generation time.');
+        return;
+      }
+    }
+
     const items = selectedProductIds.map(pid => {
       const agreedRate = parseFloat(itemAgreedPrices[pid]);
       const prod = products.find(p => p.id === pid);
@@ -339,7 +372,7 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
 
     try {
       setSubmitting(true);
-      const payload = {
+      const payload: any = {
         customer_id: selectedCustomerId,
         delivery_partner_id: selectedPartnerId,
         delivery_address: deliveryAddress.trim(),
@@ -347,8 +380,21 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
         weekdays: frequency === 'weekdays' ? selectedWeekdays.join(',') : '',
         auto_approve: autoApprove,
         notes: notes.trim(),
+        use_global_notification_settings: useGlobalNotif,
+        owner_notification_enabled: ownerNotifEnabled,
+        partner_notification_enabled: partnerNotifEnabled,
         items,
       };
+
+      if (!useGlobalNotif) {
+        payload.custom_order_generation_time = customGenTime;
+        payload.custom_owner_notification_time = customOwnerTime;
+        payload.custom_partner_notification_time = customPartnerTime;
+      } else {
+        payload.custom_order_generation_time = null;
+        payload.custom_owner_notification_time = null;
+        payload.custom_partner_notification_time = null;
+      }
 
       if (isEditing && existingTemplate) {
         await orderService.updateRecurringOrder(existingTemplate.id, payload);
@@ -380,6 +426,16 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
       </SafeAreaView>
     );
   }
+
+  const formatDisplayTime = (timeStr: string) => {
+    if (!timeStr) return '--:--';
+    const [hStr, mStr] = timeStr.split(':');
+    let h = parseInt(hStr || '0', 10);
+    const m = mStr || '00';
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 === 0 ? 12 : h % 12;
+    return `${String(h).padStart(2, '0')}:${m} ${ampm}`;
+  };
 
   const selectedCustObj = customers.find(c => c.id === selectedCustomerId) || initialCustomer;
 
@@ -679,7 +735,135 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
             </TouchableOpacity>
           </View>
 
-          {/* SECTION 7: SUMMARY CARD */}
+          {/* SECTION 7: NOTIFICATION SCHEDULE (PHASE 2A) */}
+          <Text style={[styles.sectionLabel, { marginTop: 18 }]}>NOTIFICATION SCHEDULE</Text>
+          <View style={styles.notifScheduleCard}>
+            {/* Global Settings Toggle Row */}
+            <View style={styles.notifGlobalToggleRow}>
+              <View style={{ flex: 1, marginRight: 10 }}>
+                <Text style={styles.notifScheduleTitle}>Use Global Default Settings</Text>
+                <Text style={styles.notifScheduleDesc}>
+                  Inherit daily cutoff and notification timings configured in Settings
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.globalToggleBtn, useGlobalNotif && styles.globalToggleBtnActive]}
+                onPress={() => setUseGlobalNotif(!useGlobalNotif)}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name={useGlobalNotif ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={18}
+                  color={useGlobalNotif ? '#059669' : '#9CA3AF'}
+                  style={{ marginRight: 4 }}
+                />
+                <Text style={[styles.globalToggleBtnText, useGlobalNotif && styles.globalToggleBtnTextActive]}>
+                  {useGlobalNotif ? 'Global Active' : 'Custom'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Custom Timing Fields (Visible when Use Global is OFF) */}
+            {!useGlobalNotif && (
+              <View style={styles.customTimingsContainer}>
+                <Text style={styles.customTimingsHeader}>CUSTOM SCHEDULE (ASIA/KOLKATA)</Text>
+
+                {/* Custom Order Generation Time */}
+                <TouchableOpacity
+                  style={styles.customTimingRow}
+                  onPress={() => setTimePickerTarget('gen')}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.customTimingLeft}>
+                    <Ionicons name="time-outline" size={17} color="#8C331A" style={{ marginRight: 8 }} />
+                    <View>
+                      <Text style={styles.customTimingLabel}>Order Generation Time</Text>
+                      <Text style={styles.customTimingHelp}>Time to create today's order batch</Text>
+                    </View>
+                  </View>
+                  <View style={styles.customTimingBadge}>
+                    <Text style={styles.customTimingBadgeText}>{formatDisplayTime(customGenTime)}</Text>
+                    <Ionicons name="pencil" size={12} color="#8C331A" style={{ marginLeft: 4 }} />
+                  </View>
+                </TouchableOpacity>
+
+                {/* Custom Owner Notification Time */}
+                <TouchableOpacity
+                  style={styles.customTimingRow}
+                  onPress={() => setTimePickerTarget('owner')}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.customTimingLeft}>
+                    <Ionicons name="notifications-outline" size={17} color="#059669" style={{ marginRight: 8 }} />
+                    <View>
+                      <Text style={styles.customTimingLabel}>Owner Notification Time</Text>
+                      <Text style={styles.customTimingHelp}>Batch review alert to owner</Text>
+                    </View>
+                  </View>
+                  <View style={styles.customTimingBadge}>
+                    <Text style={styles.customTimingBadgeText}>{formatDisplayTime(customOwnerTime)}</Text>
+                    <Ionicons name="pencil" size={12} color="#8C331A" style={{ marginLeft: 4 }} />
+                  </View>
+                </TouchableOpacity>
+
+                {/* Custom Partner Notification Time */}
+                <TouchableOpacity
+                  style={[styles.customTimingRow, { borderBottomWidth: 0 }]}
+                  onPress={() => setTimePickerTarget('partner')}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.customTimingLeft}>
+                    <Ionicons name="bicycle-outline" size={17} color="#2563EB" style={{ marginRight: 8 }} />
+                    <View>
+                      <Text style={styles.customTimingLabel}>Partner Notification Time</Text>
+                      <Text style={styles.customTimingHelp}>Dispatch alert to assigned driver</Text>
+                    </View>
+                  </View>
+                  <View style={styles.customTimingBadge}>
+                    <Text style={styles.customTimingBadgeText}>{formatDisplayTime(customPartnerTime)}</Text>
+                    <Ionicons name="pencil" size={12} color="#8C331A" style={{ marginLeft: 4 }} />
+                  </View>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Notification Switches (Always accessible) */}
+            <View style={styles.notifSwitchesContainer}>
+              <View style={styles.notifSwitchRow}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.notifSwitchTitle}>Owner Notification</Text>
+                  <Text style={styles.notifSwitchSub}>Send batch alert for this template</Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.notifSwitchPill, ownerNotifEnabled && styles.notifSwitchPillActive]}
+                  onPress={() => setOwnerNotifEnabled(!ownerNotifEnabled)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.notifSwitchPillText, ownerNotifEnabled && styles.notifSwitchPillTextActive]}>
+                    {ownerNotifEnabled ? 'ENABLED' : 'DISABLED'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={[styles.notifSwitchRow, { borderTopWidth: 1, borderTopColor: '#F3EFEA', paddingTop: 10 }]}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.notifSwitchTitle}>Delivery Partner Notification</Text>
+                  <Text style={styles.notifSwitchSub}>Alert partner when delivery generated</Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.notifSwitchPill, partnerNotifEnabled && styles.notifSwitchPillActive]}
+                  onPress={() => setPartnerNotifEnabled(!partnerNotifEnabled)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.notifSwitchPillText, partnerNotifEnabled && styles.notifSwitchPillTextActive]}>
+                    {partnerNotifEnabled ? 'ENABLED' : 'DISABLED'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+
+          {/* SECTION 8: SUMMARY CARD */}
           <View style={styles.summaryCard}>
             <Text style={styles.summaryTitle}>TEMPLATE SUMMARY</Text>
 
@@ -896,6 +1080,31 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
         type={dialogConfig.type}
         buttons={dialogConfig.buttons}
         onClose={closeDialog}
+      />
+
+      {/* TIME PICKER MODAL (PHASE 2A) */}
+      <TimePickerModal
+        visible={timePickerTarget !== null}
+        title={
+          timePickerTarget === 'gen'
+            ? 'Order Generation Time'
+            : timePickerTarget === 'owner'
+            ? 'Owner Notification Time'
+            : 'Partner Notification Time'
+        }
+        initialTime={
+          timePickerTarget === 'gen'
+            ? customGenTime
+            : timePickerTarget === 'owner'
+            ? customOwnerTime
+            : customPartnerTime
+        }
+        onClose={() => setTimePickerTarget(null)}
+        onSelectTime={(selectedTime) => {
+          if (timePickerTarget === 'gen') setCustomGenTime(selectedTime);
+          else if (timePickerTarget === 'owner') setCustomOwnerTime(selectedTime);
+          else if (timePickerTarget === 'partner') setCustomPartnerTime(selectedTime);
+        }}
       />
     </SafeAreaView>
   );
@@ -1442,5 +1651,146 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#8C331A',
     marginLeft: 2,
+  },
+  // Phase 2A Notification Schedule Styles
+  notifScheduleCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 14,
+    marginBottom: 16,
+  },
+  notifGlobalToggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  notifScheduleTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  notifScheduleDesc: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  globalToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  globalToggleBtnActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  globalToggleBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  globalToggleBtnTextActive: {
+    color: '#059669',
+  },
+  customTimingsContainer: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F3EFEA',
+  },
+  customTimingsHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8C331A',
+    marginBottom: 8,
+    letterSpacing: 0.5,
+  },
+  customTimingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3EFEA',
+  },
+  customTimingLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
+  },
+  customTimingLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  customTimingHelp: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 1,
+  },
+  customTimingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  customTimingBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  notifSwitchesContainer: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F3EFEA',
+  },
+  notifSwitchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  notifSwitchTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  notifSwitchSub: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 1,
+  },
+  notifSwitchPill: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  notifSwitchPillActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  notifSwitchPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#6B7280',
+    letterSpacing: 0.5,
+  },
+  notifSwitchPillTextActive: {
+    color: '#059669',
   },
 });

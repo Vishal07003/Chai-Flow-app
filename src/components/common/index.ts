@@ -12,3 +12,4 @@ export { default as CustomModal, default as Modal, type CustomModalProps } from 
 export { default as CustomDialog, type CustomDialogProps, type DialogButton, type DialogType } from './CustomDialog';
 export { default as ConfirmDialog, type ConfirmDialogProps, type ConfirmDialogType } from '../ConfirmDialog';
 export { default as DeliveryPartnerDropdown, type DeliveryPartnerDropdownProps } from './DeliveryPartnerDropdown';
+export { default as TimePickerModal } from './TimePickerModal';

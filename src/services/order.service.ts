@@ -124,6 +124,33 @@ export interface BackendRecurringOrder {
   is_scheduled_today: boolean;
   today_order_generated: boolean;
   today_order_id?: number | null;
+  // Phase 2A: Notification & Timing Schedule
+  use_global_notification_settings?: boolean;
+  custom_order_generation_time?: string | null;
+  custom_owner_notification_time?: string | null;
+  custom_partner_notification_time?: string | null;
+  owner_notification_enabled?: boolean;
+  partner_notification_enabled?: boolean;
+  effective_notification_schedule?: {
+    is_custom: boolean;
+    order_generation_time: string;
+    owner_notification_time: string;
+    partner_notification_time: string;
+    owner_notification_enabled: boolean;
+    partner_notification_enabled: boolean;
+    timezone: string;
+  };
+}
+
+export interface GlobalRecurringNotificationSetting {
+  id: number;
+  order_generation_time: string;
+  owner_notification_time: string;
+  partner_notification_time: string;
+  owner_notification_enabled: boolean;
+  partner_notification_enabled: boolean;
+  timezone: string;
+  updated_at?: string;
 }
 
 export interface CreateRecurringOrderPayload {
@@ -135,6 +162,13 @@ export interface CreateRecurringOrderPayload {
   is_paused?: boolean;
   auto_approve?: boolean;
   notes?: string;
+  // Phase 2A
+  use_global_notification_settings?: boolean;
+  custom_order_generation_time?: string | null;
+  custom_owner_notification_time?: string | null;
+  custom_partner_notification_time?: string | null;
+  owner_notification_enabled?: boolean;
+  partner_notification_enabled?: boolean;
   items: Array<{
     product_id: number;
     quantity: number;
@@ -260,6 +294,25 @@ export const orderService = {
     date?: string,
   ): Promise<{ success?: boolean; already_generated?: boolean; message: string; order: BackendOrder }> {
     return apiClient.post(`/orders/recurring/${id}/generate-order/`, { date });
+  },
+
+  /**
+   * Phase 2A: Global Recurring Notification Settings
+   */
+  async getGlobalRecurringSettings(): Promise<GlobalRecurringNotificationSetting> {
+    const res = await apiClient.get<GlobalRecurringNotificationSetting | GlobalRecurringNotificationSetting[]>(
+      '/orders/recurring-settings/'
+    );
+    if (Array.isArray(res)) {
+      return res[0];
+    }
+    return res;
+  },
+
+  async updateGlobalRecurringSettings(
+    data: Partial<GlobalRecurringNotificationSetting>,
+  ): Promise<GlobalRecurringNotificationSetting> {
+    return apiClient.patch<GlobalRecurringNotificationSetting>('/orders/recurring-settings/1/', data);
   },
 };
 

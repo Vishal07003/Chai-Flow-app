@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -8,13 +8,16 @@ import {
   Switch,
   Image,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import Header from '../../components/common/Header';
+import { TimePickerModal } from '../../components/common';
 import { useApp } from '../../context/AppContext';
 import { AppToast } from '../../utils/toast';
+import orderService, { GlobalRecurringNotificationSetting } from '../../services/order.service';
 
 export default function SettingsScreen() {
   const navigation = useNavigation<any>();
@@ -34,6 +37,86 @@ export default function SettingsScreen() {
 
   /* Toggle States */
   const [pushNotifications, setPushNotifications] = useState(true);
+
+  /* Recurring Notification Settings (Phase 2A - Owner only) */
+  const [recSettingsLoading, setRecSettingsLoading] = useState(false);
+  const [recSettingsSaving, setRecSettingsSaving] = useState(false);
+  const [orderGenTime, setOrderGenTime] = useState('06:00:00');
+  const [ownerNotifTime, setOwnerNotifTime] = useState('06:05:00');
+  const [partnerNotifTime, setPartnerNotifTime] = useState('06:10:00');
+  const [ownerNotifEnabled, setOwnerNotifEnabled] = useState(true);
+  const [partnerNotifEnabled, setPartnerNotifEnabled] = useState(true);
+  const [recTimezone, setRecTimezone] = useState('Asia/Kolkata');
+  const [timePickerTarget, setTimePickerTarget] = useState<'gen' | 'owner' | 'partner' | null>(null);
+
+  useEffect(() => {
+    if (!isDelivery) {
+      loadRecurringSettings();
+    }
+  }, [isDelivery]);
+
+  const loadRecurringSettings = async () => {
+    try {
+      setRecSettingsLoading(true);
+      const data = await orderService.getGlobalRecurringSettings();
+      if (data) {
+        setOrderGenTime(data.order_generation_time || '06:00:00');
+        setOwnerNotifTime(data.owner_notification_time || '06:05:00');
+        setPartnerNotifTime(data.partner_notification_time || '06:10:00');
+        setOwnerNotifEnabled(data.owner_notification_enabled ?? true);
+        setPartnerNotifEnabled(data.partner_notification_enabled ?? true);
+        setRecTimezone(data.timezone || 'Asia/Kolkata');
+      }
+    } catch (err) {
+      // Graceful fallback to initial defaults
+      console.log('Failed to fetch recurring settings', err);
+    } finally {
+      setRecSettingsLoading(false);
+    }
+  };
+
+  const handleSaveRecurringSettings = async () => {
+    // Client-side hierarchy validation
+    if (ownerNotifTime < orderGenTime) {
+      AppToast.error('Invalid Timing', 'Owner notification time cannot precede order generation time.');
+      return;
+    }
+    if (partnerNotifTime < orderGenTime) {
+      AppToast.error('Invalid Timing', 'Delivery partner notification time cannot precede order generation time.');
+      return;
+    }
+
+    try {
+      setRecSettingsSaving(true);
+      await orderService.updateGlobalRecurringSettings({
+        order_generation_time: orderGenTime,
+        owner_notification_time: ownerNotifTime,
+        partner_notification_time: partnerNotifTime,
+        owner_notification_enabled: ownerNotifEnabled,
+        partner_notification_enabled: partnerNotifEnabled,
+        timezone: recTimezone,
+      });
+      AppToast.success('Settings Saved', 'Recurring order notification settings updated successfully.');
+    } catch (err: any) {
+      const errMsg = err?.response?.data?.owner_notification_time?.[0]
+        || err?.response?.data?.partner_notification_time?.[0]
+        || err?.message
+        || 'Failed to save recurring settings.';
+      AppToast.error('Save Failed', errMsg);
+    } finally {
+      setRecSettingsSaving(false);
+    }
+  };
+
+  const formatDisplayTime = (timeStr: string) => {
+    if (!timeStr) return '--:--';
+    const [hStr, mStr] = timeStr.split(':');
+    let h = parseInt(hStr || '0', 10);
+    const m = mStr || '00';
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 === 0 ? 12 : h % 12;
+    return `${String(h).padStart(2, '0')}:${m} ${ampm}`;
+  };
 
   /* Modal States */
   const [activeModal, setActiveModal] = useState<
@@ -114,6 +197,139 @@ export default function SettingsScreen() {
             thumbColor="#FFFFFF"
           />
         </View>
+
+        {/* RECURRING ORDER NOTIFICATION SETTINGS (OWNER ONLY) */}
+        {!isDelivery && (
+          <View style={styles.recurringSettingsSection}>
+            <View style={styles.recSectionHeaderRow}>
+              <View>
+                <Text style={[styles.sectionHeader, { color: textSecondary, marginBottom: 2 }]}>
+                  RECURRING ORDER NOTIFICATIONS
+                </Text>
+                <Text style={styles.recSectionSub}>
+                  Default generation schedule & dispatch alerts ({recTimezone})
+                </Text>
+              </View>
+              {recSettingsLoading && (
+                <ActivityIndicator size="small" color="#8C331A" />
+              )}
+            </View>
+
+            {/* Timings Card */}
+            <View style={[styles.recCard, { backgroundColor: cardBg }]}>
+              {/* Generation Time */}
+              <TouchableOpacity
+                style={styles.recTimingRow}
+                onPress={() => setTimePickerTarget('gen')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.recTimingLeft}>
+                  <View style={[styles.recIconWrap, { backgroundColor: '#FDF4F2' }]}>
+                    <Ionicons name="time-outline" size={18} color="#8C331A" />
+                  </View>
+                  <View>
+                    <Text style={styles.recTimingLabel}>Order Generation Time</Text>
+                    <Text style={styles.recTimingHelp}>Daily cutoff time to generate pending orders</Text>
+                  </View>
+                </View>
+                <View style={styles.recTimingBadge}>
+                  <Text style={styles.recTimingValue}>{formatDisplayTime(orderGenTime)}</Text>
+                  <Ionicons name="pencil" size={13} color="#8C331A" style={{ marginLeft: 4 }} />
+                </View>
+              </TouchableOpacity>
+
+              {/* Owner Notification Time */}
+              <TouchableOpacity
+                style={styles.recTimingRow}
+                onPress={() => setTimePickerTarget('owner')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.recTimingLeft}>
+                  <View style={[styles.recIconWrap, { backgroundColor: '#F0FDF4' }]}>
+                    <Ionicons name="notifications-outline" size={18} color="#059669" />
+                  </View>
+                  <View>
+                    <Text style={styles.recTimingLabel}>Owner Notification Time</Text>
+                    <Text style={styles.recTimingHelp}>Daily summary alert to review batches</Text>
+                  </View>
+                </View>
+                <View style={styles.recTimingBadge}>
+                  <Text style={styles.recTimingValue}>{formatDisplayTime(ownerNotifTime)}</Text>
+                  <Ionicons name="pencil" size={13} color="#8C331A" style={{ marginLeft: 4 }} />
+                </View>
+              </TouchableOpacity>
+
+              {/* Partner Notification Time */}
+              <TouchableOpacity
+                style={[styles.recTimingRow, { borderBottomWidth: 0 }]}
+                onPress={() => setTimePickerTarget('partner')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.recTimingLeft}>
+                  <View style={[styles.recIconWrap, { backgroundColor: '#EFF6FF' }]}>
+                    <Ionicons name="bicycle-outline" size={18} color="#2563EB" />
+                  </View>
+                  <View>
+                    <Text style={styles.recTimingLabel}>Partner Notification Time</Text>
+                    <Text style={styles.recTimingHelp}>Daily dispatch alert for assigned drivers</Text>
+                  </View>
+                </View>
+                <View style={styles.recTimingBadge}>
+                  <Text style={styles.recTimingValue}>{formatDisplayTime(partnerNotifTime)}</Text>
+                  <Ionicons name="pencil" size={13} color="#8C331A" style={{ marginLeft: 4 }} />
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            {/* Toggle Switches Card */}
+            <View style={[styles.recCard, { backgroundColor: cardBg, marginTop: 10 }]}>
+              {/* Owner Notification Toggle */}
+              <View style={styles.recSwitchRow}>
+                <View style={{ flex: 1, marginRight: 10 }}>
+                  <Text style={styles.recSwitchLabel}>Owner Notification Enabled</Text>
+                  <Text style={styles.recSwitchDesc}>Receive automated daily notification alerts</Text>
+                </View>
+                <Switch
+                  value={ownerNotifEnabled}
+                  onValueChange={setOwnerNotifEnabled}
+                  trackColor={{ false: '#E5E7EB', true: '#8C331A' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
+              {/* Partner Notification Toggle */}
+              <View style={[styles.recSwitchRow, { borderTopWidth: 1, borderTopColor: '#F3EFEA' }]}>
+                <View style={{ flex: 1, marginRight: 10 }}>
+                  <Text style={styles.recSwitchLabel}>Delivery Partner Notification Enabled</Text>
+                  <Text style={styles.recSwitchDesc}>Notify assigned partners when daily orders dispatch</Text>
+                </View>
+                <Switch
+                  value={partnerNotifEnabled}
+                  onValueChange={setPartnerNotifEnabled}
+                  trackColor={{ false: '#E5E7EB', true: '#8C331A' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+            </View>
+
+            {/* Save Button */}
+            <TouchableOpacity
+              style={[styles.recSaveBtn, recSettingsSaving && { opacity: 0.7 }]}
+              onPress={handleSaveRecurringSettings}
+              disabled={recSettingsSaving}
+              activeOpacity={0.8}
+            >
+              {recSettingsSaving ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="save-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.recSaveBtnText}>Save Notification Settings</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* MORE SECTION */}
         <Text
@@ -383,6 +599,31 @@ export default function SettingsScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Time Picker Modal for Recurring Order Notification Settings */}
+      <TimePickerModal
+        visible={timePickerTarget !== null}
+        title={
+          timePickerTarget === 'gen'
+            ? 'Order Generation Time'
+            : timePickerTarget === 'owner'
+            ? 'Owner Notification Time'
+            : 'Partner Notification Time'
+        }
+        initialTime={
+          timePickerTarget === 'gen'
+            ? orderGenTime
+            : timePickerTarget === 'owner'
+            ? ownerNotifTime
+            : partnerNotifTime
+        }
+        onClose={() => setTimePickerTarget(null)}
+        onSelectTime={(selectedTime) => {
+          if (timePickerTarget === 'gen') setOrderGenTime(selectedTime);
+          else if (timePickerTarget === 'owner') setOwnerNotifTime(selectedTime);
+          else if (timePickerTarget === 'partner') setPartnerNotifTime(selectedTime);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -559,6 +800,114 @@ const styles = StyleSheet.create({
   actionBtnText: {
     color: '#FFFFFF',
     fontSize: 15,
+    fontWeight: '700',
+  },
+  // Phase 2A: Recurring Notification Settings Styles
+  recurringSettingsSection: {
+    marginTop: 6,
+    marginBottom: 16,
+  },
+  recSectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    marginLeft: 4,
+  },
+  recSectionSub: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  recCard: {
+    borderRadius: 18,
+    padding: 14,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+  },
+  recTimingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3EFEA',
+  },
+  recTimingLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
+  },
+  recIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  recTimingLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  recTimingHelp: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  recTimingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  recTimingValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  recSwitchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  recSwitchLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  recSwitchDesc: {
+    fontSize: 11,
+    color: '#8E8278',
+    marginTop: 2,
+  },
+  recSaveBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#8C331A',
+    borderRadius: 14,
+    height: 46,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 12,
+    elevation: 2,
+    shadowColor: '#8C331A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+  },
+  recSaveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '700',
   },
 });
