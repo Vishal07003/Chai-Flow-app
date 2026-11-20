@@ -58,8 +58,11 @@ export interface DeliveryPartnerProfile {
   number_plate?: string;
   location?: string;
   status: 'READY' | 'BUSY' | 'OFFLINE';
+  is_active?: boolean;
   avatar_url?: string;
   active_deliveries_count: number;
+  current_lat?: number | null;
+  current_lng?: number | null;
   created_at: string;
 }
 
@@ -75,10 +78,11 @@ export const deliveryService = {
   /**
    * Fetch deliveries list (filtered by driver if delivery partner, or all if owner)
    */
-  async getDeliveries(params?: { driver?: number; status?: string }): Promise<BackendDelivery[]> {
+  async getDeliveries(params?: { driver?: number; status?: string; order?: number | string }): Promise<BackendDelivery[]> {
     const query = new URLSearchParams();
     if (params?.driver) query.append('driver', String(params.driver));
     if (params?.status) query.append('status', params.status);
+    if (params?.order) query.append('order', String(params.order));
     const qs = query.toString();
     return apiClient.get<BackendDelivery[]>(`/deliveries/${qs ? `?${qs}` : ''}`);
   },
@@ -178,10 +182,15 @@ export const deliveryService = {
           name: item.name,
           phone: item.phone,
           status: item.status || 'READY',
-          location: item.location || 'Hub Central',
+          isActive: item.is_active ?? true,
+          location: item.location || 'Assigned to Fleet',
           vehicleType: item.vehicle_type || 'Scooter',
           vehicleModel: item.vehicle_model || '',
           numberPlate: item.number_plate || '',
+          activeDeliveriesCount: item.active_deliveries_count || 0,
+          avatarUrl: item.avatar_url || '',
+          emergencyContact: item.emergency_phone || '',
+          licenseNumber: item.license_number || '',
         }));
       }
     } catch (e) {

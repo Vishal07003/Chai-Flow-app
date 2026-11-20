@@ -12,6 +12,7 @@ export interface BackendProduct {
   category: number | null;
   category_name?: string;
   price: string;
+  unit?: string;
   description?: string;
   image_url?: string;
   is_available: boolean;
@@ -24,6 +25,35 @@ export const productService = {
    */
   async getCategories(): Promise<Category[]> {
     return apiClient.get<Category[]>('/products/categories/');
+  },
+
+  /**
+   * Upload product image to backend storage and retrieve permanent URL
+   */
+  async uploadProductImage(fileUri: string, fileName?: string): Promise<string> {
+    const formData = new FormData();
+    const cleanFileName = fileName || `product_${Date.now()}.jpg`;
+    
+    // Determine mime type
+    let mimeType = 'image/jpeg';
+    if (cleanFileName.toLowerCase().endsWith('.png')) mimeType = 'image/png';
+    else if (cleanFileName.toLowerCase().endsWith('.webp')) mimeType = 'image/webp';
+
+    formData.append('image', {
+      uri: fileUri,
+      name: cleanFileName,
+      type: mimeType,
+    } as any);
+
+    const res = await apiClient.post<{ success: boolean; image_url: string; filename: string }>(
+      '/products/upload-image/',
+      formData,
+    );
+
+    if (res && res.image_url) {
+      return res.image_url;
+    }
+    throw new Error('Image upload failed: backend returned empty URL');
   },
 
   /**
@@ -49,8 +79,9 @@ export const productService = {
    */
   async createProduct(data: {
     name: string;
-    category?: number;
+    category?: number | null;
     price: string | number;
+    unit?: string;
     description?: string;
     image_url?: string;
     is_available?: boolean;
@@ -65,8 +96,9 @@ export const productService = {
     id: number | string,
     data: Partial<{
       name: string;
-      category: number;
+      category: number | null;
       price: string | number;
+      unit: string;
       description: string;
       image_url: string;
       is_available: boolean;
@@ -93,16 +125,12 @@ export const productService = {
             id: String(bp.id),
             name: bp.name,
             price: `₹${rawPrice}`,
-            unit: 'unit',
-            description: bp.description || 'Store inventory item',
-            stock: bp.is_available ? '100 units' : 'Out of stock',
-            stockNumber: bp.is_available ? 100 : 0,
-            maxStock: 200,
-            category: bp.category_name || 'Masala Chai',
-            isLowStock: !bp.is_available,
-            imageUrl:
-              bp.image_url ||
-              'https://images.unsplash.com/photo-1576092768241-dec231879fc3?auto=format&fit=crop&w=600&q=80',
+            unit: bp.unit || 'Pc',
+            description: bp.description || '',
+            category: bp.category_name || 'Tea',
+            categoryId: bp.category,
+            imageUrl: bp.image_url || '',
+            is_available: bp.is_available,
           };
         });
       }
@@ -115,53 +143,94 @@ export const productService = {
   async addProduct(product: any): Promise<any> {
     const rawPrice =
       typeof product.price === 'string'
-        ? parseFloat(product.price.replace(/[^0-9.]/g, '')) || 100
-        : Number(product.price) || 100;
+        ? parseFloat(product.price.replace(/[^0-9.]/g, '')) || 0
+        : Number(product.price) || 0;
 
     try {
+      // Find category id if category name passed
+      let categoryId = product.categoryId || null;
+      if (!categoryId && product.category) {
+        try {
+          const cats = await this.getCategories();
+          const matched = cats.find(c => c.name.toLowerCase() === product.category.toLowerCase());
+          if (matched) categoryId = matched.id;
+        } catch {}
+      }
+
       const res = await this.createProduct({
         name: product.name,
+        category: categoryId,
         price: rawPrice,
-        description: product.description || 'Premium store item',
-        image_url: product.imageUrl,
-        is_available: product.stockNumber !== undefined ? product.stockNumber > 0 : true,
+        unit: product.unit || 'Pc',
+        description: product.description || '',
+        image_url: product.imageUrl || '',
+        is_available: true,
       });
 
       return {
         ...product,
         id: String(res.id),
+        name: res.name,
         price: `₹${rawPrice}`,
+        unit: res.unit || product.unit || 'Pc',
+        category: res.category_name || product.category || 'Tea',
+        categoryId: res.category,
+        description: res.description || '',
+        imageUrl: res.image_url || '',
       };
     } catch (e) {
-      console.log('Backend createProduct error, falling back locally:', e);
-      const id = Date.now().toString();
-      return {
-        ...product,
-        id,
-      };
+      console.log('Backend createProduct error:', e);
+      throw e;
     }
   },
 
   async updateProductItem(id: string, updates: any): Promise<any> {
     try {
       const payload: any = {};
-      if (updates.name) payload.name = updates.name;
-      if (updates.description) payload.description = updates.description;
-      if (updates.imageUrl) payload.image_url = updates.imageUrl;
+      if (updates.name !== undefined) payload.name = updates.name;
+      if (updates.description !== undefined) payload.description = updates.description;
+      if (updates.imageUrl !== undefined) payload.image_url = updates.imageUrl;
+      if (updates.unit !== undefined) payload.unit = updates.unit;
       if (updates.price !== undefined) {
         payload.price =
           typeof updates.price === 'string'
             ? parseFloat(updates.price.replace(/[^0-9.]/g, '')) || 0
             : updates.price;
       }
-      if (updates.stockNumber !== undefined) {
-        payload.is_available = updates.stockNumber > 0;
+      if (updates.category !== undefined) {
+        let categoryId = updates.categoryId;
+        if (!categoryId && updates.category) {
+          try {
+            const cats = await this.getCategories();
+            const matched = cats.find(c => c.name.toLowerCase() === updates.category.toLowerCase());
+            if (matched) categoryId = matched.id;
+          } catch {}
+        }
+        if (categoryId !== undefined) {
+          payload.category = categoryId;
+        }
       }
+      if (updates.is_available !== undefined) {
+        payload.is_available = updates.is_available;
+      }
+
       if (Object.keys(payload).length > 0) {
-        await this.updateProduct(id, payload);
+        const res = await this.updateProduct(id, payload);
+        return {
+          id: String(res.id),
+          name: res.name,
+          price: `₹${parseFloat(res.price) || 0}`,
+          unit: res.unit || 'Pc',
+          category: res.category_name || updates.category || 'Tea',
+          categoryId: res.category,
+          description: res.description || '',
+          imageUrl: res.image_url || '',
+          is_available: res.is_available,
+        };
       }
     } catch (e) {
       console.log('Backend updateProduct error:', e);
+      throw e;
     }
     return {
       id,

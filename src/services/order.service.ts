@@ -12,13 +12,18 @@ export interface OrderItemDetail {
 export interface BackendOrder {
   id: number;
   customer: number;
+  customer_profile?: number | null;
   customer_name: string;
+  customer_phone?: string;
   company?: number | null;
   company_name?: string | null;
   status: 'pending' | 'accepted' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
   total_amount: string;
   delivery_address: string;
   notes?: string;
+  delivery_partner_id?: number | null;
+  delivery_partner_name?: string | null;
+  delivery_status?: 'assigned' | 'accepted' | 'picked_up' | 'on_the_way' | 'delivered' | 'failed' | null;
   has_invoice?: boolean;
   invoice_number?: string | null;
   created_at: string;
@@ -29,6 +34,7 @@ export interface BackendOrder {
 export interface CreateOrderPayload {
   customer_id?: number | null;
   company_id?: number | null;
+  delivery_partner_id?: number | null;
   delivery_address: string;
   notes?: string;
   items: Array<{

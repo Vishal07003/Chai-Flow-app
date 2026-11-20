@@ -76,6 +76,8 @@ export interface DashboardStats {
   partially_paid_invoices_count?: number;
   unpaid_invoices_count?: number;
   defaulters_count?: number;
+  today_orders_count?: number;
+  pending_orders_count?: number;
 }
 
 export const billingService = {

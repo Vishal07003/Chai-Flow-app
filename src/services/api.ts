@@ -107,10 +107,14 @@ class ApiClient {
       : `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
       Accept: 'application/json',
       ...((options.headers as Record<string, string>) || {}),
     };
+
+    // Only set Content-Type to application/json if body is not FormData
+    if (!(options.body instanceof FormData) && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
 
     // Attach token unless explicitly requested without auth
     const token = await this.getAccessToken();
@@ -192,9 +196,12 @@ class ApiClient {
       fallbackOrHeaders && typeof fallbackOrHeaders === 'object' && !('id' in (fallbackOrHeaders as object)) && !('success' in (fallbackOrHeaders as object))
         ? (fallbackOrHeaders as Record<string, string>)
         : undefined;
+
+    const requestBody = body instanceof FormData ? body : (body ? JSON.stringify(body) : undefined);
+
     return this.request<T>(endpoint, {
       method: 'POST',
-      body: body ? JSON.stringify(body) : undefined,
+      body: requestBody,
       headers,
     }).catch(err => {
       if (fallbackOrHeaders !== undefined && headers === undefined) {
