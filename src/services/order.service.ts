@@ -99,6 +99,7 @@ export interface RecurringOrderItem {
   product_name: string;
   product_price: string;
   quantity: number;
+  unit_price?: string;
 }
 
 export interface BackendRecurringOrder {
@@ -115,6 +116,7 @@ export interface BackendRecurringOrder {
   weekdays?: string;
   is_paused: boolean;
   skipped_dates?: string[];
+  auto_approve?: boolean;
   notes?: string;
   created_at: string;
   updated_at: string;
@@ -131,10 +133,12 @@ export interface CreateRecurringOrderPayload {
   frequency: 'daily' | 'weekdays';
   weekdays?: string;
   is_paused?: boolean;
+  auto_approve?: boolean;
   notes?: string;
   items: Array<{
     product_id: number;
     quantity: number;
+    unit_price?: number;
   }>;
 }
 

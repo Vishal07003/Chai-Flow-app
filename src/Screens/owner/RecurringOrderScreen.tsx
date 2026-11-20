@@ -11,11 +11,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import Header from '../../components/common/Header';
-import { CustomDialog, DeliveryPartnerDropdown } from '../../components/common';
+import { CustomDialog, ConfirmDialog, DeliveryPartnerDropdown } from '../../components/common';
+import AddCustomerModal from '../../components/customer/AddCustomerModal';
 import orderService, { BackendRecurringOrder } from '../../services/order.service';
 import billingService, { BillingCustomer } from '../../services/billing.service';
 import productService, { BackendProduct } from '../../services/product.service';
@@ -53,11 +54,20 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
       ? existingTemplate.weekdays.split(',').map(s => s.trim())
       : ['0', '1', '2', '3', '4']
   );
+  const [autoApprove, setAutoApprove] = useState<boolean>(existingTemplate?.auto_approve ?? false);
   const [notes, setNotes] = useState<string>(existingTemplate?.notes || '');
 
-  // itemQuantities stores string values during typing to preserve product selection if temporarily empty
+  // itemQuantities: productId -> string quantity (preserves editing when temporarily empty)
   const [itemQuantities, setItemQuantities] = useState<{ [productId: number]: string }>({});
+  // itemAgreedPrices: productId -> string custom unit price snapshot
+  const [itemAgreedPrices, setItemAgreedPrices] = useState<{ [productId: number]: string }>({});
+
   const [submitting, setSubmitting] = useState<boolean>(false);
+
+  // Customer Selector Modal State
+  const [customerModalVisible, setCustomerModalVisible] = useState<boolean>(false);
+  const [customerSearch, setCustomerSearch] = useState<string>('');
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState<boolean>(false);
 
   // Add Product Modal State
   const [addModalVisible, setAddModalVisible] = useState<boolean>(false);
@@ -81,56 +91,89 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
 
   const closeDialog = () => setDialogConfig(prev => ({ ...prev, visible: false }));
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [cList, pList, dList] = await Promise.all([
-          billingService.getCustomers().catch(() => []),
-          productService.getProductsList().catch(() => []),
-          deliveryService.getDeliveryPartners().catch(() => []),
-        ]);
+  const loadData = useCallback(async () => {
+    try {
+      const [cList, pList, dList] = await Promise.all([
+        billingService.getCustomers().catch(() => []),
+        productService.getProductsList().catch(() => []),
+        deliveryService.getDeliveryPartners().catch(() => []),
+      ]);
 
-        setCustomers(cList || []);
-        setPartners(dList || []);
+      setCustomers(cList || []);
+      setPartners(dList || []);
 
-        const mappedProds: BackendProduct[] = (pList || []).map((p: any) => ({
-          id: Number(p.id),
-          name: p.name,
-          price: String(p.price || '0').replace(/[^0-9.]/g, ''),
-          unit: p.unit || 'Pc',
-          description: p.description,
-          is_available: true,
-          category: p.category || 1,
-          created_at: p.created_at || new Date().toISOString(),
-        }));
-        setProducts(mappedProds);
+      const mappedProds: BackendProduct[] = (pList || []).map((p: any) => ({
+        id: Number(p.id),
+        name: p.name,
+        price: String(p.price || '0').replace(/[^0-9.]/g, ''),
+        unit: p.unit || 'Pc',
+        description: p.description,
+        is_available: true,
+        category: p.category || 1,
+        created_at: p.created_at || new Date().toISOString(),
+      }));
+      setProducts(mappedProds);
 
-        if (existingTemplate && existingTemplate.items) {
-          const qMap: { [id: number]: string } = {};
-          existingTemplate.items.forEach(it => {
-            qMap[it.product] = String(it.quantity);
-          });
-          setItemQuantities(qMap);
-        } else if (route?.params?.prefilledItems && Array.isArray(route.params.prefilledItems)) {
-          const qMap: { [id: number]: string } = {};
-          route.params.prefilledItems.forEach((it: any) => {
-            qMap[Number(it.product_id)] = String(it.quantity);
-          });
-          setItemQuantities(qMap);
-        }
-      } catch (err) {
-        console.log('Error loading recurring template dependencies:', err);
-      } finally {
-        setLoadingData(false);
+      if (existingTemplate && existingTemplate.items) {
+        const qMap: { [id: number]: string } = {};
+        const pMap: { [id: number]: string } = {};
+        existingTemplate.items.forEach(it => {
+          qMap[it.product] = String(it.quantity);
+          const rawPrice = it.unit_price || it.product_price;
+          pMap[it.product] = rawPrice ? String(rawPrice).replace(/[^0-9.]/g, '') : '0';
+        });
+        setItemQuantities(qMap);
+        setItemAgreedPrices(pMap);
+      } else if (route?.params?.prefilledItems && Array.isArray(route.params.prefilledItems)) {
+        const qMap: { [id: number]: string } = {};
+        const pMap: { [id: number]: string } = {};
+        route.params.prefilledItems.forEach((it: any) => {
+          const pid = Number(it.product_id);
+          qMap[pid] = String(it.quantity || 1);
+          const foundProd = mappedProds.find(p => p.id === pid);
+          pMap[pid] = it.unit_price ? String(it.unit_price) : (foundProd?.price || '0');
+        });
+        setItemQuantities(qMap);
+        setItemAgreedPrices(pMap);
       }
+    } catch (err) {
+      console.log('Error loading recurring template dependencies:', err);
+    } finally {
+      setLoadingData(false);
     }
-    loadData();
   }, [existingTemplate, route?.params?.prefilledItems]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const handleSelectCustomer = (c: BillingCustomer) => {
     setSelectedCustomerId(c.id);
     if (!deliveryAddress) {
       setDeliveryAddress(c.address || '');
+    }
+    setCustomerModalVisible(false);
+  };
+
+  const handleCreateCustomerSubmit = async (formData: any) => {
+    try {
+      const created = await billingService.createCustomer({
+        name: formData.name,
+        phone: formData.phone,
+        address: formData.address,
+        opening_balance: formData.openingBalance || 0,
+      });
+      setShowAddCustomerModal(false);
+      setCustomerModalVisible(false);
+      const updatedList = await billingService.getCustomers();
+      setCustomers(updatedList || []);
+      setSelectedCustomerId(created.id);
+      if (created.address) {
+        setDeliveryAddress(created.address);
+      }
+      Alert.alert('Customer Added', `Customer ${created.name} registered and selected.`);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to create customer.');
     }
   };
 
@@ -140,11 +183,19 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
     );
   };
 
-  // Direct numeric quantity change handler - preserves product row even if text is empty
+  // Direct numeric quantity change handler
   const handleQuantityTextChange = (productId: number, text: string) => {
-    // Only allow positive digits
     const cleaned = text.replace(/[^0-9]/g, '');
     setItemQuantities(prev => ({
+      ...prev,
+      [productId]: cleaned,
+    }));
+  };
+
+  // Direct agreed price change handler
+  const handlePriceTextChange = (productId: number, text: string) => {
+    const cleaned = text.replace(/[^0-9.]/g, '');
+    setItemAgreedPrices(prev => ({
       ...prev,
       [productId]: cleaned,
     }));
@@ -158,7 +209,7 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
     setDialogConfig({
       visible: true,
       title: 'Remove Product',
-      message: `Remove "${prodName}" from this recurring order template? This will not delete the product from the catalog.`,
+      message: `Remove "${prodName}" from this recurring order template? This will not affect previous orders or invoices.`,
       type: 'warning',
       buttons: [
         { text: 'Cancel', style: 'cancel', onPress: closeDialog },
@@ -172,23 +223,33 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
               delete copy[productId];
               return copy;
             });
+            setItemAgreedPrices(prev => {
+              const copy = { ...prev };
+              delete copy[productId];
+              return copy;
+            });
           },
         },
       ],
     });
   };
 
-  // Add product from modal
+  // Add product from modal (prevents duplicate rows, defaults to catalog price)
   const handleAddProductFromModal = (p: BackendProduct) => {
     setItemQuantities(prev => {
       const existingQty = prev[p.id];
       if (existingQty !== undefined) {
-        // If already in list, increase quantity by 1 or keep valid number
         const num = parseInt(existingQty, 10) || 0;
         return { ...prev, [p.id]: String(num + 1) };
       }
       return { ...prev, [p.id]: '1' };
     });
+
+    setItemAgreedPrices(prev => {
+      if (prev[p.id] !== undefined) return prev;
+      return { ...prev, [p.id]: p.price || '0' };
+    });
+
     setAddModalVisible(false);
     setModalSearch('');
   };
@@ -208,13 +269,21 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
   }, [itemQuantities]);
 
   const estimatedTotal = useMemo(() => {
-    return Object.entries(itemQuantities).reduce((sum, [pid, str]) => {
-      const prod = products.find(p => p.id === Number(pid));
-      const rate = prod ? parseFloat(prod.price) || 0 : 0;
-      const num = parseInt(str, 10) || 0;
-      return sum + rate * num;
+    return selectedProductIds.reduce((sum, pid) => {
+      const priceStr = itemAgreedPrices[pid];
+      const prod = products.find(p => p.id === pid);
+      const rate = priceStr !== undefined && priceStr !== '' ? parseFloat(priceStr) || 0 : (prod ? parseFloat(prod.price) || 0 : 0);
+      const num = parseInt(itemQuantities[pid], 10) || 0;
+      return sum + (rate * num);
     }, 0);
-  }, [itemQuantities, products]);
+  }, [selectedProductIds, itemQuantities, itemAgreedPrices, products]);
+
+  // Filtered customer list for modal
+  const filteredCustomers = useMemo(() => {
+    if (!customerSearch.trim()) return customers;
+    const q = customerSearch.toLowerCase().trim();
+    return customers.filter(c => c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q)));
+  }, [customers, customerSearch]);
 
   // Modal filtered products
   const modalFilteredProducts = useMemo(() => {
@@ -225,17 +294,16 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
 
   const handleSave = async () => {
     if (!selectedCustomerId) {
-      Alert.alert('Required', 'Please select a customer.');
+      Alert.alert('Required Field', 'Please select a customer for this recurring order.');
       return;
     }
     if (!deliveryAddress.trim()) {
-      Alert.alert('Required', 'Please enter a delivery address.');
+      Alert.alert('Required Field', 'Please enter a delivery address.');
       return;
     }
 
-    // Validate quantities
     if (selectedProductIds.length === 0) {
-      Alert.alert('Required', 'Please add at least one product to the recurring order template.');
+      Alert.alert('Required Field', 'Please add at least one product to the recurring order template.');
       return;
     }
 
@@ -254,14 +322,20 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
     }
 
     if (frequency === 'weekdays' && selectedWeekdays.length === 0) {
-      Alert.alert('Required', 'Please select at least one active weekday.');
+      Alert.alert('Required Field', 'Please select at least one active weekday.');
       return;
     }
 
-    const items = selectedProductIds.map(pid => ({
-      product_id: pid,
-      quantity: parseInt(itemQuantities[pid], 10),
-    }));
+    const items = selectedProductIds.map(pid => {
+      const agreedRate = parseFloat(itemAgreedPrices[pid]);
+      const prod = products.find(p => p.id === pid);
+      const fallbackRate = prod ? parseFloat(prod.price) || 0 : 0;
+      return {
+        product_id: pid,
+        quantity: parseInt(itemQuantities[pid], 10),
+        unit_price: !isNaN(agreedRate) && agreedRate >= 0 ? agreedRate : fallbackRate,
+      };
+    });
 
     try {
       setSubmitting(true);
@@ -271,6 +345,7 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
         delivery_address: deliveryAddress.trim(),
         frequency,
         weekdays: frequency === 'weekdays' ? selectedWeekdays.join(',') : '',
+        auto_approve: autoApprove,
         notes: notes.trim(),
         items,
       };
@@ -293,7 +368,12 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
   if (loadingData) {
     return (
       <SafeAreaView style={styles.container}>
-        <Header title={isEditing ? 'Edit Recurring Order' : 'New Recurring Order'} showBack />
+        <View style={styles.formHeader}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerBackBtn}>
+            <Ionicons name="arrow-back" size={22} color="#111827" />
+          </TouchableOpacity>
+          <Text style={styles.formHeaderTitle}>{isEditing ? 'Edit Recurring Order' : 'Add Recurring Order'}</Text>
+        </View>
         <View style={styles.centerBox}>
           <ActivityIndicator size="large" color="#8C331A" />
         </View>
@@ -305,11 +385,24 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <Header
-        title={isEditing ? 'Edit Recurring Template' : 'New Recurring Template'}
-        showBack={true}
-        showNotification={false}
-      />
+      {/* Form-Specific Header: Clean back arrow + title, no notifications, profile, or hamburger menu */}
+      <View style={styles.formHeader}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.headerBackBtn}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="arrow-back" size={22} color="#111827" />
+        </TouchableOpacity>
+        <View style={styles.formHeaderTitleContainer}>
+          <Text style={styles.formHeaderTitle}>
+            {isEditing ? 'Edit Recurring Order' : 'Add Recurring Order'}
+          </Text>
+          <Text style={styles.formHeaderSubtitle}>
+            Configure automated regular chai & snacks delivery
+          </Text>
+        </View>
+      </View>
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -320,8 +413,8 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Customer Selection */}
-          <Text style={styles.sectionLabel}>CUSTOMER</Text>
+          {/* SECTION 1: CUSTOMER SELECTION */}
+          <Text style={styles.sectionLabel}>CUSTOMER *</Text>
           {selectedCustObj ? (
             <View style={styles.selectedCustomerCard}>
               <View style={styles.custAvatar}>
@@ -329,49 +422,146 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
               </View>
               <View style={{ flex: 1, marginLeft: 10 }}>
                 <Text style={styles.custName}>{selectedCustObj.name}</Text>
-                <Text style={styles.custPhone}>{selectedCustObj.phone || 'No phone'}</Text>
+                <Text style={styles.custPhone}>{selectedCustObj.phone || 'No phone recorded'}</Text>
               </View>
-              {!initialCustomerId && (
-                <TouchableOpacity
-                  onPress={() => setSelectedCustomerId(null)}
-                  style={styles.changeBtn}
-                >
-                  <Text style={styles.changeBtnText}>Change</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                onPress={() => setCustomerModalVisible(true)}
+                style={styles.changeBtn}
+              >
+                <Text style={styles.changeBtnText}>Change</Text>
+              </TouchableOpacity>
             </View>
           ) : (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={{ marginBottom: 12 }}
+            <TouchableOpacity
+              style={styles.selectCustomerPromptBtn}
+              onPress={() => setCustomerModalVisible(true)}
+              activeOpacity={0.8}
             >
-              {customers.map(c => (
-                <TouchableOpacity
-                  key={c.id}
-                  style={[styles.chip, selectedCustomerId === c.id && styles.chipActive]}
-                  onPress={() => handleSelectCustomer(c)}
-                >
-                  <Text style={[styles.chipText, selectedCustomerId === c.id && styles.chipTextActive]}>
-                    {c.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+              <View style={styles.selectCustomerPromptLeft}>
+                <Ionicons name="person-circle-outline" size={20} color="#8C331A" />
+                <Text style={styles.selectCustomerPromptText}>Select Customer (Required)</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+            </TouchableOpacity>
           )}
 
-          {/* Delivery Address */}
-          <Text style={styles.sectionLabel}>DELIVERY ADDRESS *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Delivery address / stall location"
-            placeholderTextColor="#A0958D"
-            value={deliveryAddress}
-            onChangeText={setDeliveryAddress}
+          {/* SECTION 2: DELIVERY PARTNER SEARCHABLE DROPDOWN */}
+          <DeliveryPartnerDropdown
+            selectedPartnerId={selectedPartnerId}
+            onSelectPartner={(partnerId) => setSelectedPartnerId(partnerId)}
+            label="DELIVERY PARTNER (OPTIONAL)"
+            placeholder="Select Delivery Partner (Optional)"
+            optional={true}
+            containerStyle={{ marginBottom: 12, marginTop: 12 }}
           />
 
-          {/* Schedule Frequency */}
-          <Text style={styles.sectionLabel}>FREQUENCY</Text>
+          {/* SECTION 3: PRODUCTS SELECTION */}
+          <View style={styles.productsHeaderRow}>
+            <Text style={styles.sectionLabel}>PRODUCTS ({totalDistinctProducts})</Text>
+            <TouchableOpacity
+              style={styles.addMiniAction}
+              onPress={() => {
+                setModalSearch('');
+                setAddModalVisible(true);
+              }}
+            >
+              <Ionicons name="add" size={16} color="#8C331A" />
+              <Text style={styles.addMiniActionText}>Add Product</Text>
+            </TouchableOpacity>
+          </View>
+
+          {selectedProductIds.length === 0 ? (
+            <TouchableOpacity
+              style={styles.emptyProductsCard}
+              onPress={() => {
+                setModalSearch('');
+                setAddModalVisible(true);
+              }}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="cart-outline" size={32} color="#C4BCB5" />
+              <Text style={styles.emptyProductsTitle}>No Products Added</Text>
+              <Text style={styles.emptyProductsSub}>Tap here to search and select products for this recurring schedule.</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.selectedProductsCard}>
+              {selectedProductIds.map((pid, idx) => {
+                const prod = products.find(p => p.id === pid);
+                const isLast = idx === selectedProductIds.length - 1;
+                const unitStr = prod?.unit || 'Pc';
+                const currentQtyStr = itemQuantities[pid] ?? '';
+                const currentPriceStr = itemAgreedPrices[pid] ?? (prod?.price || '0');
+                const priceNum = parseFloat(currentPriceStr) || 0;
+                const qtyNum = parseInt(currentQtyStr, 10) || 0;
+                const lineTotal = priceNum * qtyNum;
+
+                return (
+                  <View
+                    key={pid}
+                    style={[
+                      styles.selectedProdRow,
+                      isLast && { borderBottomWidth: 0 },
+                    ]}
+                  >
+                    {/* Product Name */}
+                    <View style={styles.prodInfoCol}>
+                      <Text style={styles.prodName} numberOfLines={1}>
+                        {prod ? prod.name : `Product #${pid}`}
+                      </Text>
+                      <Text style={styles.prodCat}>{unitStr}</Text>
+                    </View>
+
+                    {/* Numeric Quantity Input */}
+                    <View style={styles.numericInputGroup}>
+                      <Text style={styles.smallInputLabel}>Qty</Text>
+                      <TextInput
+                        style={styles.numericTextInput}
+                        keyboardType="numeric"
+                        value={currentQtyStr}
+                        placeholder="1"
+                        placeholderTextColor="#9CA3AF"
+                        onChangeText={t => handleQuantityTextChange(pid, t)}
+                        selectTextOnFocus
+                      />
+                    </View>
+
+                    {/* Editable Agreed Unit Price */}
+                    <View style={styles.numericInputGroup}>
+                      <Text style={styles.smallInputLabel}>Rate (₹)</Text>
+                      <TextInput
+                        style={styles.numericTextInput}
+                        keyboardType="numeric"
+                        value={currentPriceStr}
+                        placeholder="0"
+                        placeholderTextColor="#9CA3AF"
+                        onChangeText={t => handlePriceTextChange(pid, t)}
+                        selectTextOnFocus
+                      />
+                    </View>
+
+                    {/* Line Total */}
+                    <View style={styles.lineTotalBox}>
+                      <Text style={styles.lineTotalLabel}>Total</Text>
+                      <Text style={styles.lineTotalText}>₹{lineTotal.toLocaleString()}</Text>
+                    </View>
+
+                    {/* Individual Delete Action */}
+                    <TouchableOpacity
+                      style={styles.removeBtn}
+                      onPress={() => handleRemoveProduct(pid)}
+                      activeOpacity={0.7}
+                      accessibilityLabel="Remove item"
+                    >
+                      <Ionicons name="trash-outline" size={17} color="#DC2626" />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
+          {/* SECTION 4: SCHEDULE */}
+          <Text style={[styles.sectionLabel, { marginTop: 16 }]}>SCHEDULE FREQUENCY</Text>
           <View style={styles.freqRow}>
             <TouchableOpacity
               style={[styles.freqBtn, frequency === 'daily' && styles.freqBtnActive]}
@@ -384,7 +574,7 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
                 style={{ marginRight: 6 }}
               />
               <Text style={[styles.freqBtnText, frequency === 'daily' && styles.freqBtnTextActive]}>
-                Every Day (Mon - Sun)
+                Daily (All 7 Days)
               </Text>
             </TouchableOpacity>
 
@@ -424,130 +614,87 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
             </View>
           )}
 
-          {/* Delivery Partner Searchable Dropdown */}
-          <DeliveryPartnerDropdown
-            selectedPartnerId={selectedPartnerId}
-            onSelectPartner={(partnerId) => setSelectedPartnerId(partnerId)}
-            label="ASSIGN DELIVERY PARTNER (OPTIONAL)"
-            placeholder="Select Delivery Partner (Optional)"
-            optional={true}
-            containerStyle={{ marginBottom: 10 }}
-          />
-
-          {/* Order Notes */}
-          <Text style={styles.sectionLabel}>TEMPLATE NOTES (OPTIONAL)</Text>
+          {/* SECTION 5: DELIVERY DETAILS */}
+          <Text style={[styles.sectionLabel, { marginTop: 16 }]}>DELIVERY ADDRESS *</Text>
           <TextInput
             style={styles.input}
-            placeholder="e.g. Deliver before 8:00 AM without sugar"
-            placeholderTextColor="#A0958D"
+            placeholder="Shop address, office floor or stall location"
+            placeholderTextColor="#9CA3AF"
+            value={deliveryAddress}
+            onChangeText={setDeliveryAddress}
+          />
+
+          <Text style={[styles.sectionLabel, { marginTop: 12 }]}>ORDER INSTRUCTIONS (OPTIONAL)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. Deliver before 8:30 AM without sugar"
+            placeholderTextColor="#9CA3AF"
             value={notes}
             onChangeText={setNotes}
           />
 
-          {/* Selected Products Section */}
-          <View style={styles.productsHeaderRow}>
-            <Text style={styles.sectionLabel}>RECURRING PRODUCTS ({totalDistinctProducts})</Text>
+          {/* SECTION 6: APPROVAL CONFIGURATION */}
+          <Text style={[styles.sectionLabel, { marginTop: 16 }]}>APPROVAL CONFIGURATION</Text>
+          <View style={styles.approvalConfigRow}>
+            <TouchableOpacity
+              style={[styles.approvalOption, !autoApprove && styles.approvalOptionActive]}
+              onPress={() => setAutoApprove(false)}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name={!autoApprove ? 'shield-checkmark' : 'shield-outline'}
+                size={18}
+                color={!autoApprove ? '#8C331A' : '#6B7280'}
+                style={{ marginRight: 8 }}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.approvalOptionTitle, !autoApprove && styles.approvalOptionTitleActive]}>
+                  Owner Approval Required
+                </Text>
+                <Text style={styles.approvalOptionDesc}>
+                  Generates order in Pending status for manual review (Default)
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.approvalOption, autoApprove && styles.approvalOptionActive]}
+              onPress={() => setAutoApprove(true)}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name={autoApprove ? 'flash' : 'flash-outline'}
+                size={18}
+                color={autoApprove ? '#059669' : '#6B7280'}
+                style={{ marginRight: 8 }}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.approvalOptionTitle, autoApprove && { color: '#059669' }]}>
+                  Auto-Approve
+                </Text>
+                <Text style={styles.approvalOptionDesc}>
+                  Automatically confirms daily orders to kitchen queue
+                </Text>
+              </View>
+            </TouchableOpacity>
           </View>
 
-          {selectedProductIds.length === 0 ? (
-            <View style={styles.emptyProductsCard}>
-              <Ionicons name="cart-outline" size={32} color="#C4BCB5" />
-              <Text style={styles.emptyProductsTitle}>No Products Selected</Text>
-              <Text style={styles.emptyProductsSub}>
-                Add products to automatically deliver on schedule.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.selectedProductsCard}>
-              {selectedProductIds.map((pid, idx) => {
-                const prod = products.find(p => p.id === pid);
-                const isLast = idx === selectedProductIds.length - 1;
-                const priceNum = prod ? parseFloat(prod.price) || 0 : 0;
-                const unitStr = prod?.unit || 'Pc';
-                const currentQtyStr = itemQuantities[pid] ?? '';
-                const lineTotal = priceNum * (parseInt(currentQtyStr, 10) || 0);
-
-                return (
-                  <View
-                    key={pid}
-                    style={[
-                      styles.selectedProdRow,
-                      isLast && { borderBottomWidth: 0 },
-                    ]}
-                  >
-                    {/* Left: Product Info */}
-                    <View style={styles.prodInfoCol}>
-                      <Text style={styles.prodName} numberOfLines={1}>
-                        {prod ? prod.name : `Product #${pid}`}
-                      </Text>
-                      <Text style={styles.prodPrice}>
-                        ₹{priceNum} / {unitStr}
-                      </Text>
-                    </View>
-
-                    {/* Middle: Direct Numeric Quantity Input */}
-                    <View style={styles.qtyInputBox}>
-                      <Text style={styles.qtyLabel}>Qty</Text>
-                      <TextInput
-                        style={styles.qtyTextInput}
-                        keyboardType="numeric"
-                        value={currentQtyStr}
-                        placeholder="0"
-                        placeholderTextColor="#A3968C"
-                        onChangeText={t => handleQuantityTextChange(pid, t)}
-                        selectTextOnFocus
-                      />
-                    </View>
-
-                    {/* Line Total */}
-                    <View style={styles.lineTotalBox}>
-                      <Text style={styles.lineTotalText}>₹{lineTotal.toLocaleString()}</Text>
-                    </View>
-
-                    {/* Right: Individual Delete Icon */}
-                    <TouchableOpacity
-                      style={styles.removeBtn}
-                      onPress={() => handleRemoveProduct(pid)}
-                      activeOpacity={0.7}
-                      accessibilityLabel="Remove item"
-                    >
-                      <Ionicons name="trash-outline" size={19} color="#DC2626" />
-                    </TouchableOpacity>
-                  </View>
-                );
-              })}
-            </View>
-          )}
-
-          {/* + Add Product Button */}
-          <TouchableOpacity
-            style={styles.addProductBtn}
-            onPress={() => {
-              setModalSearch('');
-              setAddModalVisible(true);
-            }}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="add-circle-outline" size={18} color="#8C331A" style={{ marginRight: 6 }} />
-            <Text style={styles.addProductBtnText}>+ Add Product</Text>
-          </TouchableOpacity>
-
-          {/* Order Summary Card */}
+          {/* SECTION 7: SUMMARY CARD */}
           <View style={styles.summaryCard}>
-            <Text style={styles.summaryTitle}>ORDER SUMMARY</Text>
+            <Text style={styles.summaryTitle}>TEMPLATE SUMMARY</Text>
 
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Selected Products</Text>
+              <Text style={styles.summaryLabel}>Product Count</Text>
               <Text style={styles.summaryVal}>{totalDistinctProducts} items</Text>
             </View>
 
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Total Quantity</Text>
+              <Text style={styles.summaryLabel}>Total Scheduled Units</Text>
               <Text style={styles.summaryVal}>{totalQuantities} units</Text>
             </View>
 
             <View style={[styles.summaryRow, styles.summaryTotalRow]}>
-              <Text style={styles.summaryTotalLabel}>Estimated Recurring Amount</Text>
+              <Text style={styles.summaryTotalLabel}>Estimated Recurring Value</Text>
               <Text style={styles.summaryTotalVal}>₹{estimatedTotal.toLocaleString()}</Text>
             </View>
           </View>
@@ -578,7 +725,87 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
         </TouchableOpacity>
       </View>
 
-      {/* Add Product Searchable Modal */}
+      {/* MODAL: SELECT CUSTOMER */}
+      <Modal
+        visible={customerModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setCustomerModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Select Customer</Text>
+              <TouchableOpacity
+                onPress={() => setCustomerModalVisible(false)}
+                style={styles.modalCloseBtn}
+              >
+                <Ionicons name="close" size={20} color="#554A42" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalSearchRow}>
+              <View style={styles.modalSearchBox}>
+                <Ionicons name="search-outline" size={16} color="#9CA3AF" style={{ marginRight: 6 }} />
+                <TextInput
+                  style={styles.modalSearchInput}
+                  placeholder="Search name or mobile..."
+                  placeholderTextColor="#9CA3AF"
+                  value={customerSearch}
+                  onChangeText={setCustomerSearch}
+                />
+              </View>
+              <TouchableOpacity
+                style={styles.modalAddCustomerBtn}
+                onPress={() => setShowAddCustomerModal(true)}
+              >
+                <Ionicons name="person-add" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+                <Text style={styles.modalAddCustomerBtnText}>New</Text>
+              </TouchableOpacity>
+            </View>
+
+            <FlatList
+              data={filteredCustomers}
+              keyExtractor={item => String(item.id)}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.customerRowItem,
+                    selectedCustomerId === item.id && styles.customerRowItemActive,
+                  ]}
+                  onPress={() => handleSelectCustomer(item)}
+                >
+                  <View style={styles.custAvatarSmall}>
+                    <Text style={styles.custAvatarSmallText}>{item.name[0]?.toUpperCase()}</Text>
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.custRowName}>{item.name}</Text>
+                    <Text style={styles.custRowPhone}>{item.phone || 'No phone recorded'}</Text>
+                  </View>
+                  {selectedCustomerId === item.id && (
+                    <Ionicons name="checkmark-circle" size={18} color="#8C331A" />
+                  )}
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                  <Text style={{ color: '#9CA3AF', fontSize: 13 }}>No customers match your search.</Text>
+                </View>
+              }
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL: ADD NEW CUSTOMER */}
+      <AddCustomerModal
+        visible={showAddCustomerModal}
+        onClose={() => setShowAddCustomerModal(false)}
+        onSubmit={handleCreateCustomerSubmit}
+      />
+
+      {/* MODAL: ADD PRODUCT SEARCHABLE */}
       <Modal
         visible={addModalVisible}
         transparent={true}
@@ -587,9 +814,8 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            {/* Modal Header */}
             <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Add Product</Text>
+              <Text style={styles.modalTitle}>Add Product to Template</Text>
               <TouchableOpacity
                 onPress={() => setAddModalVisible(false)}
                 style={styles.modalCloseBtn}
@@ -598,80 +824,71 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            {/* Modal Search Bar */}
-            <View style={styles.modalSearchBox}>
-              <Ionicons name="search-outline" size={16} color="#8E8278" style={{ marginRight: 8 }} />
+            <View style={[styles.modalSearchBox, { marginBottom: 10 }]}>
+              <Ionicons name="search-outline" size={16} color="#9CA3AF" style={{ marginRight: 6 }} />
               <TextInput
                 style={styles.modalSearchInput}
-                placeholder="Search products by name..."
-                placeholderTextColor="#A0958D"
+                placeholder="Search active products by name..."
+                placeholderTextColor="#9CA3AF"
                 value={modalSearch}
                 onChangeText={setModalSearch}
-                autoFocus
               />
-              {modalSearch.length > 0 && (
-                <TouchableOpacity onPress={() => setModalSearch('')}>
-                  <Ionicons name="close-circle" size={16} color="#8E8278" />
-                </TouchableOpacity>
-              )}
             </View>
 
-            {/* Modal Product List */}
-            <ScrollView
-              style={styles.modalProductList}
-              keyboardShouldPersistTaps="handled"
+            <FlatList
+              data={modalFilteredProducts}
+              keyExtractor={item => String(item.id)}
               showsVerticalScrollIndicator={false}
-            >
-              {modalFilteredProducts.length === 0 ? (
-                <View style={styles.emptySearchBox}>
-                  <Text style={styles.emptySearchText}>No matching products found</Text>
-                </View>
-              ) : (
-                modalFilteredProducts.map(prod => {
-                  const alreadySelected = itemQuantities[prod.id] !== undefined;
-                  const currentQty = parseInt(itemQuantities[prod.id] || '0', 10);
-                  const priceNum = parseFloat(prod.price) || 0;
-                  const unitStr = prod.unit || 'Pc';
-
-                  return (
-                    <TouchableOpacity
-                      key={prod.id}
+              renderItem={({ item }) => {
+                const isAlreadySelected = selectedProductIds.includes(item.id);
+                return (
+                  <TouchableOpacity
+                    style={[
+                      styles.productModalRow,
+                      isAlreadySelected && styles.productModalRowSelected,
+                    ]}
+                    onPress={() => handleAddProductFromModal(item)}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.productModalName}>{item.name}</Text>
+                      <Text style={styles.productModalPrice}>
+                        Standard catalog price: ₹{item.price} / {item.unit || 'Pc'}
+                      </Text>
+                    </View>
+                    <View
                       style={[
-                        styles.modalProdItem,
-                        alreadySelected && styles.modalProdItemActive,
+                        styles.addBadge,
+                        isAlreadySelected && styles.addBadgeSelected,
                       ]}
-                      onPress={() => handleAddProductFromModal(prod)}
-                      activeOpacity={0.7}
                     >
-                      <View style={{ flex: 1, marginRight: 8 }}>
-                        <Text style={styles.modalProdName}>{prod.name}</Text>
-                        <Text style={styles.modalProdPrice}>
-                          ₹{priceNum} / {unitStr}
-                        </Text>
-                      </View>
-
-                      {alreadySelected ? (
-                        <View style={styles.alreadySelectedBadge}>
-                          <Text style={styles.alreadySelectedText}>
-                            Selected ({currentQty}) +
-                          </Text>
-                        </View>
-                      ) : (
-                        <View style={styles.addPill}>
-                          <Ionicons name="add" size={16} color="#8C331A" />
-                          <Text style={styles.addPillText}>Add</Text>
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })
-              )}
-            </ScrollView>
+                      <Ionicons
+                        name={isAlreadySelected ? 'checkmark' : 'add'}
+                        size={14}
+                        color={isAlreadySelected ? '#059669' : '#8C331A'}
+                      />
+                      <Text
+                        style={[
+                          styles.addBadgeText,
+                          isAlreadySelected && { color: '#059669' },
+                        ]}
+                      >
+                        {isAlreadySelected ? 'Added' : 'Add'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={
+                <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                  <Text style={{ color: '#9CA3AF', fontSize: 13 }}>No products found.</Text>
+                </View>
+              }
+            />
           </View>
         </View>
       </Modal>
 
-      {/* Confirmation Dialog */}
+      {/* CONFIRMATION DIALOG */}
       <CustomDialog
         visible={dialogConfig.visible}
         title={dialogConfig.title}
@@ -689,95 +906,124 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FAF8F5',
   },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 20,
+  formHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFEAE4',
+  },
+  headerBackBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  formHeaderTitleContainer: {
+    flex: 1,
+  },
+  formHeaderTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  formHeaderSubtitle: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 1,
   },
   centerBox: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 20,
+  },
   sectionLabel: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#8E8278',
+    color: '#6B7280',
     letterSpacing: 0.5,
-    marginTop: 10,
     marginBottom: 6,
   },
   selectedCustomerCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
     padding: 12,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#EFEAE4',
     marginBottom: 8,
   },
   custAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F5EBE6',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FAF0EB',
     justifyContent: 'center',
     alignItems: 'center',
   },
   custName: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#2A2421',
+    color: '#111827',
   },
   custPhone: {
-    fontSize: 11,
-    color: '#8E8278',
+    fontSize: 12,
+    color: '#6B7280',
     marginTop: 1,
   },
   changeBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
   changeBtnText: {
     fontSize: 11,
-    color: '#8C331A',
     fontWeight: '700',
+    color: '#4B5563',
   },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 20,
+  selectCustomerPromptBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    marginRight: 6,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 6,
   },
-  chipActive: {
-    backgroundColor: '#8C331A',
-    borderColor: '#8C331A',
+  selectCustomerPromptLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  chipText: {
-    fontSize: 12,
-    color: '#6B5E55',
+  selectCustomerPromptText: {
+    fontSize: 13,
     fontWeight: '600',
-  },
-  chipTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '700',
+    color: '#4B5563',
   },
   input: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: '#E5E7EB',
     borderRadius: 10,
     paddingHorizontal: 12,
-    height: 44,
+    paddingVertical: 9,
     fontSize: 13,
-    color: '#2A2421',
+    color: '#111827',
     marginBottom: 6,
   },
   freqRow: {
@@ -792,18 +1038,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: '#E5E7EB',
     borderRadius: 10,
     paddingVertical: 10,
+    paddingHorizontal: 8,
   },
   freqBtnActive: {
     backgroundColor: '#8C331A',
     borderColor: '#8C331A',
   },
   freqBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
-    color: '#6B5E55',
+    color: '#4B5563',
   },
   freqBtnTextActive: {
     color: '#FFFFFF',
@@ -811,90 +1058,113 @@ const styles = StyleSheet.create({
   weekdaysRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 12,
+    marginTop: 4,
   },
   dayChip: {
-    width: 44,
-    height: 38,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
     borderRadius: 8,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderColor: '#E5E7EB',
+    marginHorizontal: 2,
   },
   dayChipActive: {
-    backgroundColor: '#8C331A',
+    backgroundColor: '#FAF0EB',
     borderColor: '#8C331A',
   },
   dayChipText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#6B5E55',
+    color: '#6B7280',
   },
   dayChipTextActive: {
-    color: '#FFFFFF',
+    color: '#8C331A',
   },
-  partnerChip: {
+  approvalConfigRow: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  approvalOption: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
+    alignItems: 'flex-start',
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    marginRight: 6,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    padding: 10,
   },
-  partnerChipActive: {
-    backgroundColor: '#8C331A',
+  approvalOptionActive: {
     borderColor: '#8C331A',
+    backgroundColor: '#FAF0EB',
   },
-  partnerChipText: {
-    fontSize: 11,
-    color: '#6B5E55',
-    fontWeight: '600',
-  },
-  partnerChipTextActive: {
-    color: '#FFFFFF',
+  approvalOptionTitle: {
+    fontSize: 13,
     fontWeight: '700',
+    color: '#111827',
+  },
+  approvalOptionTitleActive: {
+    color: '#8C331A',
+  },
+  approvalOptionDesc: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 2,
+    lineHeight: 15,
   },
   productsHeaderRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 6,
-    marginBottom: 4,
+    justifyContent: 'space-between',
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  addMiniAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF0EB',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  addMiniActionText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8C331A',
+    marginLeft: 2,
   },
   emptyProductsCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: '#E5E7EB',
     padding: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginBottom: 12,
   },
   emptyProductsTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#554A42',
+    color: '#4B5563',
     marginTop: 8,
   },
   emptyProductsSub: {
-    fontSize: 12,
-    color: '#8E8278',
-    marginTop: 2,
+    fontSize: 11,
+    color: '#9CA3AF',
     textAlign: 'center',
+    marginTop: 2,
   },
   selectedProductsCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: '#E5E7EB',
     overflow: 'hidden',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   selectedProdRow: {
     flexDirection: 'row',
@@ -902,126 +1172,108 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#EFEAE4',
+    borderBottomColor: '#F3F4F6',
   },
   prodInfoCol: {
-    flex: 2,
-    marginRight: 8,
+    flex: 1.6,
+    marginRight: 6,
   },
   prodName: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#2A2421',
+    color: '#111827',
   },
-  prodPrice: {
+  prodCat: {
     fontSize: 11,
-    color: '#8C331A',
-    fontWeight: '600',
-    marginTop: 2,
+    color: '#6B7280',
+    marginTop: 1,
   },
-  qtyInputBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  numericInputGroup: {
+    width: 62,
+    marginRight: 6,
+  },
+  smallInputLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#6B7280',
+    marginBottom: 2,
+    textAlign: 'center',
+  },
+  numericTextInput: {
     backgroundColor: '#FAF8F5',
     borderWidth: 1,
-    borderColor: '#E0D8D0',
-    borderRadius: 8,
+    borderColor: '#E5E7EB',
+    borderRadius: 6,
+    paddingVertical: 4,
     paddingHorizontal: 6,
-    height: 36,
-    marginRight: 8,
-  },
-  qtyLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#8E8278',
-    marginRight: 4,
-  },
-  qtyTextInput: {
     fontSize: 13,
-    fontWeight: '800',
-    color: '#2A2421',
-    minWidth: 32,
-    maxWidth: 55,
+    fontWeight: '700',
+    color: '#111827',
     textAlign: 'center',
-    paddingVertical: 0,
   },
   lineTotalBox: {
-    width: 65,
+    width: 60,
     alignItems: 'flex-end',
     marginRight: 8,
   },
+  lineTotalLabel: {
+    fontSize: 9,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
   lineTotalText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#2A2421',
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#8C331A',
+    marginTop: 2,
   },
   removeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#FEF2F2',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  addProductBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#8C331A',
-    borderStyle: 'dashed',
-    borderRadius: 10,
-    height: 42,
-    marginBottom: 16,
-  },
-  addProductBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#8C331A',
+    padding: 6,
   },
   summaryCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: '#E5E7EB',
     padding: 14,
-    marginBottom: 12,
+    marginTop: 12,
+    marginBottom: 10,
   },
   summaryTitle: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#8E8278',
+    color: '#6B7280',
     letterSpacing: 0.5,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingVertical: 4,
   },
   summaryLabel: {
-    fontSize: 12,
-    color: '#554A42',
+    fontSize: 13,
+    color: '#4B5563',
   },
   summaryVal: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#2A2421',
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
   },
   summaryTotalRow: {
     borderTopWidth: 1,
-    borderTopColor: '#EFEAE4',
-    paddingTop: 8,
-    marginTop: 6,
+    borderTopColor: '#F3F4F6',
+    marginTop: 8,
+    paddingTop: 10,
   },
   summaryTotalLabel: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
-    color: '#2A2421',
+    color: '#111827',
   },
   summaryTotalVal: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '900',
     color: '#8C331A',
   },
@@ -1035,44 +1287,38 @@ const styles = StyleSheet.create({
     borderTopColor: '#EFEAE4',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
   },
   saveBtn: {
-    flexDirection: 'row',
     backgroundColor: '#8C331A',
-    borderRadius: 12,
-    height: 48,
-    justifyContent: 'center',
+    borderRadius: 10,
+    height: 46,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   saveBtnDisabled: {
-    backgroundColor: '#C4BCB5',
+    backgroundColor: '#D1D5DB',
   },
   saveBtnText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
   },
+
+  /* Modals */
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
     justifyContent: 'center',
-    padding: 20,
+    alignItems: 'center',
+    padding: 16,
   },
   modalCard: {
+    width: '100%',
+    maxHeight: '80%',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
-    maxHeight: '75%',
-    elevation: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
   },
   modalHeaderRow: {
     flexDirection: 'row',
@@ -1083,93 +1329,118 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#2A2421',
+    color: '#111827',
   },
   modalCloseBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#FAF8F5',
-    justifyContent: 'center',
-    alignItems: 'center',
+    padding: 4,
   },
-  modalSearchBox: {
+  modalSearchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FAF8F5',
+    gap: 8,
+    marginBottom: 10,
+  },
+  modalSearchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: '#E5E7EB',
     borderRadius: 8,
     paddingHorizontal: 10,
-    height: 40,
-    marginBottom: 10,
+    height: 38,
   },
   modalSearchInput: {
     flex: 1,
     fontSize: 13,
-    color: '#2A2421',
+    color: '#111827',
     paddingVertical: 0,
   },
-  modalProductList: {
-    maxHeight: 280,
-  },
-  emptySearchBox: {
-    paddingVertical: 24,
-    alignItems: 'center',
-  },
-  emptySearchText: {
-    fontSize: 13,
-    color: '#8E8278',
-  },
-  modalProdItem: {
+  modalAddCustomerBtn: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#8C331A',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 38,
+  },
+  modalAddCustomerBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  customerRowItem: {
+    flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 10,
-    borderRadius: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#F5EFEA',
+    borderBottomColor: '#F3F4F6',
   },
-  modalProdItemActive: {
-    backgroundColor: '#FEF9F6',
+  customerRowItemActive: {
+    backgroundColor: '#FAF0EB',
+    borderRadius: 8,
+    paddingHorizontal: 8,
   },
-  modalProdName: {
+  custAvatarSmall: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FAF0EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  custAvatarSmallText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#2A2421',
-  },
-  modalProdPrice: {
-    fontSize: 11,
     color: '#8C331A',
-    fontWeight: '600',
-    marginTop: 2,
   },
-  addPill: {
+  custRowName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  custRowPhone: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 1,
+  },
+  productModalRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF0EA',
-    borderWidth: 1,
-    borderColor: '#FBD8CB',
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
   },
-  addPillText: {
-    fontSize: 12,
+  productModalRowSelected: {
+    backgroundColor: '#F6FDF9',
+  },
+  productModalName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  productModalPrice: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  addBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF0EB',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  addBadgeSelected: {
+    backgroundColor: '#ECFDF5',
+  },
+  addBadgeText: {
+    fontSize: 11,
     fontWeight: '700',
     color: '#8C331A',
     marginLeft: 2,
-  },
-  alreadySelectedBadge: {
-    backgroundColor: '#E8F5E9',
-    borderRadius: 14,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  alreadySelectedText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#2E7D32',
   },
 });

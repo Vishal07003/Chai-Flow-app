@@ -23,10 +23,6 @@ import orderService, {
 import billingService, { BillingCustomer } from '../../services/billing.service';
 import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
 import productService, { BackendProduct } from '../../services/product.service';
-import {
-  RecurringOrderModal,
-  type RecurringOrderFormData,
-} from '../../components/order';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import AppToast from '../../utils/toast';
 
@@ -67,8 +63,6 @@ export default function OrdersScreen({ navigation }: any) {
   // Recurring Orders State
   const [recurringOrders, setRecurringOrders] = useState<BackendRecurringOrder[]>([]);
   const [loadingRecurring, setLoadingRecurring] = useState<boolean>(false);
-  const [recurringModalVisible, setRecurringModalVisible] = useState<boolean>(false);
-  const [editingRecurring, setEditingRecurring] = useState<BackendRecurringOrder | null>(null);
   const [generatingRecurringId, setGeneratingRecurringId] = useState<number | null>(null);
 
   // Modal creation datasets
@@ -339,24 +333,11 @@ export default function OrdersScreen({ navigation }: any) {
 
   // Recurring Order Handlers
   const handleOpenNewRecurring = () => {
-    setEditingRecurring(null);
-    setRecurringModalVisible(true);
+    navigation.navigate('RecurringOrder', { template: null });
   };
 
   const handleOpenEditRecurring = (template: BackendRecurringOrder) => {
-    setEditingRecurring(template);
-    setRecurringModalVisible(true);
-  };
-
-  const handleSaveRecurringSubmit = async (formData: RecurringOrderFormData) => {
-    if (editingRecurring) {
-      await orderService.updateRecurringOrder(editingRecurring.id, formData);
-      AppToast.success('Updated', 'Recurring order template updated.');
-    } else {
-      await orderService.createRecurringOrder(formData as CreateRecurringOrderPayload);
-      AppToast.success('Created', 'Recurring order template created successfully.');
-    }
-    fetchRecurringOrders();
+    navigation.navigate('RecurringOrder', { template });
   };
 
   const handleTogglePause = (template: BackendRecurringOrder) => {
@@ -572,7 +553,7 @@ export default function OrdersScreen({ navigation }: any) {
     );
   };
 
-  // Render Recurring Order Item
+  // Render Recurring Order Item (Compact Card Layout)
   const renderRecurringItem = ({ item }: { item: BackendRecurringOrder }) => {
     const todayStr = new Date().toISOString().split('T')[0];
     const isSkippedToday = (item.skipped_dates || []).includes(todayStr);
@@ -591,144 +572,138 @@ export default function OrdersScreen({ navigation }: any) {
             .join(', ')
           : 'Specific Days';
 
+    // Total products & total units count
+    const productCount = (item.items || []).length;
+    const totalScheduledUnits = (item.items || []).reduce((acc, it) => acc + (it.quantity || 0), 0);
+
+    // Calculate estimated recurring amount based on unit_price or product_price
+    const estimatedAmount = (item.items || []).reduce((acc, it) => {
+      const priceVal = it.unit_price ? parseFloat(it.unit_price) : parseFloat(it.product_price || '0');
+      return acc + ((isNaN(priceVal) ? 0 : priceVal) * (it.quantity || 0));
+    }, 0);
+
+    // Next scheduled date calculation text
+    const nextDateText = isPaused
+      ? 'Schedule Paused'
+      : isSkippedToday
+        ? 'Tomorrow'
+        : isScheduledToday
+          ? 'Today'
+          : 'Next Scheduled Day';
+
     return (
-      <View style={[styles.card, isPaused && styles.cardPaused]}>
-        <View style={styles.cardHeader}>
+      <View style={[styles.compactRecCard, isPaused && styles.cardPaused]}>
+        {/* Top Header Row: Customer Name, Status Badge & Edit Action */}
+        <View style={styles.compactRecTopRow}>
           <View style={{ flex: 1, marginRight: 8 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={styles.clientName} numberOfLines={1}>
+              <Text style={styles.compactRecCustName} numberOfLines={1}>
                 {item.customer_name}
               </Text>
-              {isPaused && (
-                <View style={styles.pausedBadge}>
-                  <Text style={styles.pausedBadgeText}>PAUSED</Text>
-                </View>
-              )}
+              <View
+                style={[
+                  styles.compactStatusPill,
+                  isPaused ? styles.compactStatusPaused : styles.compactStatusActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.compactStatusText,
+                    isPaused ? styles.compactStatusTextPaused : styles.compactStatusTextActive,
+                  ]}
+                >
+                  {isPaused ? 'PAUSED' : 'ACTIVE'}
+                </Text>
+              </View>
             </View>
-            <View style={styles.freqTagRow}>
-              <Ionicons name="repeat" size={13} color="#8C331A" style={{ marginRight: 4 }} />
-              <Text style={styles.freqTagText}>{frequencyLabel}</Text>
+            <View style={styles.compactSubInfoRow}>
+              <Ionicons name="repeat" size={11} color="#8C331A" style={{ marginRight: 3 }} />
+              <Text style={styles.compactFreqText}>{frequencyLabel}</Text>
+              <Text style={styles.compactDotDivider}>•</Text>
+              <Ionicons name="bicycle-outline" size={12} color="#4B5563" style={{ marginRight: 3 }} />
+              <Text style={styles.compactPartnerText} numberOfLines={1}>
+                {item.delivery_partner_name || 'Unassigned'}
+              </Text>
             </View>
           </View>
 
           <TouchableOpacity
-            style={styles.editTemplateBtn}
+            style={styles.compactEditBtn}
             onPress={() => handleOpenEditRecurring(item)}
             activeOpacity={0.7}
           >
-            <Ionicons name="pencil-outline" size={14} color="#8C331A" />
-            <Text style={styles.editTemplateBtnText}>Edit</Text>
+            <Ionicons name="pencil" size={12} color="#8C331A" style={{ marginRight: 3 }} />
+            <Text style={styles.compactEditBtnText}>Edit</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.cardBody}>
-          <Text style={styles.addressText} numberOfLines={1}>
-            <Ionicons name="location-outline" size={13} color="#8E8278" />{' '}
-            {item.delivery_address || 'Delivery Address Not Specified'}
-          </Text>
-
-          {item.delivery_partner_name ? (
-            <Text style={styles.partnerText}>
-              <Ionicons name="bicycle-outline" size={13} color="#2A2421" /> Driver: {item.delivery_partner_name}
+        {/* Metric Badges Grid: Products, Units, Est. Amount, Next Scheduled Date */}
+        <View style={styles.compactMetricsGrid}>
+          <View style={styles.compactMetricItem}>
+            <Text style={styles.compactMetricLabel}>Products</Text>
+            <Text style={styles.compactMetricVal}>{productCount} items</Text>
+          </View>
+          <View style={styles.compactMetricItem}>
+            <Text style={styles.compactMetricLabel}>Units</Text>
+            <Text style={styles.compactMetricVal}>{totalScheduledUnits} units</Text>
+          </View>
+          <View style={styles.compactMetricItem}>
+            <Text style={styles.compactMetricLabel}>Est. Amount</Text>
+            <Text style={styles.compactMetricVal}>₹{estimatedAmount.toLocaleString()}</Text>
+          </View>
+          <View style={styles.compactMetricItem}>
+            <Text style={styles.compactMetricLabel}>Next Date</Text>
+            <Text style={[styles.compactMetricVal, isScheduledToday && !isSkippedToday && !isPaused && { color: '#059669' }]}>
+              {nextDateText}
             </Text>
-          ) : (
-            <Text style={[styles.partnerText, { color: '#A0958D', fontStyle: 'italic' }]}>
-              <Ionicons name="bicycle-outline" size={13} color="#A0958D" /> No Delivery Partner Assigned
-            </Text>
-          )}
-
-          <View style={styles.recurringItemsContainer}>
-            {item.items && item.items.length > 0 ? (
-              item.items.map((it, idx) => (
-                <View key={it.id || idx} style={styles.recurringItemChip}>
-                  <Text style={styles.recurringItemChipText}>
-                    {it.quantity}x {it.product_name}
-                  </Text>
-                </View>
-              ))
-            ) : (
-              <Text style={styles.itemsSummary}>No items specified</Text>
-            )}
           </View>
         </View>
 
-        <View style={styles.todayStatusBar}>
-          {isGeneratedToday ? (
-            <View style={styles.generatedStatusRow}>
-              <Ionicons name="checkmark-circle" size={14} color="#059669" />
-              <Text style={styles.generatedStatusText}>
-                Today's Order Generated (#{item.today_order_id})
-              </Text>
-            </View>
-          ) : isSkippedToday ? (
-            <View style={styles.skippedStatusRow}>
-              <Ionicons name="calendar-outline" size={14} color="#D97706" />
-              <Text style={styles.skippedStatusText}>Skipped for Today</Text>
-            </View>
-          ) : isPaused ? (
-            <View style={styles.skippedStatusRow}>
-              <Ionicons name="pause-circle-outline" size={14} color="#8E8278" />
-              <Text style={[styles.skippedStatusText, { color: '#8E8278' }]}>Template Paused</Text>
-            </View>
-          ) : isScheduledToday ? (
-            <View style={styles.scheduledStatusRow}>
-              <Ionicons name="time-outline" size={14} color="#8C331A" />
-              <Text style={styles.scheduledStatusText}>Scheduled for Today</Text>
-            </View>
-          ) : (
-            <View style={styles.offScheduleStatusRow}>
-              <Ionicons name="ellipse-outline" size={12} color="#8E8278" />
-              <Text style={styles.offScheduleStatusText}>
-                Not scheduled today ({new Date().toLocaleDateString('en-US', { weekday: 'short' })})
-              </Text>
-            </View>
-          )}
-        </View>
-
-        <View style={styles.recurringCardFooter}>
+        {/* Compact Footer Actions: Pause/Resume, Skip Today, Generate Today */}
+        <View style={styles.compactRecFooter}>
           <TouchableOpacity
-            style={[styles.recActionBtn, isPaused && styles.recActionBtnActive]}
+            style={[styles.compactActionBtn, isPaused && styles.compactActionBtnActive]}
             onPress={() => handleTogglePause(item)}
             activeOpacity={0.7}
           >
             <Ionicons
               name={isPaused ? 'play' : 'pause'}
-              size={13}
-              color={isPaused ? '#059669' : '#6B5E55'}
+              size={12}
+              color={isPaused ? '#059669' : '#4B5563'}
               style={{ marginRight: 4 }}
             />
-            <Text style={[styles.recActionBtnText, isPaused && { color: '#059669' }]}>
+            <Text style={[styles.compactActionBtnText, isPaused && { color: '#059669', fontWeight: '700' }]}>
               {isPaused ? 'Resume' : 'Pause'}
             </Text>
           </TouchableOpacity>
 
           {!isPaused && (
             <TouchableOpacity
-              style={[styles.recActionBtn, isSkippedToday && styles.recActionBtnWarning]}
+              style={[styles.compactActionBtn, isSkippedToday && styles.compactActionBtnWarning]}
               onPress={() => handleToggleSkipToday(item)}
               activeOpacity={0.7}
             >
               <Ionicons
                 name={isSkippedToday ? 'arrow-undo-outline' : 'close-circle-outline'}
-                size={13}
-                color={isSkippedToday ? '#8C331A' : '#6B5E55'}
+                size={12}
+                color={isSkippedToday ? '#8C331A' : '#4B5563'}
                 style={{ marginRight: 4 }}
               />
-              <Text style={[styles.recActionBtnText, isSkippedToday && { color: '#8C331A', fontWeight: '700' }]}>
-                {isSkippedToday ? 'Unskip Today' : 'Skip Today'}
+              <Text style={[styles.compactActionBtnText, isSkippedToday && { color: '#8C331A', fontWeight: '700' }]}>
+                {isSkippedToday ? 'Unskip' : 'Skip Today'}
               </Text>
             </TouchableOpacity>
           )}
 
           {isGeneratedToday ? (
-            <View style={styles.orderAlreadyGeneratedBtn}>
-              <Ionicons name="checkmark-done" size={14} color="#059669" style={{ marginRight: 4 }} />
-              <Text style={styles.orderAlreadyGeneratedText}>Order Ready</Text>
+            <View style={styles.compactGeneratedBadge}>
+              <Ionicons name="checkmark-done" size={12} color="#059669" style={{ marginRight: 3 }} />
+              <Text style={styles.compactGeneratedText}>Order Ready</Text>
             </View>
           ) : (
             <TouchableOpacity
               style={[
-                styles.generateTodayBtn,
+                styles.compactGenerateBtn,
                 (isPaused || isSkippedToday) && styles.generateTodayBtnDisabled,
               ]}
               onPress={() => handleGenerateTodayOrder(item)}
@@ -739,8 +714,8 @@ export default function OrdersScreen({ navigation }: any) {
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
                 <>
-                  <Ionicons name="flash" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                  <Text style={styles.generateTodayBtnText}>Generate Today</Text>
+                  <Ionicons name="flash" size={11} color="#FFFFFF" style={{ marginRight: 3 }} />
+                  <Text style={styles.compactGenerateBtnText}>Generate</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -1086,17 +1061,6 @@ export default function OrdersScreen({ navigation }: any) {
           </View>
         </View>
       </Modal>
-
-      {/* Recurring Order Creation & Editing Bottom Sheet Modal */}
-      <RecurringOrderModal
-        visible={recurringModalVisible}
-        customers={customers}
-        products={products}
-        partners={deliveryPartners}
-        existingTemplate={editingRecurring}
-        onClose={() => setRecurringModalVisible(false)}
-        onSubmit={handleSaveRecurringSubmit}
-      />
 
       {/* Centralized Reusable Confirm Dialog */}
       <ConfirmDialog
@@ -1675,6 +1639,177 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#059669',
+  },
+  // Compact Recurring Orders Styles
+  compactRecCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    padding: 12,
+    marginBottom: 10,
+    shadowColor: '#2A2421',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  compactRecTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  compactRecCustName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#2A2421',
+    maxWidth: '75%',
+  },
+  compactStatusPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 6,
+  },
+  compactStatusActive: {
+    backgroundColor: '#ECFDF5',
+  },
+  compactStatusPaused: {
+    backgroundColor: '#F3F4F6',
+  },
+  compactStatusText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  compactStatusTextActive: {
+    color: '#059669',
+  },
+  compactStatusTextPaused: {
+    color: '#6B7280',
+  },
+  compactSubInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  compactFreqText: {
+    fontSize: 12,
+    color: '#8C331A',
+    fontWeight: '600',
+  },
+  compactDotDivider: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginHorizontal: 5,
+  },
+  compactPartnerText: {
+    fontSize: 12,
+    color: '#4B5563',
+    fontWeight: '500',
+    flexShrink: 1,
+  },
+  compactEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  compactEditBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  compactMetricsGrid: {
+    flexDirection: 'row',
+    backgroundColor: '#FAF8F5',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#F3EFEA',
+  },
+  compactMetricItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  compactMetricLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#8E8278',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+  },
+  compactMetricVal: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  compactRecFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#FAF8F5',
+  },
+  compactActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  compactActionBtnActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  compactActionBtnWarning: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  compactActionBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  compactGeneratedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  compactGeneratedText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  compactGenerateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#8C331A',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  compactGenerateBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   stickyHeaderSection: {
     backgroundColor: '#FAF8F5',
