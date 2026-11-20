@@ -10,10 +10,12 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Header from '../../components/common/Header';
+import { CustomDialog, DeliveryPartnerDropdown } from '../../components/common';
 import orderService, { BackendRecurringOrder } from '../../services/order.service';
 import billingService, { BillingCustomer } from '../../services/billing.service';
 import productService, { BackendProduct } from '../../services/product.service';
@@ -52,9 +54,32 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
       : ['0', '1', '2', '3', '4']
   );
   const [notes, setNotes] = useState<string>(existingTemplate?.notes || '');
-  const [itemQuantities, setItemQuantities] = useState<{ [productId: number]: number }>({});
+
+  // itemQuantities stores string values during typing to preserve product selection if temporarily empty
+  const [itemQuantities, setItemQuantities] = useState<{ [productId: number]: string }>({});
   const [submitting, setSubmitting] = useState<boolean>(false);
-  const [productSearch, setProductSearch] = useState<string>('');
+
+  // Add Product Modal State
+  const [addModalVisible, setAddModalVisible] = useState<boolean>(false);
+  const [modalSearch, setModalSearch] = useState<string>('');
+
+  // Custom Confirmation Dialog State
+  const [dialogConfig, setDialogConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message?: string;
+    type?: 'confirm' | 'danger' | 'info' | 'warning' | 'success';
+    buttons?: Array<{
+      text: string;
+      style?: 'default' | 'cancel' | 'destructive';
+      onPress?: () => void;
+    }>;
+  }>({
+    visible: false,
+    title: '',
+  });
+
+  const closeDialog = () => setDialogConfig(prev => ({ ...prev, visible: false }));
 
   useEffect(() => {
     async function loadData() {
@@ -72,6 +97,7 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
           id: Number(p.id),
           name: p.name,
           price: String(p.price || '0').replace(/[^0-9.]/g, ''),
+          unit: p.unit || 'Pc',
           description: p.description,
           is_available: true,
           category: p.category || 1,
@@ -80,15 +106,15 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
         setProducts(mappedProds);
 
         if (existingTemplate && existingTemplate.items) {
-          const qMap: { [id: number]: number } = {};
+          const qMap: { [id: number]: string } = {};
           existingTemplate.items.forEach(it => {
-            qMap[it.product] = it.quantity;
+            qMap[it.product] = String(it.quantity);
           });
           setItemQuantities(qMap);
         } else if (route?.params?.prefilledItems && Array.isArray(route.params.prefilledItems)) {
-          const qMap: { [id: number]: number } = {};
+          const qMap: { [id: number]: string } = {};
           route.params.prefilledItems.forEach((it: any) => {
-            qMap[Number(it.product_id)] = it.quantity;
+            qMap[Number(it.product_id)] = String(it.quantity);
           });
           setItemQuantities(qMap);
         }
@@ -114,36 +140,88 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
     );
   };
 
-  const updateQuantity = (productId: number, delta: number) => {
-    setItemQuantities(prev => {
-      const cur = prev[productId] || 0;
-      const next = Math.max(0, cur + delta);
-      if (next === 0) {
-        const copy = { ...prev };
-        delete copy[productId];
-        return copy;
-      }
-      return { ...prev, [productId]: next };
+  // Direct numeric quantity change handler - preserves product row even if text is empty
+  const handleQuantityTextChange = (productId: number, text: string) => {
+    // Only allow positive digits
+    const cleaned = text.replace(/[^0-9]/g, '');
+    setItemQuantities(prev => ({
+      ...prev,
+      [productId]: cleaned,
+    }));
+  };
+
+  // Individual product remove action with confirmation
+  const handleRemoveProduct = (productId: number) => {
+    const prod = products.find(p => p.id === productId);
+    const prodName = prod ? prod.name : `Product #${productId}`;
+
+    setDialogConfig({
+      visible: true,
+      title: 'Remove Product',
+      message: `Remove "${prodName}" from this recurring order template? This will not delete the product from the catalog.`,
+      type: 'warning',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: closeDialog },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            closeDialog();
+            setItemQuantities(prev => {
+              const copy = { ...prev };
+              delete copy[productId];
+              return copy;
+            });
+          },
+        },
+      ],
     });
   };
 
-  const selectedCount = useMemo(() => {
-    return Object.values(itemQuantities).reduce((s, q) => s + q, 0);
+  // Add product from modal
+  const handleAddProductFromModal = (p: BackendProduct) => {
+    setItemQuantities(prev => {
+      const existingQty = prev[p.id];
+      if (existingQty !== undefined) {
+        // If already in list, increase quantity by 1 or keep valid number
+        const num = parseInt(existingQty, 10) || 0;
+        return { ...prev, [p.id]: String(num + 1) };
+      }
+      return { ...prev, [p.id]: '1' };
+    });
+    setAddModalVisible(false);
+    setModalSearch('');
+  };
+
+  // Calculations
+  const selectedProductIds = useMemo(() => {
+    return Object.keys(itemQuantities).map(Number);
+  }, [itemQuantities]);
+
+  const totalDistinctProducts = selectedProductIds.length;
+
+  const totalQuantities = useMemo(() => {
+    return Object.values(itemQuantities).reduce((sum, str) => {
+      const num = parseInt(str, 10) || 0;
+      return sum + num;
+    }, 0);
   }, [itemQuantities]);
 
   const estimatedTotal = useMemo(() => {
-    return Object.entries(itemQuantities).reduce((sum, [pid, qty]) => {
+    return Object.entries(itemQuantities).reduce((sum, [pid, str]) => {
       const prod = products.find(p => p.id === Number(pid));
       const rate = prod ? parseFloat(prod.price) || 0 : 0;
-      return sum + rate * qty;
+      const num = parseInt(str, 10) || 0;
+      return sum + rate * num;
     }, 0);
   }, [itemQuantities, products]);
 
-  const filteredProducts = useMemo(() => {
-    if (!productSearch.trim()) return products;
-    const q = productSearch.toLowerCase();
+  // Modal filtered products
+  const modalFilteredProducts = useMemo(() => {
+    if (!modalSearch.trim()) return products;
+    const q = modalSearch.toLowerCase().trim();
     return products.filter(p => p.name.toLowerCase().includes(q));
-  }, [products, productSearch]);
+  }, [products, modalSearch]);
 
   const handleSave = async () => {
     if (!selectedCustomerId) {
@@ -154,18 +232,36 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
       Alert.alert('Required', 'Please enter a delivery address.');
       return;
     }
-    const items = Object.entries(itemQuantities).map(([pid, qty]) => ({
-      product_id: Number(pid),
-      quantity: qty,
-    }));
-    if (items.length === 0) {
-      Alert.alert('Required', 'Please select at least one product quantity.');
+
+    // Validate quantities
+    if (selectedProductIds.length === 0) {
+      Alert.alert('Required', 'Please add at least one product to the recurring order template.');
       return;
     }
+
+    const invalidItems = selectedProductIds.filter(pid => {
+      const val = parseInt(itemQuantities[pid], 10);
+      return isNaN(val) || val <= 0;
+    });
+
+    if (invalidItems.length > 0) {
+      const invalidNames = invalidItems.map(pid => {
+        const prod = products.find(p => p.id === pid);
+        return prod ? prod.name : `Product #${pid}`;
+      }).join(', ');
+      Alert.alert('Invalid Quantity', `Please enter a valid quantity (> 0) for: ${invalidNames}`);
+      return;
+    }
+
     if (frequency === 'weekdays' && selectedWeekdays.length === 0) {
       Alert.alert('Required', 'Please select at least one active weekday.');
       return;
     }
+
+    const items = selectedProductIds.map(pid => ({
+      product_id: pid,
+      quantity: parseInt(itemQuantities[pid], 10),
+    }));
 
     try {
       setSubmitting(true);
@@ -208,8 +304,12 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
   const selectedCustObj = customers.find(c => c.id === selectedCustomerId) || initialCustomer;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <Header title={isEditing ? 'Edit Recurring Template' : 'New Recurring Template'} showBack />
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <Header
+        title={isEditing ? 'Edit Recurring Template' : 'New Recurring Template'}
+        showBack={true}
+        showNotification={false}
+      />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -299,23 +399,24 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
                 style={{ marginRight: 6 }}
               />
               <Text style={[styles.freqBtnText, frequency === 'weekdays' && styles.freqBtnTextActive]}>
-                Selected Days Only
+                Selected Weekdays
               </Text>
             </TouchableOpacity>
           </View>
 
+          {/* Weekday Toggles */}
           {frequency === 'weekdays' && (
             <View style={styles.weekdaysRow}>
-              {WEEKDAYS.map(w => {
-                const isSelected = selectedWeekdays.includes(w.key);
+              {WEEKDAYS.map(day => {
+                const isActive = selectedWeekdays.includes(day.key);
                 return (
                   <TouchableOpacity
-                    key={w.key}
-                    style={[styles.dayChip, isSelected && styles.dayChipActive]}
-                    onPress={() => toggleWeekday(w.key)}
+                    key={day.key}
+                    style={[styles.dayChip, isActive && styles.dayChipActive]}
+                    onPress={() => toggleWeekday(day.key)}
                   >
-                    <Text style={[styles.dayChipText, isSelected && styles.dayChipTextActive]}>
-                      {w.label}
+                    <Text style={[styles.dayChipText, isActive && styles.dayChipTextActive]}>
+                      {day.label}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -323,35 +424,15 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
             </View>
           )}
 
-          {/* Assign Delivery Partner (Optional) */}
-          <Text style={styles.sectionLabel}>ASSIGN DELIVERY PARTNER (OPTIONAL)</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-            <TouchableOpacity
-              style={[styles.partnerChip, selectedPartnerId === null && styles.partnerChipActive]}
-              onPress={() => setSelectedPartnerId(null)}
-            >
-              <Text style={[styles.partnerChipText, selectedPartnerId === null && styles.partnerChipTextActive]}>
-                Unassigned
-              </Text>
-            </TouchableOpacity>
-            {partners.map(p => (
-              <TouchableOpacity
-                key={p.id}
-                style={[styles.partnerChip, selectedPartnerId === p.id && styles.partnerChipActive]}
-                onPress={() => setSelectedPartnerId(p.id)}
-              >
-                <Ionicons
-                  name="bicycle-outline"
-                  size={14}
-                  color={selectedPartnerId === p.id ? '#FFFFFF' : '#8C331A'}
-                  style={{ marginRight: 4 }}
-                />
-                <Text style={[styles.partnerChipText, selectedPartnerId === p.id && styles.partnerChipTextActive]}>
-                  {p.name || `Partner #${p.id}`}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          {/* Delivery Partner Searchable Dropdown */}
+          <DeliveryPartnerDropdown
+            selectedPartnerId={selectedPartnerId}
+            onSelectPartner={(partnerId) => setSelectedPartnerId(partnerId)}
+            label="ASSIGN DELIVERY PARTNER (OPTIONAL)"
+            placeholder="Select Delivery Partner (Optional)"
+            optional={true}
+            containerStyle={{ marginBottom: 10 }}
+          />
 
           {/* Order Notes */}
           <Text style={styles.sectionLabel}>TEMPLATE NOTES (OPTIONAL)</Text>
@@ -363,89 +444,242 @@ export default function RecurringOrderScreen({ route, navigation }: any) {
             onChangeText={setNotes}
           />
 
-          {/* Select Products */}
+          {/* Selected Products Section */}
           <View style={styles.productsHeaderRow}>
-            <Text style={styles.sectionLabel}>PRODUCTS & QUANTITIES</Text>
-            {selectedCount > 0 && (
-              <Text style={styles.selectedCountText}>
-                {selectedCount} items (~₹{estimatedTotal.toLocaleString()})
+            <Text style={styles.sectionLabel}>RECURRING PRODUCTS ({totalDistinctProducts})</Text>
+          </View>
+
+          {selectedProductIds.length === 0 ? (
+            <View style={styles.emptyProductsCard}>
+              <Ionicons name="cart-outline" size={32} color="#C4BCB5" />
+              <Text style={styles.emptyProductsTitle}>No Products Selected</Text>
+              <Text style={styles.emptyProductsSub}>
+                Add products to automatically deliver on schedule.
               </Text>
-            )}
-          </View>
+            </View>
+          ) : (
+            <View style={styles.selectedProductsCard}>
+              {selectedProductIds.map((pid, idx) => {
+                const prod = products.find(p => p.id === pid);
+                const isLast = idx === selectedProductIds.length - 1;
+                const priceNum = prod ? parseFloat(prod.price) || 0 : 0;
+                const unitStr = prod?.unit || 'Pc';
+                const currentQtyStr = itemQuantities[pid] ?? '';
+                const lineTotal = priceNum * (parseInt(currentQtyStr, 10) || 0);
 
-          <View style={styles.searchBox}>
-            <Ionicons name="search-outline" size={15} color="#8E8278" style={{ marginRight: 6 }} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search products..."
-              placeholderTextColor="#8E8278"
-              value={productSearch}
-              onChangeText={setProductSearch}
-            />
-          </View>
+                return (
+                  <View
+                    key={pid}
+                    style={[
+                      styles.selectedProdRow,
+                      isLast && { borderBottomWidth: 0 },
+                    ]}
+                  >
+                    {/* Left: Product Info */}
+                    <View style={styles.prodInfoCol}>
+                      <Text style={styles.prodName} numberOfLines={1}>
+                        {prod ? prod.name : `Product #${pid}`}
+                      </Text>
+                      <Text style={styles.prodPrice}>
+                        ₹{priceNum} / {unitStr}
+                      </Text>
+                    </View>
 
-          <View style={styles.productsCard}>
-            {filteredProducts.map((p, idx) => {
-              const qty = itemQuantities[p.id] || 0;
-              const isSelected = qty > 0;
-              const isLast = idx === filteredProducts.length - 1;
-              return (
-                <View
-                  key={p.id}
-                  style={[
-                    styles.prodRow,
-                    isLast && { borderBottomWidth: 0 },
-                    isSelected && styles.prodRowSelected,
-                  ]}
-                >
-                  <View style={{ flex: 1, marginRight: 10 }}>
-                    <Text style={styles.prodName}>{p.name}</Text>
-                    <Text style={styles.prodPrice}>₹{p.price} / unit</Text>
-                  </View>
+                    {/* Middle: Direct Numeric Quantity Input */}
+                    <View style={styles.qtyInputBox}>
+                      <Text style={styles.qtyLabel}>Qty</Text>
+                      <TextInput
+                        style={styles.qtyTextInput}
+                        keyboardType="numeric"
+                        value={currentQtyStr}
+                        placeholder="0"
+                        placeholderTextColor="#A3968C"
+                        onChangeText={t => handleQuantityTextChange(pid, t)}
+                        selectTextOnFocus
+                      />
+                    </View>
 
-                  <View style={styles.qtyControl}>
+                    {/* Line Total */}
+                    <View style={styles.lineTotalBox}>
+                      <Text style={styles.lineTotalText}>₹{lineTotal.toLocaleString()}</Text>
+                    </View>
+
+                    {/* Right: Individual Delete Icon */}
                     <TouchableOpacity
-                      style={[styles.qtyBtn, qty === 0 && styles.qtyBtnDisabled]}
-                      onPress={() => updateQuantity(p.id, -1)}
-                      disabled={qty === 0}
+                      style={styles.removeBtn}
+                      onPress={() => handleRemoveProduct(pid)}
+                      activeOpacity={0.7}
+                      accessibilityLabel="Remove item"
                     >
-                      <Ionicons name="remove" size={13} color={qty === 0 ? '#C4BCB5' : '#8C331A'} />
-                    </TouchableOpacity>
-
-                    <Text style={[styles.qtyText, isSelected && styles.qtyTextActive]}>{qty}</Text>
-
-                    <TouchableOpacity
-                      style={styles.qtyBtn}
-                      onPress={() => updateQuantity(p.id, 1)}
-                    >
-                      <Ionicons name="add" size={13} color="#8C331A" />
+                      <Ionicons name="trash-outline" size={19} color="#DC2626" />
                     </TouchableOpacity>
                   </View>
-                </View>
-              );
-            })}
-          </View>
+                );
+              })}
+            </View>
+          )}
 
-          {/* Save Button */}
+          {/* + Add Product Button */}
           <TouchableOpacity
-            style={[styles.saveBtn, (selectedCount === 0 || submitting) && styles.saveBtnDisabled]}
-            onPress={handleSave}
-            disabled={selectedCount === 0 || submitting}
+            style={styles.addProductBtn}
+            onPress={() => {
+              setModalSearch('');
+              setAddModalVisible(true);
+            }}
             activeOpacity={0.8}
           >
-            {submitting ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <>
-                <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.saveBtnText}>
-                  {isEditing ? 'Update Recurring Template' : 'Save Recurring Template'}
-                </Text>
-              </>
-            )}
+            <Ionicons name="add-circle-outline" size={18} color="#8C331A" style={{ marginRight: 6 }} />
+            <Text style={styles.addProductBtnText}>+ Add Product</Text>
           </TouchableOpacity>
+
+          {/* Order Summary Card */}
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryTitle}>ORDER SUMMARY</Text>
+
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Selected Products</Text>
+              <Text style={styles.summaryVal}>{totalDistinctProducts} items</Text>
+            </View>
+
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Total Quantity</Text>
+              <Text style={styles.summaryVal}>{totalQuantities} units</Text>
+            </View>
+
+            <View style={[styles.summaryRow, styles.summaryTotalRow]}>
+              <Text style={styles.summaryTotalLabel}>Estimated Recurring Amount</Text>
+              <Text style={styles.summaryTotalVal}>₹{estimatedTotal.toLocaleString()}</Text>
+            </View>
+          </View>
+
+          {/* Spacer to allow full scroll above fixed footer */}
+          <View style={{ height: 90 }} />
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Fixed Bottom Action Bar */}
+      <View style={styles.bottomFixedFooter}>
+        <TouchableOpacity
+          style={[styles.saveBtn, (selectedProductIds.length === 0 || submitting) && styles.saveBtnDisabled]}
+          onPress={handleSave}
+          disabled={selectedProductIds.length === 0 || submitting}
+          activeOpacity={0.85}
+        >
+          {submitting ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <>
+              <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+              <Text style={styles.saveBtnText}>
+                {isEditing ? 'Update Recurring Template' : 'Save Recurring Template'}
+              </Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {/* Add Product Searchable Modal */}
+      <Modal
+        visible={addModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setAddModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            {/* Modal Header */}
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Add Product</Text>
+              <TouchableOpacity
+                onPress={() => setAddModalVisible(false)}
+                style={styles.modalCloseBtn}
+              >
+                <Ionicons name="close" size={20} color="#554A42" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Modal Search Bar */}
+            <View style={styles.modalSearchBox}>
+              <Ionicons name="search-outline" size={16} color="#8E8278" style={{ marginRight: 8 }} />
+              <TextInput
+                style={styles.modalSearchInput}
+                placeholder="Search products by name..."
+                placeholderTextColor="#A0958D"
+                value={modalSearch}
+                onChangeText={setModalSearch}
+                autoFocus
+              />
+              {modalSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setModalSearch('')}>
+                  <Ionicons name="close-circle" size={16} color="#8E8278" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Modal Product List */}
+            <ScrollView
+              style={styles.modalProductList}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {modalFilteredProducts.length === 0 ? (
+                <View style={styles.emptySearchBox}>
+                  <Text style={styles.emptySearchText}>No matching products found</Text>
+                </View>
+              ) : (
+                modalFilteredProducts.map(prod => {
+                  const alreadySelected = itemQuantities[prod.id] !== undefined;
+                  const currentQty = parseInt(itemQuantities[prod.id] || '0', 10);
+                  const priceNum = parseFloat(prod.price) || 0;
+                  const unitStr = prod.unit || 'Pc';
+
+                  return (
+                    <TouchableOpacity
+                      key={prod.id}
+                      style={[
+                        styles.modalProdItem,
+                        alreadySelected && styles.modalProdItemActive,
+                      ]}
+                      onPress={() => handleAddProductFromModal(prod)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flex: 1, marginRight: 8 }}>
+                        <Text style={styles.modalProdName}>{prod.name}</Text>
+                        <Text style={styles.modalProdPrice}>
+                          ₹{priceNum} / {unitStr}
+                        </Text>
+                      </View>
+
+                      {alreadySelected ? (
+                        <View style={styles.alreadySelectedBadge}>
+                          <Text style={styles.alreadySelectedText}>
+                            Selected ({currentQty}) +
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={styles.addPill}>
+                          <Ionicons name="add" size={16} color="#8C331A" />
+                          <Text style={styles.addPillText}>Add</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Confirmation Dialog */}
+      <CustomDialog
+        visible={dialogConfig.visible}
+        title={dialogConfig.title}
+        message={dialogConfig.message}
+        type={dialogConfig.type}
+        buttons={dialogConfig.buttons}
+        onClose={closeDialog}
+      />
     </SafeAreaView>
   );
 }
@@ -457,7 +691,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 20,
   },
   centerBox: {
     flex: 1,
@@ -632,46 +866,47 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 4,
   },
-  selectedCountText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#8C331A',
-  },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  emptyProductsCard: {
     backgroundColor: '#FFFFFF',
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#EFEAE4',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    height: 38,
-    marginBottom: 8,
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
   },
-  searchInput: {
-    flex: 1,
+  emptyProductsTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#554A42',
+    marginTop: 8,
+  },
+  emptyProductsSub: {
     fontSize: 12,
-    color: '#2A2421',
+    color: '#8E8278',
+    marginTop: 2,
+    textAlign: 'center',
   },
-  productsCard: {
+  selectedProductsCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#EFEAE4',
     overflow: 'hidden',
-    marginBottom: 16,
+    marginBottom: 12,
   },
-  prodRow: {
+  selectedProdRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#EFEAE4',
   },
-  prodRowSelected: {
-    backgroundColor: '#FCFAF8',
+  prodInfoCol: {
+    flex: 2,
+    marginRight: 8,
   },
   prodName: {
     fontSize: 13,
@@ -684,39 +919,127 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 2,
   },
-  qtyControl: {
+  qtyInputBox: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FAF8F5',
-    borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    padding: 2,
+    borderColor: '#E0D8D0',
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    height: 36,
+    marginRight: 8,
   },
-  qtyBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 4,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
+  qtyLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#8E8278',
+    marginRight: 4,
+  },
+  qtyTextInput: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#2A2421',
+    minWidth: 32,
+    maxWidth: 55,
+    textAlign: 'center',
+    paddingVertical: 0,
+  },
+  lineTotalBox: {
+    width: 65,
+    alignItems: 'flex-end',
+    marginRight: 8,
+  },
+  lineTotalText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  removeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FEF2F2',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  qtyBtnDisabled: {
-    opacity: 0.4,
+  addProductBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#8C331A',
+    borderStyle: 'dashed',
+    borderRadius: 10,
+    height: 42,
+    marginBottom: 16,
   },
-  qtyText: {
-    fontSize: 12,
+  addProductBtnText: {
+    fontSize: 13,
     fontWeight: '700',
-    color: '#8E8278',
-    marginHorizontal: 8,
-    minWidth: 16,
-    textAlign: 'center',
-  },
-  qtyTextActive: {
     color: '#8C331A',
+  },
+  summaryCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    padding: 14,
+    marginBottom: 12,
+  },
+  summaryTitle: {
+    fontSize: 11,
     fontWeight: '800',
+    color: '#8E8278',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  summaryLabel: {
+    fontSize: 12,
+    color: '#554A42',
+  },
+  summaryVal: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2A2421',
+  },
+  summaryTotalRow: {
+    borderTopWidth: 1,
+    borderTopColor: '#EFEAE4',
+    paddingTop: 8,
+    marginTop: 6,
+  },
+  summaryTotalLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  summaryTotalVal: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#8C331A',
+  },
+  bottomFixedFooter: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#EFEAE4',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
   },
   saveBtn: {
     flexDirection: 'row',
@@ -733,5 +1056,120 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    maxHeight: '75%',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#2A2421',
+  },
+  modalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FAF8F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 40,
+    marginBottom: 10,
+  },
+  modalSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#2A2421',
+    paddingVertical: 0,
+  },
+  modalProductList: {
+    maxHeight: 280,
+  },
+  emptySearchBox: {
+    paddingVertical: 24,
+    alignItems: 'center',
+  },
+  emptySearchText: {
+    fontSize: 13,
+    color: '#8E8278',
+  },
+  modalProdItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5EFEA',
+  },
+  modalProdItemActive: {
+    backgroundColor: '#FEF9F6',
+  },
+  modalProdName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2A2421',
+  },
+  modalProdPrice: {
+    fontSize: 11,
+    color: '#8C331A',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  addPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF0EA',
+    borderWidth: 1,
+    borderColor: '#FBD8CB',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  addPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8C331A',
+    marginLeft: 2,
+  },
+  alreadySelectedBadge: {
+    backgroundColor: '#E8F5E9',
+    borderRadius: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  alreadySelectedText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2E7D32',
   },
 });
