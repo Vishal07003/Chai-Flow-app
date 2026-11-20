@@ -9,10 +9,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   Modal,
-  Alert,
   ScrollView,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -25,31 +22,59 @@ import orderService, {
 } from '../../services/order.service';
 import billingService, { BillingCustomer } from '../../services/billing.service';
 import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
-import companyService, { Company } from '../../services/company.service';
 import productService, { BackendProduct } from '../../services/product.service';
-import { RecurringOrderModal, type RecurringOrderFormData } from '../../components/order';
+import {
+  RecurringOrderModal,
+  type RecurringOrderFormData,
+} from '../../components/order';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import AppToast from '../../utils/toast';
 
-const tabs = ['ALL', 'PENDING', 'ACCEPTED', 'OUT_FOR_DELIVERY', 'DELIVERED'];
+const todayFilterTabs = [
+  { key: 'ALL', label: 'All' },
+  { key: 'PENDING', label: 'Pending' },
+  { key: 'ASSIGNED', label: 'Assigned' },
+  { key: 'ACCEPTED', label: 'Accepted' },
+  { key: 'PICKED_UP', label: 'Picked Up' },
+  { key: 'ON_THE_WAY', label: 'On The Way' },
+  { key: 'DELIVERED', label: 'Delivered' },
+  { key: 'FAILED_CANCELLED', label: 'Failed / Cancelled' },
+];
+
+const historyStatusTabs = [
+  { key: 'ALL', label: 'All' },
+  { key: 'DELIVERED', label: 'Delivered' },
+  { key: 'CANCELLED', label: 'Cancelled' },
+  { key: 'FAILED', label: 'Failed' },
+];
 
 export default function OrdersScreen({ navigation }: any) {
+  // Main Top Section: 'today' | 'recurring' | 'history'
+  const [sectionMode, setSectionMode] = useState<'today' | 'recurring' | 'history'>('today');
+
+  // Orders State
   const [orders, setOrders] = useState<BackendOrder[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<string>('ALL');
 
-  // Top Section Mode: 'orders' or 'recurring'
-  const [sectionMode, setSectionMode] = useState<'orders' | 'recurring'>('orders');
+  // Filters
+  const [todayFilter, setTodayFilter] = useState<string>('ALL');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('ALL');
+  const [historyPartnerFilter, setHistoryPartnerFilter] = useState<number | null>(null);
+  const [historyCustomerFilter, setHistoryCustomerFilter] = useState<number | null>(null);
 
   // Recurring Orders State
   const [recurringOrders, setRecurringOrders] = useState<BackendRecurringOrder[]>([]);
   const [loadingRecurring, setLoadingRecurring] = useState<boolean>(false);
   const [recurringModalVisible, setRecurringModalVisible] = useState<boolean>(false);
   const [editingRecurring, setEditingRecurring] = useState<BackendRecurringOrder | null>(null);
+  const [generatingRecurringId, setGeneratingRecurringId] = useState<number | null>(null);
+
+  // Modal creation datasets
   const [customers, setCustomers] = useState<BillingCustomer[]>([]);
   const [deliveryPartners, setDeliveryPartners] = useState<DeliveryPartnerProfile[]>([]);
-  const [generatingRecurringId, setGeneratingRecurringId] = useState<number | null>(null);
+  const [products, setProducts] = useState<BackendProduct[]>([]);
 
   // Manual Invoice Preview & Generation State
   const [selectedOrder, setSelectedOrder] = useState<BackendOrder | null>(null);
@@ -58,15 +83,21 @@ export default function OrdersScreen({ navigation }: any) {
   const [previewModalVisible, setPreviewModalVisible] = useState<boolean>(false);
   const [generating, setGenerating] = useState<boolean>(false);
 
-  // New Commercial Order Creation State
-  const [createModalVisible, setCreateModalVisible] = useState<boolean>(false);
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
-  const [products, setProducts] = useState<BackendProduct[]>([]);
-  const [deliveryAddress, setDeliveryAddress] = useState<string>('');
-  const [orderNotes, setOrderNotes] = useState<string>('');
-  const [selectedItems, setSelectedItems] = useState<{ [productId: number]: number }>({});
-  const [creatingOrder, setCreatingOrder] = useState<boolean>(false);
+  // Centralized Confirm Dialog State
+  const [confirmDialogConfig, setConfirmDialogConfig] = useState<{
+    visible: boolean;
+    title: string;
+    description?: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    type?: 'danger' | 'warning' | 'info' | 'success';
+    icon?: string;
+    onConfirm: () => void;
+  }>({
+    visible: false,
+    title: '',
+    onConfirm: () => { },
+  });
 
   const fetchOrders = useCallback(async () => {
     try {
@@ -94,17 +125,14 @@ export default function OrdersScreen({ navigation }: any) {
 
   const loadCreationData = useCallback(async () => {
     try {
-      const [compList, custList, partnerList, prodList] = await Promise.all([
-        companyService.getCompanies(),
+      const [custList, partnerList, prodList] = await Promise.all([
         billingService.getCustomers(),
         deliveryService.getDeliveryPartners(),
         productService.getProductsList(),
       ]);
-      setCompanies(compList || []);
       setCustomers(custList || []);
       setDeliveryPartners(partnerList || []);
 
-      // Map to backend products format
       const mappedProds: BackendProduct[] = (prodList || []).map((p: any) => ({
         id: Number(p.id),
         name: p.name,
@@ -115,44 +143,153 @@ export default function OrdersScreen({ navigation }: any) {
         created_at: p.created_at || new Date().toISOString(),
       }));
       setProducts(mappedProds);
-      if (compList && compList.length > 0) {
-        setSelectedCompanyId(compList[0].id);
-        setDeliveryAddress(compList[0].billing_address || '');
-      }
     } catch (err) {
       console.log('Error loading data for order creation:', err);
     }
   }, []);
 
   useEffect(() => {
+    const unsubscribe = navigation.addListener?.('focus', () => {
+      fetchOrders();
+      fetchRecurringOrders();
+      loadCreationData();
+    });
     fetchOrders();
     fetchRecurringOrders();
     loadCreationData();
-  }, [fetchOrders, fetchRecurringOrders, loadCreationData]);
+    return unsubscribe;
+  }, [navigation, fetchOrders, fetchRecurringOrders, loadCreationData]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchOrders();
     fetchRecurringOrders();
-  }, [fetchOrders, fetchRecurringOrders]);
+    loadCreationData();
+  }, [fetchOrders, fetchRecurringOrders, loadCreationData]);
 
-  const filteredOrders = useMemo(() => {
+  // Date partition helper: Is an order created today?
+  const isOrderFromToday = (orderDateStr: string) => {
+    if (!orderDateStr) return false;
+    const orderDate = new Date(orderDateStr);
+    const today = new Date();
+    return (
+      orderDate.getFullYear() === today.getFullYear() &&
+      orderDate.getMonth() === today.getMonth() &&
+      orderDate.getDate() === today.getDate()
+    );
+  };
+
+  // 1. Today's Orders Filtered
+  const filteredTodayOrders = useMemo(() => {
     return orders.filter(o => {
-      const matchesTab =
-        activeTab === 'ALL' || o.status.toUpperCase() === activeTab;
+      // Must be created today
+      if (!isOrderFromToday(o.created_at)) return false;
+
+      // Status Filter
+      if (todayFilter !== 'ALL') {
+        const orderStatus = o.status.toUpperCase();
+        const deliveryStatus = (o.delivery_status || '').toUpperCase();
+
+        if (todayFilter === 'PENDING') {
+          if (orderStatus !== 'PENDING' || o.delivery_partner_id) return false;
+        } else if (todayFilter === 'ASSIGNED') {
+          if (deliveryStatus !== 'ASSIGNED' && !o.delivery_partner_id) return false;
+        } else if (todayFilter === 'ACCEPTED') {
+          if (deliveryStatus !== 'ACCEPTED' && orderStatus !== 'ACCEPTED') return false;
+        } else if (todayFilter === 'PICKED_UP') {
+          if (deliveryStatus !== 'PICKED_UP' && orderStatus !== 'PREPARING') return false;
+        } else if (todayFilter === 'ON_THE_WAY') {
+          if (deliveryStatus !== 'ON_THE_WAY' && orderStatus !== 'OUT_FOR_DELIVERY') return false;
+        } else if (todayFilter === 'DELIVERED') {
+          if (orderStatus !== 'DELIVERED' && deliveryStatus !== 'DELIVERED') return false;
+        } else if (todayFilter === 'FAILED_CANCELLED') {
+          if (orderStatus !== 'CANCELLED' && deliveryStatus !== 'FAILED') return false;
+        }
+      }
+
+      // Search Query
       const q = searchQuery.toLowerCase().trim();
-      const matchesQuery =
-        !q ||
+      if (!q) return true;
+      return (
+        String(o.id).includes(q) ||
         o.customer_name?.toLowerCase().includes(q) ||
         o.company_name?.toLowerCase().includes(q) ||
-        String(o.id).includes(q) ||
-        o.delivery_address?.toLowerCase().includes(q);
-
-      return matchesTab && matchesQuery;
+        o.delivery_address?.toLowerCase().includes(q) ||
+        o.delivery_partner_name?.toLowerCase().includes(q)
+      );
     });
-  }, [orders, activeTab, searchQuery]);
+  }, [orders, todayFilter, searchQuery]);
 
-  // Open Invoice Preview Modal (Owner review before generating official invoice)
+  // 2. Order History Filtered (All orders or prior orders with full filter support)
+  const filteredHistoryOrders = useMemo(() => {
+    return orders.filter(o => {
+      // Status Filter
+      if (historyStatusFilter !== 'ALL') {
+        const st = o.status.toUpperCase();
+        const dst = (o.delivery_status || '').toUpperCase();
+        if (historyStatusFilter === 'DELIVERED') {
+          if (st !== 'DELIVERED' && dst !== 'DELIVERED') return false;
+        } else if (historyStatusFilter === 'CANCELLED') {
+          if (st !== 'CANCELLED') return false;
+        } else if (historyStatusFilter === 'FAILED') {
+          if (dst !== 'FAILED') return false;
+        }
+      }
+
+      // Customer Filter
+      if (historyCustomerFilter && o.customer_profile !== historyCustomerFilter && o.customer !== historyCustomerFilter) {
+        return false;
+      }
+
+      // Partner Filter
+      if (historyPartnerFilter && o.delivery_partner_id !== historyPartnerFilter) {
+        return false;
+      }
+
+      // Search Query
+      const q = searchQuery.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        String(o.id).includes(q) ||
+        o.customer_name?.toLowerCase().includes(q) ||
+        o.company_name?.toLowerCase().includes(q) ||
+        o.delivery_address?.toLowerCase().includes(q) ||
+        o.delivery_partner_name?.toLowerCase().includes(q)
+      );
+    });
+  }, [orders, historyStatusFilter, historyCustomerFilter, historyPartnerFilter, searchQuery]);
+
+  // 3. Recurring Orders Filtered
+  const filteredRecurringOrders = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return recurringOrders;
+    return recurringOrders.filter(
+      r =>
+        r.customer_name?.toLowerCase().includes(q) ||
+        r.delivery_address?.toLowerCase().includes(q) ||
+        r.delivery_partner_name?.toLowerCase().includes(q) ||
+        r.notes?.toLowerCase().includes(q)
+    );
+  }, [recurringOrders, searchQuery]);
+
+  // Order Details Navigation
+  const handleOpenOrderDetails = (order: BackendOrder) => {
+    navigation.navigate('OrderDetails', {
+      orderId: order.id,
+      order,
+    });
+  };
+
+  // Floating Action Button Handler
+  const handleOpenCreateFlow = () => {
+    if (sectionMode === 'recurring') {
+      handleOpenNewRecurring();
+    } else {
+      navigation.navigate('CreateOrder', { mode: 'order' });
+    }
+  };
+
+  // Open Invoice Preview Modal
   const handleOpenInvoicePreview = async (order: BackendOrder) => {
     try {
       setSelectedOrder(order);
@@ -161,124 +298,46 @@ export default function OrdersScreen({ navigation }: any) {
       const preview = await orderService.getInvoicePreview(order.id);
       setInvoicePreview(preview);
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to load invoice preview.');
+      AppToast.error('Preview Failed', err?.message || 'Failed to load invoice preview.');
       setPreviewModalVisible(false);
     } finally {
       setPreviewLoading(false);
     }
   };
 
-  // Confirm manual invoice generation
+  // Confirm Manual Invoice Generation
   const handleConfirmGenerateInvoice = async () => {
     if (!selectedOrder) return;
 
-    try {
-      setGenerating(true);
-      const result = await orderService.generateManualInvoice(selectedOrder.id);
-      setPreviewModalVisible(false);
-      fetchOrders();
-      Alert.alert(
-        'Invoice Created',
-        `Official Invoice #${result.invoice_number || 'Generated'} has been issued and debited to company ledger.`,
-      );
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to generate invoice.');
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  // Open Order Creation Modal
-  const handleOpenCreateModal = () => {
-    loadCreationData();
-    setSelectedItems({});
-    setOrderNotes('');
-    setCreateModalVisible(true);
-  };
-
-  const handleItemQtyChange = (productId: number, delta: number) => {
-    setSelectedItems(prev => {
-      const current = prev[productId] || 0;
-      const next = Math.max(0, current + delta);
-      if (next === 0) {
-        const copy = { ...prev };
-        delete copy[productId];
-        return copy;
-      }
-      return { ...prev, [productId]: next };
+    setConfirmDialogConfig({
+      visible: true,
+      title: 'Generate Official Invoice?',
+      description: `Issue official tax invoice for Order #${selectedOrder.id} (${selectedOrder.company_name || selectedOrder.customer_name}) and debit customer ledger?`,
+      confirmLabel: 'Issue Invoice',
+      cancelLabel: 'Cancel',
+      type: 'info',
+      icon: 'receipt-outline',
+      onConfirm: async () => {
+        try {
+          setGenerating(true);
+          const result = await orderService.generateManualInvoice(selectedOrder.id);
+          setPreviewModalVisible(false);
+          fetchOrders();
+          AppToast.success(
+            'Invoice Issued',
+            `Official Invoice #${result.invoice_number || 'Generated'} debited to customer ledger.`
+          );
+        } catch (err: any) {
+          AppToast.error('Invoice Failed', err?.message || 'Failed to generate invoice.');
+        } finally {
+          setGenerating(false);
+          setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
+        }
+      },
     });
   };
 
-  const handleDirectItemQtyChange = (productId: number, text: string) => {
-    const cleanText = text.replace(/[^0-9]/g, '');
-    if (cleanText === '') {
-      setSelectedItems(prev => {
-        const copy = { ...prev };
-        delete copy[productId];
-        return copy;
-      });
-      return;
-    }
-    const val = parseInt(cleanText, 10);
-    if (isNaN(val) || val <= 0) {
-      setSelectedItems(prev => {
-        const copy = { ...prev };
-        delete copy[productId];
-        return copy;
-      });
-    } else {
-      setSelectedItems(prev => ({ ...prev, [productId]: val }));
-    }
-  };
-
-  const handleSelectCompany = (comp: Company) => {
-    setSelectedCompanyId(comp.id);
-    setDeliveryAddress(comp.billing_address || '');
-  };
-
-  const selectedItemCount = useMemo(() => {
-    return Object.values(selectedItems).reduce((sum, q) => sum + q, 0);
-  }, [selectedItems]);
-
-  const estimatedOrderTotal = useMemo(() => {
-    return Object.entries(selectedItems).reduce((sum, [pid, qty]) => {
-      const prod = products.find(p => p.id === Number(pid));
-      const rate = prod ? parseFloat(prod.price) || 0 : 0;
-      return sum + rate * qty;
-    }, 0);
-  }, [selectedItems, products]);
-
-  const handleSubmitNewOrder = async () => {
-    const itemsPayload = Object.entries(selectedItems).map(([pid, qty]) => ({
-      product_id: Number(pid),
-      quantity: qty,
-    }));
-
-    if (itemsPayload.length === 0) {
-      Alert.alert('Empty Order', 'Please select at least one product quantity.');
-      return;
-    }
-
-    try {
-      setCreatingOrder(true);
-      await orderService.createOrder({
-        company_id: selectedCompanyId,
-        delivery_address: deliveryAddress.trim() || 'Direct Company Delivery',
-        notes: orderNotes.trim(),
-        items: itemsPayload,
-      });
-
-      setCreateModalVisible(false);
-      fetchOrders();
-      Alert.alert('Success', 'Commercial order created successfully. Applicable volume pricing resolved on backend.');
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to submit order.');
-    } finally {
-      setCreatingOrder(false);
-    }
-  };
-
-  /* Recurring Orders Handlers */
+  // Recurring Order Handlers
   const handleOpenNewRecurring = () => {
     setEditingRecurring(null);
     setRecurringModalVisible(true);
@@ -291,78 +350,229 @@ export default function OrdersScreen({ navigation }: any) {
 
   const handleSaveRecurringSubmit = async (formData: RecurringOrderFormData) => {
     if (editingRecurring) {
-      // Future orders only - backend updates template items & partner
       await orderService.updateRecurringOrder(editingRecurring.id, formData);
-      Alert.alert('Updated', 'Recurring order template updated. Future orders will follow this configuration.');
+      AppToast.success('Updated', 'Recurring order template updated.');
     } else {
       await orderService.createRecurringOrder(formData as CreateRecurringOrderPayload);
-      Alert.alert('Created', 'Recurring order template created successfully.');
+      AppToast.success('Created', 'Recurring order template created successfully.');
     }
     fetchRecurringOrders();
   };
 
-  const handleTogglePause = async (template: BackendRecurringOrder) => {
-    try {
-      if (template.is_paused) {
-        await orderService.resumeRecurringOrder(template.id);
-        Alert.alert('Resumed', `Recurring order for ${template.customer_name} is active.`);
-      } else {
-        await orderService.pauseRecurringOrder(template.id);
-        Alert.alert('Paused', `Recurring order for ${template.customer_name} is paused.`);
-      }
-      fetchRecurringOrders();
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to update schedule status.');
-    }
+  const handleTogglePause = (template: BackendRecurringOrder) => {
+    const willPause = !template.is_paused;
+    setConfirmDialogConfig({
+      visible: true,
+      title: willPause ? 'Pause Recurring Order?' : 'Resume Recurring Order?',
+      description: willPause
+        ? `Pause daily recurring order generation for ${template.customer_name}?`
+        : `Resume daily recurring order generation for ${template.customer_name}?`,
+      confirmLabel: willPause ? 'Pause Schedule' : 'Resume Schedule',
+      cancelLabel: 'Cancel',
+      type: willPause ? 'warning' : 'info',
+      icon: willPause ? 'pause-circle-outline' : 'play-circle-outline',
+      onConfirm: async () => {
+        try {
+          if (template.is_paused) {
+            await orderService.resumeRecurringOrder(template.id);
+            AppToast.success('Schedule Resumed', `Schedule for ${template.customer_name} is active.`);
+          } else {
+            await orderService.pauseRecurringOrder(template.id);
+            AppToast.info('Schedule Paused', `Schedule for ${template.customer_name} is paused.`);
+          }
+          fetchRecurringOrders();
+        } catch (err: any) {
+          AppToast.error('Update Failed', err?.message || 'Failed to update schedule status.');
+        } finally {
+          setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
+        }
+      },
+    });
   };
 
-  const handleToggleSkipToday = async (template: BackendRecurringOrder) => {
+  const handleToggleSkipToday = (template: BackendRecurringOrder) => {
     const todayStr = new Date().toISOString().split('T')[0];
     const isSkipped = (template.skipped_dates || []).includes(todayStr);
 
-    try {
-      if (isSkipped) {
-        await orderService.unskipRecurringDate(template.id, todayStr);
-        Alert.alert('Restored', `Schedule for today (${todayStr}) restored.`);
-      } else {
-        await orderService.skipRecurringDate(template.id, todayStr);
-        Alert.alert('Skipped', `Order generation skipped for today (${todayStr}).`);
-      }
-      fetchRecurringOrders();
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to update skip status.');
-    }
+    setConfirmDialogConfig({
+      visible: true,
+      title: isSkipped ? "Restore Today's Order?" : "Skip Today's Order?",
+      description: isSkipped
+        ? `Re-enable automated order generation for ${template.customer_name} for today (${todayStr})?`
+        : `Skip generating the order for ${template.customer_name} for today (${todayStr})?`,
+      confirmLabel: isSkipped ? 'Restore Today' : 'Skip Today',
+      cancelLabel: 'Cancel',
+      type: isSkipped ? 'info' : 'warning',
+      icon: isSkipped ? 'refresh-outline' : 'close-circle-outline',
+      onConfirm: async () => {
+        try {
+          if (isSkipped) {
+            await orderService.unskipRecurringDate(template.id, todayStr);
+            AppToast.success('Restored', `Schedule for today (${todayStr}) restored.`);
+          } else {
+            await orderService.skipRecurringDate(template.id, todayStr);
+            AppToast.info('Skipped', `Order generation skipped for today (${todayStr}).`);
+          }
+          fetchRecurringOrders();
+        } catch (err: any) {
+          AppToast.error('Skip Failed', err?.message || 'Failed to update skip status.');
+        } finally {
+          setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
+        }
+      },
+    });
   };
 
-  const handleGenerateTodayOrder = async (template: BackendRecurringOrder) => {
-    try {
-      setGeneratingRecurringId(template.id);
-      const res = await orderService.generateOrderFromRecurring(template.id);
-      fetchOrders();
-      fetchRecurringOrders();
-      if (res.already_generated) {
-        Alert.alert('Already Generated', res.message);
-      } else {
-        Alert.alert('Order Created', res.message);
-      }
-    } catch (err: any) {
-      Alert.alert('Generation Error', err?.message || err?.detail || 'Failed to generate order.');
-    } finally {
-      setGeneratingRecurringId(null);
-    }
+  const handleGenerateTodayOrder = (template: BackendRecurringOrder) => {
+    setConfirmDialogConfig({
+      visible: true,
+      title: "Generate Today's Order?",
+      description: `Generate today's commercial order for ${template.customer_name}?`,
+      confirmLabel: 'Generate Now',
+      cancelLabel: 'Cancel',
+      type: 'info',
+      icon: 'flash-outline',
+      onConfirm: async () => {
+        try {
+          setGeneratingRecurringId(template.id);
+          const res = await orderService.generateOrderFromRecurring(template.id);
+          fetchOrders();
+          fetchRecurringOrders();
+          if (res.already_generated) {
+            AppToast.info('Already Generated', res.message);
+          } else {
+            AppToast.success('Order Created', res.message);
+          }
+        } catch (err: any) {
+          AppToast.error('Generation Error', err?.message || err?.detail || 'Failed to generate order.');
+        } finally {
+          setGeneratingRecurringId(null);
+          setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
+        }
+      },
+    });
   };
 
-  const filteredRecurringOrders = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim();
-    if (!q) return recurringOrders;
-    return recurringOrders.filter(r =>
-      r.customer_name?.toLowerCase().includes(q) ||
-      r.delivery_address?.toLowerCase().includes(q) ||
-      r.delivery_partner_name?.toLowerCase().includes(q) ||
-      r.notes?.toLowerCase().includes(q)
+  // Render Order Card (Reusable for Today & History)
+  const renderOrderCard = ({ item }: { item: BackendOrder }) => {
+    const totalNum = parseFloat(item.total_amount) || 0;
+    const hasInvoice = item.has_invoice;
+    const deliveryPartner = item.delivery_partner_name;
+    const deliveryStatus = item.delivery_status || 'assigned';
+
+    // Status colors
+    const getBadgeColor = (status: string) => {
+      switch (status.toLowerCase()) {
+        case 'delivered':
+          return '#059669';
+        case 'out_for_delivery':
+        case 'on_the_way':
+          return '#3B82F6';
+        case 'preparing':
+        case 'accepted':
+        case 'picked_up':
+          return '#D97706';
+        case 'cancelled':
+        case 'failed':
+          return '#DC2626';
+        default:
+          return '#8C331A';
+      }
+    };
+
+    return (
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => handleOpenOrderDetails(item)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.cardHeader}>
+          <View>
+            <Text style={styles.orderIdText}>Order #{item.id}</Text>
+            <Text style={styles.clientName}>
+              {item.company_name || item.customer_name}
+            </Text>
+            <Text style={styles.orderDateText}>
+              {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} •{' '}
+              {new Date(item.created_at).toLocaleDateString()}
+            </Text>
+          </View>
+
+          <View style={[styles.statusPill, { backgroundColor: `${getBadgeColor(item.status)}15` }]}>
+            <Text style={[styles.statusPillText, { color: getBadgeColor(item.status) }]}>
+              {item.status.replace(/_/g, ' ').toUpperCase()}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.cardBody}>
+          <Text style={styles.addressText} numberOfLines={1}>
+            <Ionicons name="location-outline" size={13} color="#8E8278" />{' '}
+            {item.delivery_address || 'Shop delivery'}
+          </Text>
+
+          <Text style={styles.itemsSummary}>
+            {item.items && item.items.length > 0
+              ? item.items.map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`).join(' • ')
+              : 'Commercial supply order'}
+          </Text>
+
+          {deliveryPartner ? (
+            <View style={styles.driverTagRow}>
+              <Ionicons name="bicycle-outline" size={13} color="#2A2421" />
+              <Text style={styles.driverTagText}>
+                Driver: {deliveryPartner} ({deliveryStatus.replace(/_/g, ' ')})
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.driverTagRow}>
+              <Ionicons name="alert-circle-outline" size={13} color="#D97706" />
+              <Text style={[styles.driverTagText, { color: '#D97706' }]}>
+                Unassigned Driver
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.cardFooter}>
+          <View>
+            <Text style={styles.amountLabel}>Total Billable</Text>
+            <Text style={styles.amountValue}>₹{totalNum.toLocaleString()}</Text>
+          </View>
+
+          <View style={styles.cardFooterActions}>
+            {hasInvoice ? (
+              <View style={styles.invoicedBadge}>
+                <Ionicons name="checkmark-done" size={13} color="#059669" />
+                <Text style={styles.invoicedBadgeText}>
+                  {item.invoice_number || 'INVOICED'}
+                </Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.generateBtn}
+                onPress={() => handleOpenInvoicePreview(item)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="receipt-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                <Text style={styles.generateBtnText}>Invoice</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={styles.viewDetailsBtn}
+              onPress={() => handleOpenOrderDetails(item)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.viewDetailsBtnText}>Details →</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </TouchableOpacity>
     );
-  }, [recurringOrders, searchQuery]);
+  };
 
+  // Render Recurring Order Item
   const renderRecurringItem = ({ item }: { item: BackendRecurringOrder }) => {
     const todayStr = new Date().toISOString().split('T')[0];
     const isSkippedToday = (item.skipped_dates || []).includes(todayStr);
@@ -371,12 +581,15 @@ export default function OrdersScreen({ navigation }: any) {
     const isScheduledToday = item.is_scheduled_today;
     const isGenerating = generatingRecurringId === item.id;
 
-    // Weekdays label
-    const frequencyLabel = item.frequency === 'daily'
-      ? 'Daily'
-      : (item.weekdays && typeof item.weekdays === 'string' && item.weekdays.trim().length > 0)
-        ? item.weekdays.split(',').map(d => d.trim().slice(0, 3).toUpperCase()).join(', ')
-        : 'Specific Days';
+    const frequencyLabel =
+      item.frequency === 'daily'
+        ? 'Daily'
+        : item.weekdays && typeof item.weekdays === 'string' && item.weekdays.trim().length > 0
+          ? item.weekdays
+            .split(',')
+            .map(d => d.trim().slice(0, 3).toUpperCase())
+            .join(', ')
+          : 'Specific Days';
 
     return (
       <View style={[styles.card, isPaused && styles.cardPaused]}>
@@ -403,12 +616,11 @@ export default function OrdersScreen({ navigation }: any) {
             onPress={() => handleOpenEditRecurring(item)}
             activeOpacity={0.7}
           >
-            <Ionicons name="pencil-outline" size={15} color="#8C331A" />
+            <Ionicons name="pencil-outline" size={14} color="#8C331A" />
             <Text style={styles.editTemplateBtnText}>Edit</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Address and Assigned Delivery Partner */}
         <View style={styles.cardBody}>
           <Text style={styles.addressText} numberOfLines={1}>
             <Ionicons name="location-outline" size={13} color="#8E8278" />{' '}
@@ -425,7 +637,6 @@ export default function OrdersScreen({ navigation }: any) {
             </Text>
           )}
 
-          {/* Items Summary */}
           <View style={styles.recurringItemsContainer}>
             {item.items && item.items.length > 0 ? (
               item.items.map((it, idx) => (
@@ -441,7 +652,6 @@ export default function OrdersScreen({ navigation }: any) {
           </View>
         </View>
 
-        {/* Schedule & Generation Status Bar */}
         <View style={styles.todayStatusBar}>
           {isGeneratedToday ? (
             <View style={styles.generatedStatusRow}>
@@ -468,14 +678,14 @@ export default function OrdersScreen({ navigation }: any) {
           ) : (
             <View style={styles.offScheduleStatusRow}>
               <Ionicons name="ellipse-outline" size={12} color="#8E8278" />
-              <Text style={styles.offScheduleStatusText}>Not scheduled today ({new Date().toLocaleDateString('en-US', { weekday: 'short' })})</Text>
+              <Text style={styles.offScheduleStatusText}>
+                Not scheduled today ({new Date().toLocaleDateString('en-US', { weekday: 'short' })})
+              </Text>
             </View>
           )}
         </View>
 
-        {/* Action Controls Footer */}
         <View style={styles.recurringCardFooter}>
-          {/* Pause / Resume Button */}
           <TouchableOpacity
             style={[styles.recActionBtn, isPaused && styles.recActionBtnActive]}
             onPress={() => handleTogglePause(item)}
@@ -492,7 +702,6 @@ export default function OrdersScreen({ navigation }: any) {
             </Text>
           </TouchableOpacity>
 
-          {/* Skip / Unskip Today */}
           {!isPaused && (
             <TouchableOpacity
               style={[styles.recActionBtn, isSkippedToday && styles.recActionBtnWarning]}
@@ -511,7 +720,6 @@ export default function OrdersScreen({ navigation }: any) {
             </TouchableOpacity>
           )}
 
-          {/* Generate Today's Order Button */}
           {isGeneratedToday ? (
             <View style={styles.orderAlreadyGeneratedBtn}>
               <Ionicons name="checkmark-done" size={14} color="#059669" style={{ marginRight: 4 }} />
@@ -542,176 +750,185 @@ export default function OrdersScreen({ navigation }: any) {
     );
   };
 
-  const renderOrderItem = ({ item }: { item: BackendOrder }) => {
-    const totalNum = parseFloat(item.total_amount) || 0;
-    const hasInvoice = item.has_invoice;
-
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View>
-            <Text style={styles.orderIdText}>Order #{item.id}</Text>
-            <Text style={styles.clientName}>
-              {item.company_name || item.customer_name}
-            </Text>
-          </View>
-          <View style={styles.statusPill}>
-            <Text style={styles.statusPillText}>{item.status.toUpperCase()}</Text>
-          </View>
-        </View>
-
-        <View style={styles.cardBody}>
-          <Text style={styles.addressText} numberOfLines={1}>
-            <Ionicons name="location-outline" size={13} color="#8E8278" />{' '}
-            {item.delivery_address || 'Shop delivery'}
-          </Text>
-          <Text style={styles.itemsSummary}>
-            {item.items && item.items.length > 0
-              ? item.items.map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`).join(' • ')
-              : 'Supply Delivery'}
-          </Text>
-        </View>
-
-        <View style={styles.cardFooter}>
-          <View>
-            <Text style={styles.amountLabel}>Total Billable</Text>
-            <Text style={styles.amountValue}>₹{totalNum.toLocaleString()}</Text>
-          </View>
-
-          {hasInvoice ? (
-            <View style={styles.invoicedBadge}>
-              <Ionicons name="checkmark-done" size={14} color="#059669" />
-              <Text style={styles.invoicedBadgeText}>
-                {item.invoice_number || 'INVOICED'}
-              </Text>
-            </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.generateBtn}
-              onPress={() => handleOpenInvoicePreview(item)}
-            >
-              <Ionicons name="receipt-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.generateBtnText}>Generate Invoice</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-    );
-  };
-
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <Header title="Orders & Recurring" showBack={false} />
+      <Header title="Orders Hub" showBack={false} />
 
-      {/* Segmented Top Toggle: Regular Orders vs. Recurring Templates */}
-      <View style={styles.segmentedContainer}>
-        <TouchableOpacity
-          style={[
-            styles.segmentBtn,
-            sectionMode === 'orders' && styles.segmentBtnActive,
-          ]}
-          onPress={() => setSectionMode('orders')}
-          activeOpacity={0.8}
-        >
-          <Ionicons
-            name="cart-outline"
-            size={16}
-            color={sectionMode === 'orders' ? '#FFFFFF' : '#8E8278'}
-            style={{ marginRight: 6 }}
-          />
-          <Text
-            style={[
-              styles.segmentBtnText,
-              sectionMode === 'orders' && styles.segmentBtnTextActive,
-            ]}
+      {/* Sticky Top Header Section (Segmented Toggle, Search Input Bar & Filter Row) */}
+      <View style={styles.stickyHeaderSection}>
+        {/* 3-Section Premium Segmented Control */}
+        <View style={styles.segmentedContainer}>
+          <TouchableOpacity
+            style={[styles.segmentBtn, sectionMode === 'today' && styles.segmentBtnActive]}
+            onPress={() => setSectionMode('today')}
+            activeOpacity={0.8}
           >
-            Regular Orders
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.segmentBtn,
-            sectionMode === 'recurring' && styles.segmentBtnActive,
-          ]}
-          onPress={() => setSectionMode('recurring')}
-          activeOpacity={0.8}
-        >
-          <Ionicons
-            name="repeat-outline"
-            size={16}
-            color={sectionMode === 'recurring' ? '#FFFFFF' : '#8E8278'}
-            style={{ marginRight: 6 }}
-          />
-          <Text
-            style={[
-              styles.segmentBtnText,
-              sectionMode === 'recurring' && styles.segmentBtnTextActive,
-            ]}
-          >
-            Recurring Templates
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Search Input */}
-      <View style={styles.searchBar}>
-        <Ionicons name="search-outline" size={18} color="#8E8278" style={{ marginRight: 8 }} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder={
-            sectionMode === 'orders'
-              ? 'Search by order ID, company, customer or address...'
-              : 'Search recurring template by customer or address...'
-          }
-          placeholderTextColor="#8E8278"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        {searchQuery ? (
-          <TouchableOpacity onPress={() => setSearchQuery('')}>
-            <Ionicons name="close-circle" size={18} color="#8E8278" />
+            <Ionicons
+              name="today-outline"
+              size={15}
+              color={sectionMode === 'today' ? '#FFFFFF' : '#8E8278'}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={[styles.segmentBtnText, sectionMode === 'today' && styles.segmentBtnTextActive]}>
+              Today's Orders
+            </Text>
           </TouchableOpacity>
-        ) : null}
-      </View>
 
-      {sectionMode === 'orders' ? (
-        <>
-          {/* Filter Tabs for Regular Orders */}
+          <TouchableOpacity
+            style={[styles.segmentBtn, sectionMode === 'recurring' && styles.segmentBtnActive]}
+            onPress={() => setSectionMode('recurring')}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name="repeat-outline"
+              size={15}
+              color={sectionMode === 'recurring' ? '#FFFFFF' : '#8E8278'}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={[styles.segmentBtnText, sectionMode === 'recurring' && styles.segmentBtnTextActive]}>
+              Recurring
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.segmentBtn, sectionMode === 'history' && styles.segmentBtnActive]}
+            onPress={() => setSectionMode('history')}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name="time-outline"
+              size={15}
+              color={sectionMode === 'history' ? '#FFFFFF' : '#8E8278'}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={[styles.segmentBtnText, sectionMode === 'history' && styles.segmentBtnTextActive]}>
+              History
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Search Input Bar */}
+        <View style={styles.searchBar}>
+          <Ionicons name="search-outline" size={18} color="#8E8278" style={{ marginRight: 8 }} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder={
+              sectionMode === 'today'
+                ? "Search today's orders by ID, customer, driver..."
+                : sectionMode === 'recurring'
+                  ? 'Search recurring templates by customer or address...'
+                  : 'Search historical orders by ID, client, driver...'
+            }
+            placeholderTextColor="#8E8278"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery ? (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Ionicons name="close-circle" size={18} color="#8E8278" />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {/* Filters according to sectionMode */}
+        {sectionMode === 'today' && (
           <View style={styles.tabContainer}>
             <FlatList
               horizontal
               showsHorizontalScrollIndicator={false}
-              data={tabs}
-              keyExtractor={t => t}
-              renderItem={({ item: tab }) => (
-                <TouchableOpacity
-                  style={[styles.tabChip, activeTab === tab && styles.tabChipActive]}
-                  onPress={() => setActiveTab(tab)}
-                >
-                  <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-                    {tab.replace(/_/g, ' ')}
-                  </Text>
-                </TouchableOpacity>
-              )}
+              data={todayFilterTabs}
+              keyExtractor={t => t.key}
+              renderItem={({ item: tab }) => {
+                const isActive = todayFilter === tab.key;
+                return (
+                  <TouchableOpacity
+                    style={[styles.tabChip, isActive && styles.tabChipActive]}
+                    onPress={() => setTodayFilter(tab.key)}
+                  >
+                    <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                      {tab.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }}
             />
           </View>
+        )}
 
-          {/* Orders List */}
+        {sectionMode === 'history' && (
+          <>
+            <View style={styles.tabContainer}>
+              <FlatList
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                data={historyStatusTabs}
+                keyExtractor={t => t.key}
+                renderItem={({ item: tab }) => {
+                  const isActive = historyStatusFilter === tab.key;
+                  return (
+                    <TouchableOpacity
+                      style={[styles.tabChip, isActive && styles.tabChipActive]}
+                      onPress={() => setHistoryStatusFilter(tab.key)}
+                    >
+                      <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                        {tab.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            </View>
+
+            {/* Partner & Customer Filter Pickers (Compact Row) */}
+            <View style={styles.historyFiltersRow}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
+                {deliveryPartners.map(part => {
+                  const isSelected = historyPartnerFilter === part.id;
+                  return (
+                    <TouchableOpacity
+                      key={part.id}
+                      style={[styles.filterPill, isSelected && styles.filterPillSelected]}
+                      onPress={() => setHistoryPartnerFilter(isSelected ? null : part.id)}
+                    >
+                      <Ionicons
+                        name="bicycle"
+                        size={12}
+                        color={isSelected ? '#FFFFFF' : '#8E8278'}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text style={[styles.filterPillText, isSelected && styles.filterPillTextSelected]}>
+                        {part.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </>
+        )}
+      </View>
+
+      {/* SECTION 1: TODAY'S ORDERS */}
+      {sectionMode === 'today' && (
+        <>
           {loading ? (
             <View style={styles.centerBox}>
               <ActivityIndicator size="large" color="#8C331A" />
             </View>
-          ) : filteredOrders.length === 0 ? (
+          ) : filteredTodayOrders.length === 0 ? (
             <EmptyState
-              title="No Orders Found"
-              subtitle={searchQuery ? "No orders match your search." : "No orders in this category."}
+              title="No Orders for Today"
+              subtitle={
+                searchQuery
+                  ? "No today's orders match your search."
+                  : "No orders found for today in this filter. Tap + below to create a new order."
+              }
             />
           ) : (
             <FlatList
-              data={filteredOrders}
+              data={filteredTodayOrders}
               keyExtractor={item => String(item.id)}
-              renderItem={renderOrderItem}
+              renderItem={renderOrderCard}
               contentContainerStyle={styles.listContent}
               refreshControl={
                 <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#8C331A']} />
@@ -719,9 +936,11 @@ export default function OrdersScreen({ navigation }: any) {
             />
           )}
         </>
-      ) : (
+      )}
+
+      {/* SECTION 2: RECURRING ORDERS */}
+      {sectionMode === 'recurring' && (
         <>
-          {/* Recurring Orders List */}
           {loadingRecurring ? (
             <View style={styles.centerBox}>
               <ActivityIndicator size="large" color="#8C331A" />
@@ -729,7 +948,11 @@ export default function OrdersScreen({ navigation }: any) {
           ) : filteredRecurringOrders.length === 0 ? (
             <EmptyState
               title="No Recurring Orders"
-              subtitle={searchQuery ? "No recurring templates match your search." : "Create a recurring order template to save daily chai & snack setups."}
+              subtitle={
+                searchQuery
+                  ? 'No recurring templates match your search.'
+                  : 'Create recurring order templates to automate daily chai & snack supply.'
+              }
             />
           ) : (
             <FlatList
@@ -745,219 +968,34 @@ export default function OrdersScreen({ navigation }: any) {
         </>
       )}
 
-      {/* Floating Action Button */}
-      <FloatingButton
-        onPress={sectionMode === 'orders' ? handleOpenCreateModal : handleOpenNewRecurring}
-      />
-
-      {/* Commercial / Customer Order Creation Modal */}
-      <Modal
-        visible={createModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCreateModalVisible(false)}
-        statusBarTranslucent={true}
-      >
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={() => setCreateModalVisible(false)}
-          />
-
-          <KeyboardAvoidingView
-            style={styles.keyboardContainer}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            pointerEvents="box-none"
-          >
-            <View style={styles.modalCard}>
-              {/* Header */}
-              <View style={styles.modalHeader}>
-                <View>
-                  <Text style={styles.modalTitle}>New Customer Order</Text>
-                  <Text style={styles.modalSubtitle}>Select customer, destination and products</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.closeIconBtn}
-                  onPress={() => setCreateModalVisible(false)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  <Ionicons name="close" size={20} color="#6B5E55" />
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView
-                showsVerticalScrollIndicator={true}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 16 }}
-                bounces={false}
-              >
-                {/* Customer Selector */}
-                <Text style={styles.fieldSectionLabel}>SELECT CUSTOMER</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.customerScroll}
-                  contentContainerStyle={{ paddingVertical: 2 }}
-                >
-                  {companies.map(c => {
-                    const isSelected = selectedCompanyId === c.id;
-                    return (
-                      <TouchableOpacity
-                        key={c.id}
-                        style={[styles.compChip, isSelected && styles.compChipActive]}
-                        onPress={() => handleSelectCompany(c)}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons
-                          name="business-outline"
-                          size={13}
-                          color={isSelected ? '#FFFFFF' : '#8C331A'}
-                          style={{ marginRight: 6 }}
-                        />
-                        <Text style={[styles.compChipText, isSelected && styles.compChipTextActive]}>
-                          {c.name}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-
-                {/* Delivery Address & Notes Inputs */}
-                <Text style={styles.fieldSectionLabel}>DELIVERY DETAILS</Text>
-                <View style={styles.inputContainer}>
-                  <Ionicons name="location-outline" size={16} color="#8E8278" style={styles.inputIcon} />
-                  <TextInput
-                    style={styles.modalInput}
-                    placeholder="Delivery Address *"
-                    placeholderTextColor="#A0958D"
-                    value={deliveryAddress}
-                    onChangeText={setDeliveryAddress}
-                  />
-                </View>
-
-                <View style={styles.inputContainer}>
-                  <Ionicons name="document-text-outline" size={16} color="#8E8278" style={styles.inputIcon} />
-                  <TextInput
-                    style={styles.modalInput}
-                    placeholder="Order instructions / notes (Optional)"
-                    placeholderTextColor="#A0958D"
-                    value={orderNotes}
-                    onChangeText={setOrderNotes}
-                  />
-                </View>
-
-                {/* Product Selection with Clean Compact Row */}
-                <View style={styles.productSectionHeader}>
-                  <Text style={styles.fieldSectionLabel}>SELECT PRODUCTS</Text>
-                  {selectedItemCount > 0 && (
-                    <Text style={styles.selectedCountBadge}>
-                      {selectedItemCount} {selectedItemCount === 1 ? 'item' : 'items'}
-                    </Text>
-                  )}
-                </View>
-
-                <View style={styles.productsCard}>
-                  {products.map((p, idx) => {
-                    const qty = selectedItems[p.id] || 0;
-                    const isSelected = qty > 0;
-                    const isLast = idx === products.length - 1;
-                    return (
-                      <View
-                        key={p.id}
-                        style={[
-                          styles.prodRow,
-                          isLast && { borderBottomWidth: 0 },
-                          isSelected && styles.prodRowSelected,
-                        ]}
-                      >
-                        <View style={{ flex: 1, marginRight: 12 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <Text style={styles.prodName}>{p.name}</Text>
-                            <Text style={styles.prodIdTag}>#{p.id}</Text>
-                          </View>
-                          <Text style={styles.prodBaseRate}>
-                            ₹{p.price} / unit
-                          </Text>
-                        </View>
-
-                        {/* Minimal, compact quantity controls with direct edit */}
-                        <View style={styles.qtyControl}>
-                          <TouchableOpacity
-                            style={[styles.qtyBtn, qty === 0 && styles.qtyBtnDisabled]}
-                            onPress={() => handleItemQtyChange(p.id, -1)}
-                            disabled={qty === 0}
-                            activeOpacity={0.6}
-                          >
-                            <Ionicons
-                              name="remove"
-                              size={14}
-                              color={qty === 0 ? '#C4BCB5' : '#8C331A'}
-                            />
-                          </TouchableOpacity>
-
-                          <TextInput
-                            style={[styles.qtyInputText, isSelected && styles.qtyTextActive]}
-                            keyboardType="numeric"
-                            value={qty > 0 ? String(qty) : '0'}
-                            onChangeText={text => handleDirectItemQtyChange(p.id, text)}
-                            selectTextOnFocus={true}
-                          />
-
-                          <TouchableOpacity
-                            style={styles.qtyBtn}
-                            onPress={() => handleItemQtyChange(p.id, 1)}
-                            activeOpacity={0.6}
-                          >
-                            <Ionicons name="add" size={14} color="#8C331A" />
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
-
-                {/* Compact Order Summary Bar */}
-                {selectedItemCount > 0 && (
-                  <View style={styles.orderSummaryBar}>
-                    <View>
-                      <Text style={styles.summaryCountText}>
-                        {selectedItemCount} {selectedItemCount === 1 ? 'unit selected' : 'units selected'}
-                      </Text>
-                      <Text style={styles.summarySubtext}>Volume pricing applied at generation</Text>
-                    </View>
-                    <Text style={styles.summaryTotalText}>
-                      ~₹{estimatedOrderTotal.toLocaleString()}
-                    </Text>
-                  </View>
-                )}
-              </ScrollView>
-
-              {/* Fixed Footer Create Order Button */}
-              <View style={styles.modalFooter}>
-                <TouchableOpacity
-                  style={[
-                    styles.confirmGenerateBtn,
-                    selectedItemCount === 0 && styles.confirmGenerateBtnDisabled,
-                  ]}
-                  onPress={handleSubmitNewOrder}
-                  disabled={creatingOrder || selectedItemCount === 0}
-                  activeOpacity={0.8}
-                >
-                  {creatingOrder ? (
-                    <ActivityIndicator color="#FFFFFF" size="small" />
-                  ) : (
-                    <>
-                      <Ionicons name="checkmark-circle" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
-                      <Text style={styles.confirmGenerateBtnText}>Create Customer Order</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
+      {/* SECTION 3: ORDER HISTORY */}
+      {sectionMode === 'history' && (
+        <>
+          {loading ? (
+            <View style={styles.centerBox}>
+              <ActivityIndicator size="large" color="#8C331A" />
             </View>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
+          ) : filteredHistoryOrders.length === 0 ? (
+            <EmptyState
+              title="No Historical Orders"
+              subtitle={searchQuery ? 'No orders match your filter criteria.' : 'Completed and prior orders will appear here.'}
+            />
+          ) : (
+            <FlatList
+              data={filteredHistoryOrders}
+              keyExtractor={item => String(item.id)}
+              renderItem={renderOrderCard}
+              contentContainerStyle={styles.listContent}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#8C331A']} />
+              }
+            />
+          )}
+        </>
+      )}
+
+      {/* Floating Action Button */}
+      <FloatingButton onPress={handleOpenCreateFlow} />
 
       {/* Manual Invoice Review Modal */}
       <Modal visible={previewModalVisible} transparent animationType="slide">
@@ -966,7 +1004,9 @@ export default function OrdersScreen({ navigation }: any) {
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>Manual Invoice Review</Text>
-                <Text style={styles.modalSubtitle}>Order #{selectedOrder?.id} • {selectedOrder?.company_name || selectedOrder?.customer_name}</Text>
+                <Text style={styles.modalSubtitle}>
+                  Order #{selectedOrder?.id} • {selectedOrder?.company_name || selectedOrder?.customer_name}
+                </Text>
               </View>
               <TouchableOpacity onPress={() => setPreviewModalVisible(false)}>
                 <Ionicons name="close" size={24} color="#2A2421" />
@@ -976,7 +1016,7 @@ export default function OrdersScreen({ navigation }: any) {
             {previewLoading ? (
               <View style={[styles.centerBox, { height: 200 }]}>
                 <ActivityIndicator size="large" color="#8C331A" />
-                <Text style={{ marginTop: 10, color: '#8E8278' }}>Resolving company pricing & delivery actuals...</Text>
+                <Text style={{ marginTop: 10, color: '#8E8278' }}>Resolving pricing & delivery actuals...</Text>
               </View>
             ) : invoicePreview ? (
               <View style={styles.previewContent}>
@@ -985,7 +1025,6 @@ export default function OrdersScreen({ navigation }: any) {
                   <Text style={styles.auditNoticeText}>Backend resolved rates and delivery discrepancies applied.</Text>
                 </View>
 
-                {/* Items Discrepancy Breakdown */}
                 <FlatList
                   data={invoicePreview.items}
                   keyExtractor={it => String(it.product_id)}
@@ -1011,7 +1050,6 @@ export default function OrdersScreen({ navigation }: any) {
                   )}
                 />
 
-                {/* Financial Summary */}
                 <View style={styles.financialSummaryBox}>
                   <View style={styles.sumRow}>
                     <Text style={styles.sumLabel}>Subtotal</Text>
@@ -1029,7 +1067,6 @@ export default function OrdersScreen({ navigation }: any) {
                   </View>
                 </View>
 
-                {/* Confirm Button */}
                 <TouchableOpacity
                   style={styles.confirmGenerateBtn}
                   onPress={handleConfirmGenerateInvoice}
@@ -1049,6 +1086,7 @@ export default function OrdersScreen({ navigation }: any) {
           </View>
         </View>
       </Modal>
+
       {/* Recurring Order Creation & Editing Bottom Sheet Modal */}
       <RecurringOrderModal
         visible={recurringModalVisible}
@@ -1058,6 +1096,19 @@ export default function OrdersScreen({ navigation }: any) {
         existingTemplate={editingRecurring}
         onClose={() => setRecurringModalVisible(false)}
         onSubmit={handleSaveRecurringSubmit}
+      />
+
+      {/* Centralized Reusable Confirm Dialog */}
+      <ConfirmDialog
+        visible={confirmDialogConfig.visible}
+        title={confirmDialogConfig.title}
+        description={confirmDialogConfig.description}
+        confirmLabel={confirmDialogConfig.confirmLabel}
+        cancelLabel={confirmDialogConfig.cancelLabel}
+        type={confirmDialogConfig.type}
+        icon={confirmDialogConfig.icon}
+        onConfirm={confirmDialogConfig.onConfirm}
+        onCancel={() => setConfirmDialogConfig(prev => ({ ...prev, visible: false }))}
       />
     </SafeAreaView>
   );
@@ -1073,28 +1124,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
-    marginVertical: 10,
+    marginVertical: 8,
     borderRadius: 12,
     paddingHorizontal: 12,
-    height: 44,
+    height: 42,
     borderWidth: 1,
     borderColor: '#EFEAE4',
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12,
     color: '#2A2421',
   },
   tabContainer: {
     paddingHorizontal: 16,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   tabChip: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 20,
+    borderRadius: 18,
     backgroundColor: '#FFFFFF',
-    marginRight: 8,
+    marginRight: 6,
     borderWidth: 1,
     borderColor: '#EFEAE4',
   },
@@ -1109,6 +1160,33 @@ const styles = StyleSheet.create({
   },
   tabTextActive: {
     color: '#FFFFFF',
+  },
+  historyFiltersRow: {
+    marginBottom: 8,
+  },
+  filterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
+    marginRight: 6,
+  },
+  filterPillSelected: {
+    backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
+  },
+  filterPillText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#6B5E55',
+  },
+  filterPillTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   centerBox: {
     flex: 1,
@@ -1133,55 +1211,74 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   orderIdText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#8E8278',
     fontWeight: '700',
   },
   clientName: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '800',
     color: '#2A2421',
-    marginTop: 2,
+    marginTop: 1,
+  },
+  orderDateText: {
+    fontSize: 10,
+    color: '#A0958D',
+    marginTop: 1,
   },
   statusPill: {
-    backgroundColor: '#F5EBE6',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
   },
   statusPillText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
-    color: '#8C331A',
   },
   cardBody: {
-    marginVertical: 10,
+    marginVertical: 8,
   },
   addressText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#8E8278',
     marginBottom: 4,
   },
   itemsSummary: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#4B3F38',
-    fontWeight: '500',
+    fontWeight: '600',
+  },
+  driverTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  driverTagText: {
+    fontSize: 11,
+    color: '#2A2421',
+    fontWeight: '600',
+    marginLeft: 4,
   },
   cardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 10,
+    paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#FAF8F5',
   },
+  cardFooterActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   amountLabel: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#8E8278',
     textTransform: 'uppercase',
   },
   amountValue: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: '#2A2421',
     marginTop: 1,
@@ -1190,63 +1287,49 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ECFDF5',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#A7F3D0',
   },
   invoicedBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: '#059669',
-    marginLeft: 4,
+    marginLeft: 3,
   },
   generateBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#8C331A',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 8,
   },
   generateBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  viewDetailsBtn: {
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  viewDetailsBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8C331A',
   },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  keyboardContainer: {
-    width: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 460,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    overflow: 'hidden',
-    maxHeight: '88%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    elevation: 10,
-    flexDirection: 'column',
-  },
-  modalFooter: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F0EBE6',
-    backgroundColor: '#FFFFFF',
   },
   modalSheet: {
     backgroundColor: '#FFFFFF',
@@ -1255,6 +1338,7 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingHorizontal: 20,
     maxHeight: '88%',
+    width: '100%',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.1,
@@ -1265,218 +1349,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingBottom: 14,
+    paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#F2EFEB',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '800',
     color: '#2A2421',
     letterSpacing: -0.3,
   },
   modalSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#8E8278',
     marginTop: 2,
-  },
-  closeIconBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#FAF8F5',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-  },
-  fieldSectionLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#8E8278',
-    marginTop: 10,
-    marginBottom: 6,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
-  customerScroll: {
-    marginBottom: 12,
-  },
-  compChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 20,
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    marginRight: 8,
-  },
-  compChipActive: {
-    backgroundColor: '#8C331A',
-    borderColor: '#8C331A',
-  },
-  compChipText: {
-    fontSize: 12,
-    color: '#6B5E55',
-    fontWeight: '600',
-  },
-  compChipTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 44,
-    marginBottom: 10,
-  },
-  inputIcon: {
-    marginRight: 8,
-  },
-  modalInput: {
-    flex: 1,
-    fontSize: 13,
-    color: '#2A2421',
-    paddingVertical: 0,
-  },
-  productSectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 4,
-    marginBottom: 4,
-  },
-  selectedCountBadge: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#8C331A',
-    backgroundColor: '#FDF6F3',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#F5DDD3',
-  },
-  productsCard: {
-    backgroundColor: '#FAF8F5',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    overflow: 'hidden',
-    marginBottom: 12,
-  },
-  prodRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#EFEAE4',
-    backgroundColor: '#FFFFFF',
-  },
-  prodRowSelected: {
-    backgroundColor: '#FCFAF8',
-  },
-  prodName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#2A2421',
-  },
-  prodIdTag: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#A0958D',
-    marginLeft: 6,
-    backgroundColor: '#F3EFEA',
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  prodBaseRate: {
-    fontSize: 11,
-    color: '#8C331A',
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  qtyControl: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FAF8F5',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    padding: 2,
-  },
-  qtyBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: 6,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  qtyBtnDisabled: {
-    opacity: 0.4,
-    backgroundColor: '#FAF8F5',
-  },
-  qtyText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#8E8278',
-    marginHorizontal: 8,
-    minWidth: 16,
-    textAlign: 'center',
-  },
-  qtyInputText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#8E8278',
-    marginHorizontal: 4,
-    minWidth: 26,
-    textAlign: 'center',
-    paddingVertical: 0,
-  },
-  qtyTextActive: {
-    color: '#8C331A',
-    fontWeight: '800',
-  },
-  orderSummaryBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FDF6F3',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#F5DDD3',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    marginBottom: 12,
-  },
-  summaryCountText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#8C331A',
-  },
-  summarySubtext: {
-    fontSize: 10,
-    color: '#A86C5B',
-    marginTop: 1,
-  },
-  summaryTotalText: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#8C331A',
   },
   confirmGenerateBtn: {
     flexDirection: 'row',
@@ -1486,16 +1373,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 4,
-    marginBottom: 8,
-  },
-  confirmGenerateBtnDisabled: {
-    backgroundColor: '#C4BCB5',
+    marginBottom: 14,
   },
   confirmGenerateBtnText: {
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
-    letterSpacing: 0.2,
   },
   previewContent: {
     marginTop: 4,
@@ -1567,7 +1450,7 @@ const styles = StyleSheet.create({
     color: '#2A2421',
   },
   grandLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '800',
     color: '#2A2421',
   },
@@ -1576,7 +1459,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#8C331A',
   },
-  /* Segmented Toggle Styles */
+  /* 3-Section Segmented Toggle Styles */
   segmentedContainer: {
     flexDirection: 'row',
     backgroundColor: '#EDE8E3',
@@ -1591,7 +1474,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: 9,
   },
   segmentBtnActive: {
@@ -1603,7 +1486,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   segmentBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#6B5E55',
   },
@@ -1792,5 +1675,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#059669',
+  },
+  stickyHeaderSection: {
+    backgroundColor: '#FAF8F5',
+    zIndex: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EDE8E3',
+    paddingBottom: 8,
   },
 });

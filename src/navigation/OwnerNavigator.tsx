@@ -15,6 +15,7 @@ import NotificationsScreen from '../Screens/NotificationsScreen';
 import PendingPaymentsScreen from '../Screens/owner/PendingPaymentsScreen';
 import MoreScreen from '../Screens/owner/MoreScreen';
 import OrdersScreen from '../Screens/owner/OrdersScreen';
+import OrderDetailsScreen from '../Screens/owner/OrderDetailsScreen';
 import CustomersScreen from '../Screens/owner/CustomersScreen';
 import ProductsScreen from '../Screens/owner/ProductsScreen';
 import DeliveryScreen from '../Screens/owner/DeliveryScreen';
@@ -31,7 +32,7 @@ export type OwnerStackParamList = {
   Orders: undefined;
   PendingPayments: undefined;
   CreateInvoice: { customer?: any; prefilledItems?: Array<{ product_id: number; product_name?: string; quantity: number }> } | undefined;
-  QuickBilling: { customer?: any; prefilledItems?: Array<{ product_id: number; product_name?: string; quantity: number }> } | undefined;
+  QuickBilling: { customer?: any; prefilledItems?: Array<{ product_id: number; product_name?: string; quantity: number }>; mode?: 'billing' | 'order' } | undefined;
   InvoiceDetail: { invoice?: any } | undefined;
   Products: undefined;
   ProductDetail: { product?: any; mode?: 'add' | 'edit' } | undefined;
@@ -42,7 +43,9 @@ export type OwnerStackParamList = {
   Notifications: undefined;
   More: undefined;
   Customers: undefined;
+  OrderDetails: { orderId?: number | string; order?: any };
   RecurringOrder: { template?: any; customer?: any; customerId?: any; prefilledItems?: any } | undefined;
+  CreateOrder: { customer?: any; customerId?: any; mode?: 'order' } | undefined;
 };
 
 const Stack = createNativeStackNavigator<OwnerStackParamList>();
@@ -103,8 +106,14 @@ export default function OwnerNavigator() {
       <Stack.Screen name="Notifications" component={NotificationsScreen} />
       <Stack.Screen name="More" component={MoreScreen} />
       <Stack.Screen name="Orders" component={OrdersScreen} />
+      <Stack.Screen name="OrderDetails" component={OrderDetailsScreen} />
       <Stack.Screen name="Customers" component={CustomersScreen} />
       <Stack.Screen name="RecurringOrder" component={RecurringOrderScreen} />
+      <Stack.Screen
+        name="CreateOrder"
+        component={QuickBillingScreen}
+        initialParams={{ mode: 'order' }}
+      />
     </Stack.Navigator>
   );
 }

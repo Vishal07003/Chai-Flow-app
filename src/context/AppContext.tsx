@@ -82,14 +82,16 @@ export interface ProductItem {
   price: string;
   unit: string;
   description: string;
-  stock: string;
-  stockNumber: number;
-  maxStock?: number;
+  category?: string;
+  categoryId?: number | null;
   imageUrl?: string;
+  is_available?: boolean;
+  stock?: string;
+  stockNumber?: number;
+  maxStock?: number;
   badge?: string;
   isLowStock?: boolean;
   isCompact?: boolean;
-  category?: string;
 }
 
 export interface DeliveryBoyItem {
@@ -104,7 +106,10 @@ export interface DeliveryBoyItem {
   numberPlatePhotoUri?: string;
   licensePhotoUri?: string;
   status: 'BUSY' | 'READY' | 'OFFLINE';
+  isActive?: boolean;
   location: string;
+  activeDeliveriesCount?: number;
+  assignedOrderNumber?: string | number;
   distance?: string;
   avatarUrl?: string;
   progress?: number;
@@ -174,6 +179,8 @@ export interface AppContextType {
   collectPayment: (
     customerId: string,
     amountToDeduct: number,
+    paymentMethod?: string,
+    notes?: string,
   ) => Promise<void> | void;
 
   /* Invoices */
@@ -650,7 +657,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       result = result.filter(
         c =>
           c.name.toLowerCase().includes(q) ||
-          c.address.toLowerCase().includes(q),
+          c.address.toLowerCase().includes(q) ||
+          (c.phone && c.phone.toLowerCase().includes(q)),
       );
     }
     if (activeFilter === 'Due Today') {
@@ -671,6 +679,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     const customer = await customerService.addCustomer(newCust);
     setCustomers(prev => [customer, ...prev]);
 
+    // Live refresh to synchronize backend aggregates and list state
+    await refreshBackendData();
+
     setActivities(prev => [
       {
         id: `act-${Date.now()}`,
@@ -683,42 +694,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     ]);
   };
 
-  const collectPayment = async (customerId: string, amountToDeduct: number) => {
-    let customerName = '';
-
-    setCustomers(prev =>
-      prev.map(cust => {
-        if (cust.id === customerId) {
-          customerName = cust.name;
-          const newAmount = Math.max(0, cust.amount - amountToDeduct);
-          return {
-            ...cust,
-            amount: newAmount,
-            badge: newAmount === 0 ? undefined : cust.badge,
-            isOverdue: newAmount === 0 ? false : cust.isOverdue,
-          };
-        }
-        return cust;
-      }),
-    );
-
-    setCollectionsTotal(prev => prev + amountToDeduct);
-
-    // Call backend payment collection
+  const collectPayment = async (
+    customerId: string,
+    amountToDeduct: number,
+    paymentMethod: string = 'cash',
+    notes?: string,
+  ) => {
+    // Authoritative backend payment collection with FIFO allocation
     try {
-      await customerService.collectPayment(customerId, amountToDeduct);
-      // Re-sync all customer balances, invoices and dashboard figures from single source of truth
-      await refreshBackendData();
+      await billingService.collectCustomerPayment(customerId, {
+        amount: amountToDeduct,
+        method: paymentMethod.toLowerCase(),
+        notes: notes || `Direct payment collection`,
+      });
     } catch (err) {
-      console.log('Error in collectPayment:', err);
+      console.log('Error in billingService.collectCustomerPayment, trying fallback:', err);
+      try {
+        await customerService.collectPayment(customerId, amountToDeduct);
+      } catch (e2) {
+        console.log('Fallback customerService.collectPayment error:', e2);
+      }
     }
+
+    // Single source of truth: re-sync all live balances, invoices, and totals from backend
+    await refreshBackendData();
 
     setActivities(prev => [
       {
         id: `act-${Date.now()}`,
         color: '#3B82F6',
         title: 'Payment Collected',
-        subtitle: `₹${amountToDeduct.toLocaleString()} from ${customerName}`,
+        subtitle: `₹${amountToDeduct.toLocaleString()} via ${paymentMethod.toUpperCase()}`,
         time: 'Just now',
       },
       ...prev,
@@ -891,7 +897,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
             i => i.name.toLowerCase() === p.name.toLowerCase() || i.id === p.id,
           );
           if (itemInBill) {
-            const updatedStock = Math.max(0, p.stockNumber - itemInBill.qty);
+            const currentStock = p.stockNumber ?? 100;
+            const updatedStock = Math.max(0, currentStock - itemInBill.qty);
             return {
               ...p,
               stockNumber: updatedStock,
@@ -908,35 +915,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const markInvoiceAsPaid = async (id: string) => {
-    const inv = invoices.find(i => i.id === id);
-    if (!inv) return;
+    try {
+      const inv = invoices.find(i => i.id === id);
+      const remainingDue =
+        inv?.numericAmount ||
+        (inv?.amount ? parseFloat(inv.amount.replace(/[^0-9.]/g, '')) : 0);
 
-    await billingService.markInvoiceAsPaidLegacy(id);
-
-    setInvoices(prev =>
-      prev.map(item =>
-        item.id === id ? { ...item, status: 'PAID', isOverdue: false } : item,
-      ),
-    );
-
-    const paidVal =
-      inv.numericAmount || parseInt(inv.amount.replace(/[^0-9]/g, '')) || 0;
-    if (paidVal > 0) {
-      setCollectionsTotal(prev => prev + paidVal);
-      setPaymentHistory(prev => [
-        {
-          id: `pay-${Date.now()}`,
-          customerName: inv.name,
-          amount: paidVal,
-          method: 'UPI / GPay',
-          date: 'Today',
-          time: 'Just now',
-          status: 'SUCCESS',
-          refNo: `INV-SETTLE-${inv.invoiceNo || inv.id}`,
-        },
-        ...prev,
-      ]);
+      if (remainingDue > 0) {
+        await billingService.addPayment(id, {
+          amount: remainingDue,
+          method: 'cash',
+          notes: 'Full payment settlement',
+        });
+      }
+    } catch (err) {
+      console.log('Error marking invoice as paid on backend:', err);
     }
+
+    // Refresh single source of truth from backend
+    await refreshBackendData();
   };
 
   const collectInvoicePayment = async (
@@ -944,104 +941,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     paidAmount: number,
     paymentMethod: 'Cash' | 'UPI' | 'Card' | 'Bank Transfer',
   ) => {
-    const inv = invoices.find(i => i.id === invoiceId);
-    if (!inv || paidAmount <= 0) return;
+    if (paidAmount <= 0) return;
 
-    const currentVal =
-      inv.numericAmount ||
-      parseInt(inv.amount.replace(/[^0-9]/g, '')) ||
-      0;
-    const remainingAmount = Math.max(0, currentVal - paidAmount);
-    const isFullyPaid = remainingAmount === 0;
-
-    // 1. Update Invoices
-    setInvoices(prev =>
-      prev.map(item => {
-        if (item.id === invoiceId) {
-          if (isFullyPaid) {
-            return {
-              ...item,
-              status: 'PAID',
-              isOverdue: false,
-              numericAmount: 0,
-              amount: '₹0',
-              due: 'Paid in Full',
-            };
-          } else {
-            return {
-              ...item,
-              numericAmount: remainingAmount,
-              amount: `₹${remainingAmount.toLocaleString()}`,
-              due: `Partial Paid (₹${remainingAmount.toLocaleString()} due)`,
-            };
-          }
-        }
-        return item;
-      }),
-    );
-
-    // 2. Increase Collections Total
-    setCollectionsTotal(prev => prev + paidAmount);
-
-    // 3. Decrease Customer Amount if customer exists
-    const customerName = inv.name;
-    setCustomers(prev =>
-      prev.map(cust => {
-        if (cust.name.toLowerCase() === customerName.toLowerCase()) {
-          const newAmount = Math.max(0, cust.amount - paidAmount);
-          return {
-            ...cust,
-            amount: newAmount,
-            badge: newAmount === 0 ? undefined : cust.badge,
-            isOverdue: newAmount === 0 ? false : cust.isOverdue,
-          };
-        }
-        return cust;
-      }),
-    );
-
-    // 4. Add Payment History
-    const mappedMethod: PaymentRecord['method'] =
-      paymentMethod === 'Cash'
-        ? 'Cash'
-        : paymentMethod === 'Card' || paymentMethod === 'Bank Transfer'
-          ? 'Bank Transfer'
-          : 'UPI / GPay';
-
-    setPaymentHistory(prev => [
-      {
-        id: `pay-${Date.now()}`,
-        customerName: inv.name,
+    // 1. Authoritative Backend Payment Collection
+    try {
+      const mappedMethod: 'cash' | 'online' =
+        paymentMethod === 'Cash' ? 'cash' : 'online';
+      await billingService.addPayment(invoiceId, {
         amount: paidAmount,
         method: mappedMethod,
-        date: 'Today',
-        time: 'Just now',
-        status: 'SUCCESS',
-        refNo: `COLLECT-${inv.invoiceNo || inv.id}`,
-      },
-      ...prev,
-    ]);
+        notes: `Invoice payment via ${paymentMethod}`,
+      });
+    } catch (err) {
+      console.log('Error adding payment to invoice on backend:', err);
+    }
 
-    // 5. Update Recent Activity
+    // 2. Synchronize all balances, invoices, customer debts & stats from backend
+    await refreshBackendData();
+
+    // 3. Add Activity and Notification
     setActivities(prev => [
       {
         id: `act-${Date.now()}`,
         color: '#059669',
-        title: isFullyPaid
-          ? `Invoice ${inv.invoiceNo || inv.id} Paid`
-          : `Payment Collected (${inv.invoiceNo || inv.id})`,
-        subtitle: `₹${paidAmount.toLocaleString()} from ${inv.name} [${paymentMethod}]`,
+        title: `Payment Collected (Invoice #${invoiceId})`,
+        subtitle: `₹${paidAmount.toLocaleString()} via [${paymentMethod}]`,
         time: 'Just now',
       },
       ...prev,
     ]);
 
-    // 6. Add Notification
     setNotifications(prev => [
       {
         id: `n-${Date.now()}`,
         title: 'Payment Received',
-        message: `₹${paidAmount.toLocaleString()} received from ${inv.name} via ${paymentMethod}.`,
+        message: `₹${paidAmount.toLocaleString()} recorded for invoice #${invoiceId} via ${paymentMethod}.`,
         time: 'Just now',
         type: 'payment',
         isRead: false,
@@ -1111,7 +1045,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   /* Calculated Product Stats */
   const totalSKUs = useMemo(() => products.length, [products]);
   const lowStockCount = useMemo(() => {
-    return products.filter(p => p.isLowStock || p.stockNumber <= 15).length;
+    return products.filter(p => p.isLowStock || (p.stockNumber ?? 100) <= 15).length;
   }, [products]);
 
   const addProduct = async (newProd: Omit<ProductItem, 'id'>) => {
