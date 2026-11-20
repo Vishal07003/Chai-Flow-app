@@ -1,20 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Modal,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
   Image,
   Alert,
   Linking,
   Keyboard,
+  Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { DeliveryBoyItem, useApp } from '../../context/AppContext';
+import ConfirmDialog from '../ConfirmDialog';
 
 interface DeliveryBoyDetailModalProps {
   visible: boolean;
@@ -27,676 +30,502 @@ export default function DeliveryBoyDetailModal({
   boy,
   onClose,
 }: DeliveryBoyDetailModalProps) {
-  const { updateDeliveryBoy, deleteDeliveryBoy, assignOrderToBoy } = useApp();
+  const { updateDeliveryBoy, deleteDeliveryBoy } = useApp();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
   const [isEditing, setIsEditing] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
   /* Form state for editing */
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [emergencyPhone, setEmergencyPhone] = useState('');
-  const [licenseNumber, setLicenseNumber] = useState('');
-  const [vehicleType, setVehicleType] = useState<
-    'Scooter' | 'E-Bike' | 'Auto Cargo' | 'Mini Van'
-  >('Scooter');
-  const [vehicleModel, setVehicleModel] = useState('');
-  const [numberPlate, setNumberPlate] = useState('');
   const [status, setStatus] = useState<'READY' | 'BUSY' | 'OFFLINE'>('READY');
-  const [location, setLocation] = useState('');
 
-  /* Photos state */
-  const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined);
-  const [licensePhotoUri, setLicensePhotoUri] = useState<string | undefined>(
-    undefined,
-  );
-  const [numberPlatePhotoUri, setNumberPlatePhotoUri] = useState<
-    string | undefined
-  >(undefined);
+  /* Baseline state to detect unsaved changes */
+  const [initialForm, setInitialForm] = useState({
+    name: '',
+    phone: '',
+    emergencyPhone: '',
+    status: 'READY' as 'READY' | 'BUSY' | 'OFFLINE',
+  });
 
   useEffect(() => {
     if (boy) {
-      setName(boy.name || '');
-      setPhone(boy.phone || '');
-      setEmergencyPhone(boy.emergencyContact || '');
-      setLicenseNumber(boy.licenseNumber || '');
-      setVehicleType(boy.vehicleType || 'Scooter');
-      setVehicleModel(boy.vehicleModel || '');
-      setNumberPlate(boy.numberPlate || '');
-      setStatus(boy.status || 'READY');
-      setLocation(boy.location || '');
-      setAvatarUrl(boy.avatarUrl);
-      setLicensePhotoUri(boy.licensePhotoUri);
-      setNumberPlatePhotoUri(boy.numberPlatePhotoUri);
+      const bName = boy.name || '';
+      const bPhone = boy.phone || '';
+      const bEmergency = boy.emergencyContact || '';
+      const bStatus = boy.status || 'READY';
+
+      setName(bName);
+      setPhone(bPhone);
+      setEmergencyPhone(bEmergency);
+      setStatus(bStatus);
+
+      setInitialForm({
+        name: bName,
+        phone: bPhone,
+        emergencyPhone: bEmergency,
+        status: bStatus,
+      });
+
       setIsEditing(false);
+      setShowDeleteConfirm(false);
+      setShowDiscardConfirm(false);
     }
   }, [boy, visible]);
 
+  // Check if user made unsaved changes in Edit mode
+  const hasUnsavedChanges = useMemo(() => {
+    if (!isEditing) return false;
+    return (
+      name.trim() !== initialForm.name.trim() ||
+      phone.trim() !== initialForm.phone.trim() ||
+      emergencyPhone.trim() !== initialForm.emergencyPhone.trim() ||
+      status !== initialForm.status
+    );
+  }, [isEditing, name, phone, emergencyPhone, status, initialForm]);
+
   if (!boy) return null;
 
-  const handlePickPhoto = (target: 'profile' | 'license' | 'numberPlate') => {
-    Alert.alert('Upload Photo', 'Choose photo source:', [
-      {
-        text: 'Take Photo (Camera)',
-        onPress: async () => {
-          try {
-            const result = await launchCamera({
-              mediaType: 'photo',
-              quality: 0.8,
-              saveToPhotos: true,
-            });
-            if (
-              !result.didCancel &&
-              result.assets &&
-              result.assets.length > 0
-            ) {
-              const uri = result.assets[0].uri;
-              if (uri) {
-                if (target === 'profile') setAvatarUrl(uri);
-                if (target === 'license') setLicensePhotoUri(uri);
-                if (target === 'numberPlate') setNumberPlatePhotoUri(uri);
-              }
-            }
-          } catch (error) {
-            console.log('Error opening camera:', error);
-          }
-        },
-      },
-      {
-        text: 'Choose from Device',
-        onPress: async () => {
-          try {
-            const result = await launchImageLibrary({
-              mediaType: 'photo',
-              quality: 0.8,
-            });
-            if (
-              !result.didCancel &&
-              result.assets &&
-              result.assets.length > 0
-            ) {
-              const uri = result.assets[0].uri;
-              if (uri) {
-                if (target === 'profile') setAvatarUrl(uri);
-                if (target === 'license') setLicensePhotoUri(uri);
-                if (target === 'numberPlate') setNumberPlatePhotoUri(uri);
-              }
-            }
-          } catch (error) {
-            console.log('Error selecting image:', error);
-          }
-        },
-      },
-      {
-        text: 'Cancel',
-        style: 'cancel',
-      },
-    ]);
+  // Handle close action requested by X, Android back, or Outside tap
+  const handleRequestClose = () => {
+    if (isEditing) {
+      if (hasUnsavedChanges) {
+        setShowDiscardConfirm(true);
+      } else {
+        setIsEditing(false);
+      }
+    } else {
+      onClose();
+    }
+  };
+
+  const handleDiscardChanges = () => {
+    setShowDiscardConfirm(false);
+    // Reset back to original
+    setName(initialForm.name);
+    setPhone(initialForm.phone);
+    setEmergencyPhone(initialForm.emergencyPhone);
+    setStatus(initialForm.status);
+    setIsEditing(false);
   };
 
   const handleSave = () => {
     Keyboard.dismiss();
-    if (!name.trim()) {
-      Alert.alert('Required Field', 'Please enter a valid member name.');
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      Alert.alert('Required Field', 'Please enter a valid partner name.');
       return;
     }
 
+    const trimmedPhone = phone.trim();
+    if (trimmedPhone && trimmedPhone.replace(/[^0-9]/g, '').length < 10) {
+      Alert.alert('Invalid Mobile', 'Please enter a valid 10-digit mobile number.');
+      return;
+    }
+
+    // Update only the simplified fields while preserving all existing vehicle/route data in backend
     updateDeliveryBoy(boy.id, {
-      name: name.trim(),
-      phone: phone.trim(),
+      name: trimmedName,
+      phone: trimmedPhone,
       emergencyContact: emergencyPhone.trim(),
-      licenseNumber: licenseNumber.trim(),
-      vehicleType,
-      vehicleModel: vehicleModel.trim(),
-      numberPlate: numberPlate.trim(),
       status,
-      location: location.trim(),
-      avatarUrl,
-      licensePhotoUri,
-      numberPlatePhotoUri,
+    });
+
+    setInitialForm({
+      name: trimmedName,
+      phone: trimmedPhone,
+      emergencyPhone: emergencyPhone.trim(),
+      status,
     });
 
     setIsEditing(false);
-    Alert.alert('Success', 'Delivery member details updated!');
+    Alert.alert('Success', 'Partner details updated successfully!');
   };
 
   const handleDelete = () => {
-    Alert.alert(
-      'Remove Delivery Partner',
-      `Are you sure you want to remove ${boy.name} from the fleet? This action cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: () => {
-            deleteDeliveryBoy(boy.id);
-            onClose();
-          },
-        },
-      ],
-    );
+    setShowDeleteConfirm(true);
+  };
+
+  const handleExecuteDelete = () => {
+    setShowDeleteConfirm(false);
+    if (boy) {
+      deleteDeliveryBoy(boy.id);
+      onClose();
+    }
   };
 
   const handleCall = () => {
-    const p = phone || boy.phone || '+919876543210';
+    const p = phone || boy.phone;
+    if (!p) {
+      Alert.alert('Notice', 'No phone number available.');
+      return;
+    }
     Linking.openURL(`tel:${p}`);
   };
 
-  const handleWhatsApp = () => {
-    const p = phone || boy.phone || '+919876543210';
+  const handleMessage = () => {
+    const p = phone || boy.phone;
+    if (!p) {
+      Alert.alert('Notice', 'No phone number available.');
+      return;
+    }
+    const cleanNumber = p.replace(/[^0-9]/g, '');
     const msg = encodeURIComponent(
       `Hi ${boy.name}, regarding ChaiFlow delivery run:`,
     );
-    Linking.openURL(`whatsapp://send?phone=${p}&text=${msg}`).catch(() => {
+    Linking.openURL(`whatsapp://send?phone=${cleanNumber}&text=${msg}`).catch(() => {
       Linking.openURL(`sms:${p}?body=${msg}`);
     });
   };
 
+  // Helper for duty status formatting
+  const getStatusDisplay = (st: 'READY' | 'BUSY' | 'OFFLINE') => {
+    switch (st) {
+      case 'READY':
+        return { label: 'On Duty', color: '#059669', bg: '#ECFDF5', icon: 'checkmark-circle' };
+      case 'BUSY':
+        return { label: 'Busy', color: '#D97706', bg: '#FEF3C7', icon: 'bicycle' };
+      case 'OFFLINE':
+      default:
+        return { label: 'Off Duty', color: '#6B7280', bg: '#F3F4F6', icon: 'moon' };
+    }
+  };
+
+  const currentStatusDisplay = getStatusDisplay(boy.status || 'READY');
+
+  // Compute initials fallback
+  const initials = boy.name
+    ? boy.name
+      .split(' ')
+      .map(part => part[0])
+      .slice(0, 2)
+      .join('')
+      .toUpperCase()
+    : 'DP';
+
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       transparent={true}
-      onRequestClose={onClose}
+      onRequestClose={handleRequestClose}
+      statusBarTranslucent={true}
     >
-      <View style={styles.overlay}>
-        <View style={styles.modalContent}>
-          {/* Header Row */}
-          <View style={styles.headerRow}>
-            <View style={styles.headerTitleGroup}>
-              <Text style={styles.headerTitle}>
-                {isEditing
-                  ? 'Edit Partner Details'
-                  : 'Delivery Partner Profile'}
-              </Text>
-            </View>
-
-            <View style={styles.headerActionBtns}>
-              {!isEditing && (
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  style={styles.editIconBtn}
-                  onPress={() => setIsEditing(true)}
-                >
-                  <Ionicons name="create-outline" size={20} color="#8C331A" />
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity
-                activeOpacity={0.8}
-                style={styles.closeIconBtn}
-                onPress={onClose}
-              >
-                <Ionicons name="close" size={22} color="#6E6259" />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <KeyboardAwareScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.scrollBody}
-            keyboardShouldPersistTaps="handled"
-            enableOnAndroid={true}
-            extraScrollHeight={20}
-          >
-            {/* Avatar Section */}
-            <View style={styles.avatarSection}>
-              <TouchableOpacity
-                disabled={!isEditing}
-                onPress={() => handlePickPhoto('profile')}
-                activeOpacity={0.8}
-                style={styles.avatarContainer}
-              >
-                {avatarUrl ? (
-                  <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
-                ) : (
-                  <View style={styles.avatarFallback}>
-                    <Ionicons name="person" size={40} color="#8C331A" />
-                  </View>
-                )}
-                {isEditing && (
-                  <View style={styles.cameraIconBadge}>
-                    <Ionicons name="camera" size={14} color="#FFF" />
-                  </View>
-                )}
-              </TouchableOpacity>
-
-              {!isEditing && (
-                <>
-                  <Text style={styles.memberName}>{boy.name}</Text>
-                  <Text style={styles.memberPhone}>
-                    {boy.phone || 'No Phone'}
+      <TouchableWithoutFeedback onPress={handleRequestClose}>
+        <View style={styles.overlay}>
+          <TouchableWithoutFeedback onPress={e => e.stopPropagation()}>
+            <View
+              style={[
+                styles.modalCard,
+                {
+                  maxWidth: Math.min(windowWidth - 32, 420),
+                  maxHeight: Math.min(windowHeight - 64, 580),
+                },
+              ]}
+            >
+              {/* Header Row */}
+              <View style={styles.headerRow}>
+                <View style={styles.headerTitleGroup}>
+                  <Text style={styles.headerTitle}>
+                    {isEditing ? 'Edit Partner Details' : 'Partner Profile'}
                   </Text>
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      boy.status === 'BUSY'
-                        ? styles.busyBadge
-                        : boy.status === 'READY'
-                        ? styles.readyBadge
-                        : styles.offlineBadge,
-                    ]}
-                  >
-                    <Ionicons
-                      name={
-                        boy.status === 'BUSY'
-                          ? 'bicycle'
-                          : boy.status === 'READY'
-                          ? 'checkmark-circle'
-                          : 'moon'
-                      }
-                      size={12}
-                      color={
-                        boy.status === 'BUSY'
-                          ? '#3B82F6'
-                          : boy.status === 'READY'
-                          ? '#059669'
-                          : '#6B7280'
-                      }
-                      style={{ marginRight: 4 }}
-                    />
-                    <Text
-                      style={[
-                        styles.statusBadgeText,
-                        boy.status === 'BUSY'
-                          ? styles.busyBadgeText
-                          : boy.status === 'READY'
-                          ? styles.readyBadgeText
-                          : styles.offlineBadgeText,
-                      ]}
+                </View>
+
+                <View style={styles.headerActionBtns}>
+                  {!isEditing && (
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      style={styles.editIconBtn}
+                      onPress={() => setIsEditing(true)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityLabel="Edit Partner"
                     >
-                      {boy.status}
-                    </Text>
-                  </View>
-                </>
-              )}
-            </View>
+                      <Ionicons name="create-outline" size={18} color="#8C331A" />
+                    </TouchableOpacity>
+                  )}
 
-            {/* Quick Contact & Action Buttons (View Mode) */}
-            {!isEditing && (
-              <View style={styles.quickActionRow}>
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  style={styles.callBtn}
-                  onPress={handleCall}
-                >
-                  <Ionicons
-                    name="call"
-                    size={16}
-                    color="#FFF"
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={styles.actionBtnText}>Call</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  style={styles.messageBtn}
-                  onPress={handleWhatsApp}
-                >
-                  <Ionicons
-                    name="logo-whatsapp"
-                    size={16}
-                    color="#FFF"
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={styles.actionBtnText}>WhatsApp</Text>
-                </TouchableOpacity>
-
-                {boy.status === 'READY' && (
                   <TouchableOpacity
-                    activeOpacity={0.8}
-                    style={styles.assignBtn}
-                    onPress={() => {
-                      assignOrderToBoy(boy.id);
-                      Alert.alert(
-                        'Order Assigned',
-                        `Order assigned to ${boy.name}!`,
-                      );
-                    }}
+                    activeOpacity={0.7}
+                    style={styles.closeIconBtn}
+                    onPress={handleRequestClose}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityLabel="Close Modal"
                   >
-                    <Ionicons
-                      name="clipboard"
-                      size={16}
-                      color="#FFF"
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={styles.actionBtnText}>Assign</Text>
+                    <Ionicons name="close" size={20} color="#6E6259" />
                   </TouchableOpacity>
-                )}
+                </View>
               </View>
-            )}
 
-            {/* Content Body: View vs Edit */}
-            {isEditing ? (
-              /* --- EDIT FORM --- */
-              <View style={styles.formContainer}>
-                <Text style={styles.label}>Full Name *</Text>
-                <TextInput
-                  style={styles.input}
-                  value={name}
-                  onChangeText={setName}
-                  placeholder="Enter partner name"
-                />
+              <KeyboardAwareScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.scrollBody}
+                keyboardShouldPersistTaps="handled"
+                enableOnAndroid={true}
+                extraScrollHeight={Platform.OS === 'android' ? 80 : 40}
+              >
+                {/* 1. DELIVERY PARTNER PROFILE (VIEW MODE) */}
+                {!isEditing ? (
+                  <View style={styles.profileContainer}>
+                    {/* Profile Photo / Initials */}
+                    <View style={styles.avatarSection}>
+                      <View style={styles.avatarContainer}>
+                        {boy.avatarUrl ? (
+                          <Image source={{ uri: boy.avatarUrl }} style={styles.avatarImg} />
+                        ) : (
+                          <View style={styles.avatarFallback}>
+                            <Text style={styles.avatarInitialsText}>{initials}</Text>
+                          </View>
+                        )}
+                      </View>
 
-                <View style={styles.twoColRow}>
-                  <View style={{ flex: 1, marginRight: 6 }}>
-                    <Text style={styles.label}>Mobile Phone</Text>
+                      {/* Partner Name & Phone */}
+                      <Text style={styles.memberName} numberOfLines={2}>
+                        {boy.name}
+                      </Text>
+                      <Text style={styles.memberPhone}>
+                        {boy.phone || 'No phone recorded'}
+                      </Text>
+
+                      {/* Duty Status Badge (On Duty / Busy / Off Duty) */}
+                      <View
+                        style={[
+                          styles.statusBadge,
+                          { backgroundColor: currentStatusDisplay.bg },
+                        ]}
+                      >
+                        <Ionicons
+                          name={currentStatusDisplay.icon}
+                          size={13}
+                          color={currentStatusDisplay.color}
+                          style={{ marginRight: 5 }}
+                        />
+                        <Text
+                          style={[
+                            styles.statusBadgeText,
+                            { color: currentStatusDisplay.color },
+                          ]}
+                        >
+                          {currentStatusDisplay.label}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Quick Call & Message Actions */}
+                    <View style={styles.quickActionRow}>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        style={styles.callBtn}
+                        onPress={handleCall}
+                      >
+                        <Ionicons
+                          name="call"
+                          size={15}
+                          color="#FFFFFF"
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text style={styles.actionBtnText}>Call</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        style={styles.messageBtn}
+                        onPress={handleMessage}
+                      >
+                        <Ionicons
+                          name="chatbubble-ellipses"
+                          size={15}
+                          color="#FFFFFF"
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text style={styles.actionBtnText}>Message</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        style={styles.editActionBtn}
+                        onPress={() => setIsEditing(true)}
+                      >
+                        <Ionicons
+                          name="pencil"
+                          size={15}
+                          color="#8C331A"
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text style={styles.editActionBtnText}>Edit</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Emergency Contact (if available) */}
+                    {Boolean(boy.emergencyContact) && (
+                      <View style={styles.emergencyCard}>
+                        <View style={styles.emergencyHeader}>
+                          <Ionicons
+                            name="alert-circle-outline"
+                            size={16}
+                            color="#8C331A"
+                            style={{ marginRight: 6 }}
+                          />
+                          <Text style={styles.emergencyTitle}>Emergency Contact</Text>
+                        </View>
+                        <Text style={styles.emergencyValue}>
+                          {boy.emergencyContact}
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Remove Member from Fleet Action */}
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      style={styles.deleteMemberBtn}
+                      onPress={handleDelete}
+                    >
+                      <Ionicons
+                        name="trash-outline"
+                        size={16}
+                        color="#DC2626"
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text style={styles.deleteMemberText}>
+                        Remove Member from Fleet
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  /* 2. EDIT PARTNER DETAILS (EDIT MODE) */
+                  <View style={styles.formContainer}>
+                    {/* Partner Name */}
+                    <Text style={styles.label}>PARTNER NAME *</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={name}
+                      onChangeText={setName}
+                      placeholder="Enter partner name"
+                      placeholderTextColor="#9CA3AF"
+                    />
+
+                    {/* Mobile Phone */}
+                    <Text style={styles.label}>MOBILE PHONE *</Text>
                     <TextInput
                       style={styles.input}
                       value={phone}
                       onChangeText={setPhone}
+                      placeholder="10-digit mobile number"
+                      placeholderTextColor="#9CA3AF"
                       keyboardType="phone-pad"
                     />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 6 }}>
-                    <Text style={styles.label}>Emergency Phone</Text>
+
+                    {/* Emergency Phone (Optional) */}
+                    <Text style={styles.label}>EMERGENCY PHONE (OPTIONAL)</Text>
                     <TextInput
                       style={styles.input}
                       value={emergencyPhone}
                       onChangeText={setEmergencyPhone}
+                      placeholder="Optional emergency contact number"
+                      placeholderTextColor="#9CA3AF"
                       keyboardType="phone-pad"
                     />
-                  </View>
-                </View>
 
-                <Text style={styles.label}>Duty Status</Text>
-                <View style={styles.statusChipRow}>
-                  {(['READY', 'BUSY', 'OFFLINE'] as const).map(st => {
-                    const isActive = status === st;
-                    const activeBg =
-                      st === 'READY'
-                        ? '#059669'
-                        : st === 'BUSY'
-                        ? '#2563EB'
-                        : '#DC2626';
-                    return (
-                      <TouchableOpacity
-                        key={st}
-                        activeOpacity={0.8}
-                        onPress={() => setStatus(st)}
-                        style={[
-                          styles.statusChip,
-                          isActive && {
-                            backgroundColor: activeBg,
-                            borderColor: activeBg,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.statusChipText,
-                            isActive && styles.statusChipTextActive,
-                          ]}
-                        >
-                          {st === 'READY'
-                            ? '🟢 ON DUTY'
-                            : st === 'BUSY'
-                            ? '🚚 BUSY'
-                            : '🔴 OFF DUTY'}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
-                <Text style={styles.label}>Vehicle Type</Text>
-                <View style={styles.vehicleTypeGrid}>
-                  {(
-                    ['Scooter', 'E-Bike', 'Auto Cargo', 'Mini Van'] as const
-                  ).map(vt => (
-                    <TouchableOpacity
-                      key={vt}
-                      activeOpacity={0.8}
-                      onPress={() => setVehicleType(vt)}
-                      style={[
-                        styles.vehicleChip,
-                        vehicleType === vt && styles.vehicleChipActive,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.vehicleChipText,
-                          vehicleType === vt && styles.vehicleChipTextActive,
-                        ]}
-                      >
-                        {vt}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <View style={styles.twoColRow}>
-                  <View style={{ flex: 1, marginRight: 6 }}>
-                    <Text style={styles.label}>Vehicle Model</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={vehicleModel}
-                      onChangeText={setVehicleModel}
-                    />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 6 }}>
-                    <Text style={styles.label}>Number Plate (RC)</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={numberPlate}
-                      onChangeText={setNumberPlate}
-                      autoCapitalize="characters"
-                    />
-                  </View>
-                </View>
-
-                <Text style={styles.label}>Driving License / ID</Text>
-                <TextInput
-                  style={styles.input}
-                  value={licenseNumber}
-                  onChangeText={setLicenseNumber}
-                />
-
-                <Text style={styles.label}>Assigned Route / Location</Text>
-                <TextInput
-                  style={styles.input}
-                  value={location}
-                  onChangeText={setLocation}
-                />
-
-                {/* Edit Photo Pickers */}
-                <Text style={styles.label}>Update Documents & Photos</Text>
-                <View style={styles.photosRow}>
-                  <TouchableOpacity
-                    style={styles.photoUploadCard}
-                    onPress={() => handlePickPhoto('numberPlate')}
-                  >
-                    {numberPlatePhotoUri ? (
-                      <Image
-                        source={{ uri: numberPlatePhotoUri }}
-                        style={styles.photoThumb}
-                      />
-                    ) : (
-                      <View style={styles.photoPlaceholder}>
-                        <Ionicons
-                          name="card-outline"
-                          size={20}
-                          color="#8C331A"
-                        />
-                        <Text style={styles.photoPlaceholderText}>
-                          Number Plate
-                        </Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.photoUploadCard}
-                    onPress={() => handlePickPhoto('license')}
-                  >
-                    {licensePhotoUri ? (
-                      <Image
-                        source={{ uri: licensePhotoUri }}
-                        style={styles.photoThumb}
-                      />
-                    ) : (
-                      <View style={styles.photoPlaceholder}>
-                        <Ionicons
-                          name="document-text-outline"
-                          size={20}
-                          color="#8C331A"
-                        />
-                        <Text style={styles.photoPlaceholderText}>
-                          License Photo
-                        </Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                {/* Form Buttons */}
-                <View style={styles.editActionRow}>
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    style={styles.saveBtn}
-                    onPress={handleSave}
-                  >
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={18}
-                      color="#FFF"
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={styles.saveBtnText}>Save Changes</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    style={styles.cancelBtn}
-                    onPress={() => setIsEditing(false)}
-                  >
-                    <Text style={styles.cancelBtnText}>Cancel</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              /* --- VIEW DETAILS --- */
-              <View style={styles.detailsContainer}>
-                {/* Information Card 1: Vehicle & Plate */}
-                <View style={styles.infoCard}>
-                  <View style={styles.cardHeader}>
-                    <Ionicons
-                      name="bicycle-outline"
-                      size={18}
-                      color="#059669"
-                    />
-                    <Text style={styles.cardTitle}>Vehicle Information</Text>
-                  </View>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Vehicle Type:</Text>
-                    <Text style={styles.infoValue}>
-                      {boy.vehicleType || 'Scooter'}
-                    </Text>
-                  </View>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Model:</Text>
-                    <Text style={styles.infoValue}>
-                      {boy.vehicleModel || 'N/A'}
-                    </Text>
-                  </View>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Number Plate:</Text>
-                    <Text style={styles.infoValueHighlight}>
-                      {boy.numberPlate || 'N/A'}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Information Card 2: Driver Documents & Contact */}
-                <View style={styles.infoCard}>
-                  <View style={styles.cardHeader}>
-                    <Ionicons
-                      name="shield-checkmark-outline"
-                      size={18}
-                      color="#8C331A"
-                    />
-                    <Text style={styles.cardTitle}>Verification & Contact</Text>
-                  </View>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Driving License:</Text>
-                    <Text style={styles.infoValue}>
-                      {boy.licenseNumber || 'Verified'}
-                    </Text>
-                  </View>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Emergency Contact:</Text>
-                    <Text style={styles.infoValue}>
-                      {boy.emergencyContact || 'N/A'}
-                    </Text>
-                  </View>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Current Hub Route:</Text>
-                    <Text style={styles.infoValue}>{boy.location}</Text>
-                  </View>
-                </View>
-
-                {/* Uploaded Photos Section */}
-                {(boy.licensePhotoUri || boy.numberPlatePhotoUri) && (
-                  <View style={styles.infoCard}>
-                    <View style={styles.cardHeader}>
-                      <Ionicons
-                        name="images-outline"
-                        size={18}
-                        color="#3B82F6"
-                      />
-                      <Text style={styles.cardTitle}>
-                        Uploaded Document Photos
-                      </Text>
+                    {/* Duty Status Selector (On Duty / Busy / Off Duty) */}
+                    <Text style={styles.label}>DUTY STATUS</Text>
+                    <View style={styles.statusChipRow}>
+                      {(
+                        [
+                          { key: 'READY', label: 'On Duty', icon: 'checkmark-circle', activeColor: '#059669', activeBg: '#ECFDF5' },
+                          { key: 'BUSY', label: 'Busy', icon: 'bicycle', activeColor: '#D97706', activeBg: '#FEF3C7' },
+                          { key: 'OFFLINE', label: 'Off Duty', icon: 'moon', activeColor: '#6B7280', activeBg: '#F3F4F6' },
+                        ] as const
+                      ).map(item => {
+                        const isSelected = status === item.key;
+                        return (
+                          <TouchableOpacity
+                            key={item.key}
+                            activeOpacity={0.8}
+                            onPress={() => setStatus(item.key)}
+                            style={[
+                              styles.statusChip,
+                              isSelected && {
+                                backgroundColor: item.activeBg,
+                                borderColor: item.activeColor,
+                              },
+                            ]}
+                          >
+                            <Ionicons
+                              name={item.icon}
+                              size={14}
+                              color={isSelected ? item.activeColor : '#6B7280'}
+                              style={{ marginRight: 4 }}
+                            />
+                            <Text
+                              style={[
+                                styles.statusChipText,
+                                isSelected && { color: item.activeColor, fontWeight: '700' },
+                              ]}
+                            >
+                              {item.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
-                    <View style={styles.photosDisplayRow}>
-                      {boy.numberPlatePhotoUri && (
-                        <View style={styles.photoDisplayBox}>
-                          <Image
-                            source={{ uri: boy.numberPlatePhotoUri }}
-                            style={styles.documentPreviewImage}
-                          />
-                          <Text style={styles.photoCaption}>
-                            RC / Number Plate
-                          </Text>
-                        </View>
-                      )}
-                      {boy.licensePhotoUri && (
-                        <View style={styles.photoDisplayBox}>
-                          <Image
-                            source={{ uri: boy.licensePhotoUri }}
-                            style={styles.documentPreviewImage}
-                          />
-                          <Text style={styles.photoCaption}>
-                            Driving License
-                          </Text>
-                        </View>
-                      )}
+
+                    {/* Save Changes and Cancel Actions */}
+                    <View style={styles.editActionRow}>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        style={styles.cancelBtn}
+                        onPress={handleRequestClose}
+                      >
+                        <Text style={styles.cancelBtnText}>Cancel</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        style={styles.saveBtn}
+                        onPress={handleSave}
+                      >
+                        <Ionicons
+                          name="checkmark"
+                          size={17}
+                          color="#FFFFFF"
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text style={styles.saveBtnText}>Save Changes</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
                 )}
-
-                {/* Danger Action Zone: Remove Member */}
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  style={styles.deleteMemberBtn}
-                  onPress={handleDelete}
-                >
-                  <Ionicons
-                    name="trash-outline"
-                    size={18}
-                    color="#D9381E"
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={styles.deleteMemberText}>
-                    Remove Member from Fleet
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </KeyboardAwareScrollView>
+              </KeyboardAwareScrollView>
+            </View>
+          </TouchableWithoutFeedback>
         </View>
-      </View>
+      </TouchableWithoutFeedback>
+
+      {/* Discard Unsaved Changes Dialog */}
+      <ConfirmDialog
+        visible={showDiscardConfirm}
+        title="Discard Unsaved Changes?"
+        description="You have unsaved edits in this partner's profile. Are you sure you want to discard them?"
+        type="warning"
+        confirmLabel="Discard"
+        cancelLabel="Keep Editing"
+        onConfirm={handleDiscardChanges}
+        onCancel={() => setShowDiscardConfirm(false)}
+      />
+
+      {/* Remove Partner Confirmation Dialog */}
+      <ConfirmDialog
+        visible={showDeleteConfirm}
+        title="Remove Delivery Partner?"
+        description={`Are you sure you want to remove "${boy?.name}" from your active fleet? This action cannot be undone.`}
+        type="danger"
+        confirmLabel="Remove Partner"
+        cancelLabel="Cancel"
+        onConfirm={handleExecuteDelete}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </Modal>
   );
 }
@@ -704,393 +533,296 @@ export default function DeliveryBoyDetailModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
   },
-  modalContent: {
+  modalCard: {
+    width: '100%',
     backgroundColor: '#FAF8F5',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    maxHeight: '90%',
-    paddingTop: 20,
-    paddingHorizontal: 20,
-    paddingBottom: 20,
+    borderRadius: 20,
+    paddingTop: 16,
+    paddingHorizontal: 18,
+    paddingBottom: 16,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.18,
+        shadowRadius: 16,
+      },
+      android: {
+        elevation: 10,
+      },
+    }),
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 14,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFEAE4',
   },
   headerTitleGroup: {
     flex: 1,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '800',
     color: '#2C201A',
   },
   headerActionBtns: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
   editIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: '#FDEEEB',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 8,
   },
   closeIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: '#EFECE8',
     justifyContent: 'center',
     alignItems: 'center',
   },
   scrollBody: {
-    paddingBottom: 24,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+
+  /* Profile View Styles */
+  profileContainer: {
+    alignItems: 'center',
   },
   avatarSection: {
     alignItems: 'center',
-    marginVertical: 12,
+    width: '100%',
+    marginBottom: 12,
   },
   avatarContainer: {
-    position: 'relative',
+    marginBottom: 8,
   },
   avatarImg: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
   },
   avatarFallback: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: '#FDEEEB',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#F6D9D2',
   },
-  cameraIconBadge: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    backgroundColor: '#059669',
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#FFF',
+  avatarInitialsText: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#8C331A',
   },
   memberName: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '800',
     color: '#2C201A',
-    marginTop: 8,
+    textAlign: 'center',
+    marginBottom: 2,
   },
   memberPhone: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#6E6259',
-    marginTop: 2,
+    marginBottom: 8,
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 4,
-    borderRadius: 12,
-    marginTop: 8,
-  },
-  busyBadge: {
-    backgroundColor: '#EBF3FE',
-  },
-  busyBadgeText: {
-    color: '#3B82F6',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-  readyBadge: {
-    backgroundColor: '#ECFDF5',
-  },
-  readyBadgeText: {
-    color: '#059669',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-  offlineBadge: {
-    backgroundColor: '#F3F4F6',
-  },
-  offlineBadgeText: {
-    color: '#6B7280',
-    fontWeight: '700',
-    fontSize: 12,
+    borderRadius: 14,
+    marginTop: 2,
   },
   statusBadgeText: {
     fontSize: 12,
+    fontWeight: '700',
   },
   quickActionRow: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginVertical: 14,
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+    marginVertical: 10,
   },
   callBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#8C331A',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 20,
-    marginRight: 8,
+    height: 40,
+    borderRadius: 10,
   },
   messageBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#059669',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 20,
-    marginRight: 8,
+    height: 40,
+    borderRadius: 10,
   },
-  assignBtn: {
+  editActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#3B82F6',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 20,
+    justifyContent: 'center',
+    backgroundColor: '#FDEEEB',
+    borderWidth: 1,
+    borderColor: '#F6D9D2',
+    height: 40,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  editActionBtnText: {
+    color: '#8C331A',
+    fontWeight: '700',
+    fontSize: 13,
   },
   actionBtnText: {
-    color: '#FFF',
+    color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
   },
-  detailsContainer: {
-    marginTop: 8,
-  },
-  infoCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#EFECE9',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F5F2EE',
-    paddingBottom: 8,
-  },
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#2C201A',
-    marginLeft: 6,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 5,
-  },
-  infoLabel: {
-    fontSize: 13,
-    color: '#7C6E65',
-  },
-  infoValue: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#2C201A',
-  },
-  infoValueHighlight: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  photosDisplayRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-  },
-  photoDisplayBox: {
-    width: '48%',
-    borderRadius: 12,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#EFECE8',
-  },
-  documentPreviewImage: {
+  emergencyCard: {
     width: '100%',
-    height: 100,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    marginTop: 8,
+    marginBottom: 10,
   },
-  photoCaption: {
-    fontSize: 11,
+  emergencyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  emergencyTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8C331A',
+    letterSpacing: 0.3,
+  },
+  emergencyValue: {
+    fontSize: 13,
     fontWeight: '600',
-    color: '#6E6259',
-    textAlign: 'center',
-    paddingVertical: 4,
-    backgroundColor: '#FAF8F5',
+    color: '#2C201A',
+    marginLeft: 22,
   },
   deleteMemberBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FEE2E2',
-    paddingVertical: 14,
-    borderRadius: 18,
-    marginTop: 8,
-    marginBottom: 10,
+    width: '100%',
+    height: 42,
+    borderRadius: 10,
+    marginTop: 6,
   },
   deleteMemberText: {
-    color: '#D9381E',
+    color: '#DC2626',
     fontWeight: '700',
-    fontSize: 14,
+    fontSize: 13,
   },
 
-  /* Form Styles */
+  /* Edit Form Styles */
   formContainer: {
-    marginTop: 8,
+    width: '100%',
   },
   label: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#2C201A',
-    marginBottom: 6,
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#6B7280',
+    letterSpacing: 0.4,
     marginTop: 10,
+    marginBottom: 6,
   },
   input: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#EFECE9',
-    paddingHorizontal: 14,
-    height: 46,
-    fontSize: 14,
-    color: '#2C201A',
-  },
-  twoColRow: {
-    flexDirection: 'row',
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 12,
+    height: 42,
+    fontSize: 13,
+    color: '#111827',
   },
   statusChipRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 6,
+    marginTop: 2,
+    marginBottom: 8,
   },
   statusChip: {
     flex: 1,
-    paddingVertical: 8,
+    flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#EFECE9',
-    backgroundColor: '#FFF',
-    marginHorizontal: 3,
-  },
-  statusChipActive: {
-    backgroundColor: '#8C331A',
-    borderColor: '#8C331A',
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
   },
   statusChipText: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#6E6259',
-  },
-  statusChipTextActive: {
-    color: '#FFF',
-  },
-  vehicleTypeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  vehicleChip: {
-    width: '48%',
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#EFECE9',
-    backgroundColor: '#FFF',
-    marginBottom: 6,
-  },
-  vehicleChipActive: {
-    backgroundColor: '#059669',
-    borderColor: '#059669',
-  },
-  vehicleChipText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#6E6259',
-  },
-  vehicleChipTextActive: {
-    color: '#FFF',
-  },
-  photosRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  photoUploadCard: {
-    width: '48%',
-    height: 80,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#EFECE9',
-    borderStyle: 'dashed',
-  },
-  photoThumb: {
-    width: '100%',
-    height: '100%',
-  },
-  photoPlaceholder: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  photoPlaceholderText: {
-    fontSize: 10,
-    color: '#8C331A',
     fontWeight: '600',
-    marginTop: 2,
+    color: '#4B5563',
   },
   editActionRow: {
     flexDirection: 'row',
-    marginTop: 18,
-    marginBottom: 10,
-  },
-  saveBtn: {
-    flex: 1,
-    height: 48,
-    backgroundColor: '#8C331A',
-    borderRadius: 16,
-    flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 8,
-  },
-  saveBtnText: {
-    color: '#FFF',
-    fontWeight: '700',
-    fontSize: 15,
+    gap: 8,
+    marginTop: 16,
+    marginBottom: 4,
   },
   cancelBtn: {
-    width: 90,
-    height: 48,
+    flex: 1,
+    height: 44,
     backgroundColor: '#EFECE8',
-    borderRadius: 16,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
   cancelBtnText: {
     color: '#6E6259',
     fontWeight: '700',
-    fontSize: 14,
+    fontSize: 13,
+  },
+  saveBtn: {
+    flex: 1.5,
+    height: 44,
+    backgroundColor: '#8C331A',
+    borderRadius: 10,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  saveBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
   },
 });

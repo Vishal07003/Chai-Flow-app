@@ -18,6 +18,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import { DrawerContentComponentProps } from '@react-navigation/drawer';
 import { useApp } from '../../context/AppContext';
+import ConfirmDialog from '../ConfirmDialog';
 
 export default function ProfileDrawer(props?: DrawerContentComponentProps) {
   const insets = useSafeAreaInsets();
@@ -57,6 +58,7 @@ export default function ProfileDrawer(props?: DrawerContentComponentProps) {
   const [pushNotifications, setPushNotifications] = useState(true);
   const [emailAlerts, setEmailAlerts] = useState(true);
 
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
   const triggerToast = (msg: string) => {
@@ -110,10 +112,13 @@ export default function ProfileDrawer(props?: DrawerContentComponentProps) {
   };
 
   const handleLogout = () => {
-    handleDebouncedAction(() => {
-      safeCloseDrawer();
-      logout();
-    });
+    setShowLogoutConfirm(true);
+  };
+
+  const handleExecuteLogout = () => {
+    setShowLogoutConfirm(false);
+    safeCloseDrawer();
+    logout();
   };
 
   const renderContent = () => (

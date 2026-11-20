@@ -1,4 +1,5 @@
 export * from './common';
+export { default as ConfirmDialog, type ConfirmDialogProps, type ConfirmDialogType } from './ConfirmDialog';
 export * from './customer';
 export * from './product';
 export * from './invoice';

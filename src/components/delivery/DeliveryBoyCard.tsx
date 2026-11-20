@@ -26,19 +26,20 @@ export default function DeliveryBoyCard({
 }: DeliveryBoyCardProps) {
   const {
     name,
+    phone,
     status,
-    location,
-    distance,
+    isActive = true,
     avatarUrl,
-    progress = 0,
     vehicleType,
     vehicleModel,
     numberPlate,
+    activeDeliveriesCount = 0,
+    assignedOrderNumber,
   } = boy;
 
   const isBusy = status === 'BUSY';
   const isReady = status === 'READY';
-  const isOffline = status === 'OFFLINE';
+  const isOffline = status === 'OFFLINE' || !isActive;
 
   const handleCardPress = () => {
     if (onPress) {
@@ -48,375 +49,290 @@ export default function DeliveryBoyCard({
     }
   };
 
+  const statusLabel = !isActive ? 'INACTIVE' : isReady ? 'AVAILABLE' : isBusy ? 'BUSY' : 'OFFLINE';
+
   return (
-    <View style={styles.card}>
-      {/* Top Header Row - Clickable for details & edit */}
-      <TouchableOpacity
-        activeOpacity={0.8}
-        style={styles.headerRow}
-        onPress={handleCardPress}
-      >
-        {/* Avatar with Status Indicator Dot */}
+    <TouchableOpacity
+      activeOpacity={0.85}
+      style={[styles.card, !isActive && styles.cardInactive]}
+      onPress={handleCardPress}
+    >
+      <View style={styles.topRow}>
+        {/* Profile Avatar / Initials */}
         <View style={styles.avatarWrapper}>
           {avatarUrl ? (
             <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
           ) : (
             <View style={styles.avatarFallback}>
-              <Ionicons name="person" size={24} color="#A09489" />
-            </View>
-          )}
-
-          {/* Status Indicator Dot */}
-          <View
-            style={[
-              styles.statusDot,
-              isBusy && styles.busyDot,
-              isReady && styles.readyDot,
-              isOffline && styles.offlineDot,
-            ]}
-          >
-            {isBusy && <Ionicons name="git-commit" size={10} color="#FFF" />}
-          </View>
-        </View>
-
-        {/* Name & Subtitle */}
-        <View style={styles.infoContainer}>
-          <View style={styles.nameHeaderRow}>
-            <Text style={styles.name}>{name}</Text>
-            <Ionicons name="chevron-forward" size={16} color="#A09489" />
-          </View>
-
-          {/* Vehicle & Plate Tag */}
-          {(numberPlate || vehicleType) && (
-            <View style={styles.vehiclePillRow}>
-              <Ionicons
-                name="bicycle"
-                size={12}
-                color="#059669"
-                style={{ marginRight: 4 }}
-              />
-              <Text style={styles.vehiclePillText}>
-                {vehicleModel || vehicleType || 'Scooter'} ·{' '}
-                {numberPlate || 'DL 01 AB 1234'}
+              <Text style={styles.initialsText}>
+                {name ? name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'DP'}
               </Text>
             </View>
           )}
 
-          <View style={styles.locationRow}>
-            {isBusy && (
-              <Ionicons
-                name="git-commit-outline"
-                size={14}
-                color="#6E6259"
-                style={{ marginRight: 4 }}
-              />
-            )}
-            {isReady && (
-              <Ionicons
-                name="location-outline"
-                size={14}
-                color="#6E6259"
-                style={{ marginRight: 4 }}
-              />
-            )}
-            {isOffline && (
-              <Ionicons
-                name="time-outline"
-                size={14}
-                color="#6E6259"
-                style={{ marginRight: 4 }}
-              />
-            )}
-            <Text style={styles.locationText}>
-              {location} {distance ? `• ${distance}` : ''}
-            </Text>
-          </View>
-        </View>
-
-        {/* Right Badge & Quick Delete Button */}
-        <View style={styles.badgeColumn}>
+          {/* Status Dot */}
           <View
             style={[
-              styles.badge,
-              isBusy && styles.busyBadge,
-              isReady && styles.readyBadge,
-              isOffline && styles.offlineBadge,
+              styles.statusDot,
+              isReady && styles.readyDot,
+              isBusy && styles.busyDot,
+              isOffline && styles.offlineDot,
             ]}
-          >
-            <Text
+          />
+        </View>
+
+        {/* Info Column */}
+        <View style={styles.infoCol}>
+          <View style={styles.nameRow}>
+            <Text style={styles.nameText} numberOfLines={1}>
+              {name}
+            </Text>
+
+            {/* Status Badge */}
+            <View
               style={[
-                styles.badgeText,
-                isBusy && styles.busyBadgeText,
-                isReady && styles.readyBadgeText,
-                isOffline && styles.offlineBadgeText,
+                styles.statusBadge,
+                isReady && styles.statusBadgeReady,
+                isBusy && styles.statusBadgeBusy,
+                isOffline && styles.statusBadgeOffline,
               ]}
             >
-              {status}
-            </Text>
+              <Text
+                style={[
+                  styles.statusBadgeText,
+                  isReady && styles.statusBadgeTextReady,
+                  isBusy && styles.statusBadgeTextBusy,
+                  isOffline && styles.statusBadgeTextOffline,
+                ]}
+              >
+                {statusLabel}
+              </Text>
+            </View>
           </View>
 
-          {/* {onDelete && (
-            <TouchableOpacity
-              activeOpacity={0.7}
-              style={styles.trashQuickBtn}
-              onPress={() => onDelete(boy)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons name="trash-outline" size={16} color="#D9381E" />
-            </TouchableOpacity>
-          )} */}
+          {/* Mobile & Vehicle Subtitle */}
+          <View style={styles.detailsRow}>
+            {phone ? (
+              <Text style={styles.subText}>📱 {phone}</Text>
+            ) : null}
+
+            {(vehicleType || numberPlate) ? (
+              <Text style={styles.subText}>
+                {phone ? ' • ' : ''}
+                {vehicleModel || vehicleType || 'Scooter'}
+                {numberPlate ? ` (${numberPlate})` : ''}
+              </Text>
+            ) : null}
+          </View>
+
+          {/* Assigned Order Info if available */}
+          {(activeDeliveriesCount > 0 || assignedOrderNumber) && (
+            <View style={styles.orderTagRow}>
+              <Ionicons name="cube-outline" size={12} color="#8C331A" style={{ marginRight: 4 }} />
+              <Text style={styles.orderTagText}>
+                {assignedOrderNumber ? `Order #${assignedOrderNumber}` : `${activeDeliveriesCount} active delivery`}
+              </Text>
+            </View>
+          )}
         </View>
-      </TouchableOpacity>
 
-      {/* Progress Bar (if active/busy) */}
-      {progress > 0 && (
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressBar, { width: `${progress}%` }]} />
-        </View>
-      )}
+        <Ionicons name="chevron-forward" size={16} color="#B5AAA2" />
+      </View>
 
-      {/* Action Buttons Row */}
-      {isBusy && (
-        <View style={styles.actionsRow}>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.messageBtn}
-            onPress={() => onMessage?.(boy)}
-          >
-            <Ionicons
-              name="chatbox-outline"
-              size={16}
-              color="#332219"
-              style={{ marginRight: 6 }}
-            />
-            <Text style={styles.messageBtnText}>Message</Text>
-          </TouchableOpacity>
+      {/* Quick Action Footer */}
+      <View style={styles.actionsFooter}>
+        <TouchableOpacity
+          style={styles.actionBtn}
+          onPress={() => onCall && onCall(boy)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="call-outline" size={14} color="#059669" style={{ marginRight: 4 }} />
+          <Text style={[styles.actionBtnText, { color: '#059669' }]}>Call</Text>
+        </TouchableOpacity>
 
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.callBtn}
-            onPress={() => onCall?.(boy)}
-          >
-            <Ionicons name="call-outline" size={16} color="#8C331A" />
-          </TouchableOpacity>
-        </View>
-      )}
+        <View style={styles.btnDivider} />
 
-      {isReady && (
-        <View style={styles.actionsRow}>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            style={styles.assignBtn}
-            onPress={() => onAssignOrder?.(boy)}
-          >
-            <Ionicons
-              name="clipboard-outline"
-              size={16}
-              color="#FFFFFF"
-              style={{ marginRight: 6 }}
-            />
-            <Text style={styles.assignBtnText}>Assign Order</Text>
-          </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.actionBtn}
+          onPress={() => onMessage && onMessage(boy)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chatbubble-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
+          <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>Message</Text>
+        </TouchableOpacity>
 
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.moreBtn}
-            onPress={() => handleCardPress()}
-          >
-            <Ionicons name="create-outline" size={18} color="#4A3E37" />
-          </TouchableOpacity>
-        </View>
-      )}
-    </View>
+        <View style={styles.btnDivider} />
+
+        <TouchableOpacity
+          style={styles.actionBtn}
+          onPress={handleCardPress}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="information-circle-outline" size={14} color="#8C331A" style={{ marginRight: 4 }} />
+          <Text style={[styles.actionBtnText, { color: '#8C331A' }]}>Details</Text>
+        </TouchableOpacity>
+      </View>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    marginBottom: 10,
     elevation: 2,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    overflow: 'hidden',
   },
-  headerRow: {
+  cardInactive: {
+    opacity: 0.7,
+    backgroundColor: '#FAF8F5',
+  },
+  topRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 12,
   },
   avatarWrapper: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     position: 'relative',
-    marginRight: 14,
+    marginRight: 10,
   },
   avatarImage: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
   },
   avatarFallback: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#EFECE8',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F7EFE9',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EFE3D9',
+  },
+  initialsText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#8C331A',
   },
   statusDot: {
     position: 'absolute',
     bottom: 0,
     right: 0,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     borderWidth: 2,
     borderColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  busyDot: {
-    backgroundColor: '#3B82F6',
   },
   readyDot: {
     backgroundColor: '#10B981',
   },
+  busyDot: {
+    backgroundColor: '#F59E0B',
+  },
   offlineDot: {
     backgroundColor: '#9CA3AF',
   },
-  infoContainer: {
+  infoCol: {
     flex: 1,
+    marginRight: 8,
   },
-  nameHeaderRow: {
+  nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  name: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#2C201A',
-    marginRight: 4,
-  },
-  badgeColumn: {
-    alignItems: 'flex-end',
     justifyContent: 'space-between',
-  },
-  trashQuickBtn: {
-    marginTop: 8,
-    padding: 4,
-  },
-  vehiclePillRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
     marginBottom: 2,
   },
-  vehiclePillText: {
-    fontSize: 11,
-    fontWeight: '700',
+  nameText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#2A2421',
+    flex: 1,
+    marginRight: 6,
+  },
+  statusBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  statusBadgeReady: {
+    backgroundColor: '#ECFDF5',
+  },
+  statusBadgeBusy: {
+    backgroundColor: '#FFFBEB',
+  },
+  statusBadgeOffline: {
+    backgroundColor: '#F3F4F6',
+  },
+  statusBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  statusBadgeTextReady: {
     color: '#059669',
   },
-  locationRow: {
+  statusBadgeTextBusy: {
+    color: '#D97706',
+  },
+  statusBadgeTextOffline: {
+    color: '#6B7280',
+  },
+  detailsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  subText: {
+    fontSize: 11,
+    color: '#6B5E55',
+  },
+  orderTagRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 4,
+    backgroundColor: '#FEF9F6',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
   },
-  locationText: {
-    fontSize: 13,
-    color: '#6E6259',
-  },
-  badge: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 14,
-  },
-  busyBadge: {
-    backgroundColor: '#EBF3FE',
-  },
-  busyBadgeText: {
-    color: '#3B82F6',
-  },
-  readyBadge: {
-    backgroundColor: '#FDEEEB',
-  },
-  readyBadgeText: {
+  orderTagText: {
+    fontSize: 10,
+    fontWeight: '700',
     color: '#8C331A',
   },
-  offlineBadge: {
-    backgroundColor: '#F3F4F6',
+  actionsFooter: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: '#F3EFEA',
+    backgroundColor: '#FAF8F5',
   },
-  offlineBadgeText: {
-    color: '#71717A',
+  actionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
   },
-  badgeText: {
+  actionBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 0.5,
   },
-  progressTrack: {
-    height: 4,
-    backgroundColor: '#EFECE8',
-    borderRadius: 2,
-    marginTop: 14,
-    overflow: 'hidden',
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: '#3B82F6',
-    borderRadius: 2,
-  },
-
-  /* Actions Row */
-  actionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 14,
-  },
-  messageBtn: {
-    flex: 1,
-    height: 42,
-    backgroundColor: '#EFECE8',
-    borderRadius: 12,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  messageBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#2C201A',
-  },
-  callBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    backgroundColor: '#FDEEEB',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  assignBtn: {
-    flex: 1,
-    height: 44,
-    backgroundColor: '#8C331A',
-    borderRadius: 12,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  assignBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  moreBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#EFECE8',
-    justifyContent: 'center',
-    alignItems: 'center',
+  btnDivider: {
+    width: 1,
+    backgroundColor: '#EFEAE4',
   },
 });
