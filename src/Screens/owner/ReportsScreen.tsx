@@ -1142,7 +1142,7 @@ export default function ReportsScreen({ navigation }: any) {
       ) : (
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
+          contentContainerStyle={{ paddingBottom: 100 + insets.bottom }}
           showsVerticalScrollIndicator={false}
         >
           {activeTab === 'overview' && renderOverview()}

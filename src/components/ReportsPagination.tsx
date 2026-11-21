@@ -64,17 +64,10 @@ export function ReportsPagination({
 
   return (
     <View style={styles.container}>
-      {/* 1. Header Information: Showing 1–10 of 37 records */}
+      {/* 1. Header Information Row: Left: Rows per page selector | Right: Showing 1–10 of 37 records */}
       <View style={styles.infoRow}>
-        <Text style={styles.infoText}>
-          Showing <Text style={styles.infoHighlight}>{startRecord}–{endRecord}</Text> of <Text style={styles.infoHighlight}>{totalRecords}</Text> records
-        </Text>
-      </View>
-
-      {/* 2. Main Pagination Controls Row: Left side (Rows per page) + Right side (Navigation) */}
-      <View style={styles.mainControlsRow}>
-        {/* Left Side: Rows per page + Anchor for Floating Overlay Dropdown */}
-        <View style={styles.leftContainer}>
+        {/* Left Side: Rows per page selector + Floating Upward Dropdown */}
+        <View style={styles.leftSelectorGroup}>
           <Text style={styles.pageSizeLabel}>Rows per page:</Text>
           <View style={styles.dropdownAnchor}>
             <TouchableOpacity
@@ -84,16 +77,16 @@ export function ReportsPagination({
             >
               <Text style={styles.pageSizeValText}>{effectivePageSize}</Text>
               <Ionicons
-                name={dropdownOpen ? 'chevron-up' : 'chevron-down'}
+                name={dropdownOpen ? 'chevron-down' : 'chevron-up'}
                 size={13}
                 color="#6B5E55"
                 style={{ marginLeft: 3 }}
               />
             </TouchableOpacity>
 
-            {/* Floating Overlay Dropdown Options (anchored directly below, floating with elevation/zIndex) */}
+            {/* Floating Overlay Dropdown Options (Opens UPWARD with bottom: 36 to prevent clipping by bottom export bar) */}
             {dropdownOpen && (
-              <View style={styles.floatingDropdown}>
+              <View style={styles.floatingDropdownUpward}>
                 {PAGE_SIZE_OPTIONS.map((opt) => {
                   const isSelected = opt === effectivePageSize;
                   return (
@@ -117,108 +110,109 @@ export function ReportsPagination({
           </View>
         </View>
 
-        {/* Right Side: Page Navigation (Previous / Page Numbers / Next) */}
-        {totalPages > 1 && (
-          <View style={styles.rightContainer}>
-            {/* Previous Button */}
-            <TouchableOpacity
-              style={[styles.navBtn, isFirstPage && styles.navBtnDisabled]}
-              onPress={() => !isFirstPage && onPageChange(safeCurrentPage - 1)}
-              disabled={isFirstPage}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name="chevron-back"
-                size={14}
-                color={isFirstPage ? '#C7BEB5' : '#8C331A'}
-              />
-            </TouchableOpacity>
-
-            {/* Page Numbers */}
-            <View style={styles.pageNumbersRow}>
-              {visiblePages.map((page, index) => {
-                if (page === '...') {
-                  return (
-                    <View key={`ellipsis-${index}`} style={styles.ellipsisBox}>
-                      <Text style={styles.ellipsisText}>••</Text>
-                    </View>
-                  );
-                }
-
-                const pageNum = Number(page);
-                const isActive = pageNum === safeCurrentPage;
-
-                return (
-                  <TouchableOpacity
-                    key={`page-${pageNum}`}
-                    style={[styles.pageBtn, isActive && styles.pageBtnActive]}
-                    onPress={() => onPageChange(pageNum)}
-                    disabled={isActive}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.pageBtnText, isActive && styles.pageBtnTextActive]}>
-                      {pageNum}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Next Button */}
-            <TouchableOpacity
-              style={[styles.navBtn, isLastPage && styles.navBtnDisabled]}
-              onPress={() => !isLastPage && onPageChange(safeCurrentPage + 1)}
-              disabled={isLastPage}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name="chevron-forward"
-                size={14}
-                color={isLastPage ? '#C7BEB5' : '#8C331A'}
-              />
-            </TouchableOpacity>
-          </View>
-        )}
+        {/* Right Side: Showing 1–10 of 37 records */}
+        <Text style={styles.infoText}>
+          Showing <Text style={styles.infoHighlight}>{startRecord}–{endRecord}</Text> of <Text style={styles.infoHighlight}>{totalRecords}</Text>
+        </Text>
       </View>
+
+      {/* 2. Main Centered Pagination Row: [Previous] [1] [2] [3] [Next] */}
+      {totalPages > 1 && (
+        <View style={styles.centeredPaginationRow}>
+          {/* Labeled Previous Button */}
+          <TouchableOpacity
+            style={[styles.navBtn, isFirstPage && styles.navBtnDisabled]}
+            onPress={() => !isFirstPage && onPageChange(safeCurrentPage - 1)}
+            disabled={isFirstPage}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name="chevron-back"
+              size={14}
+              color={isFirstPage ? '#C7BEB5' : '#8C331A'}
+              style={{ marginRight: 2 }}
+            />
+            <Text style={[styles.navBtnText, isFirstPage && styles.navBtnTextDisabled]}>
+              Previous
+            </Text>
+          </TouchableOpacity>
+
+          {/* Page Numbers */}
+          <View style={styles.pageNumbersGroup}>
+            {visiblePages.map((page, index) => {
+              if (page === '...') {
+                return (
+                  <View key={`ellipsis-${index}`} style={styles.ellipsisBox}>
+                    <Text style={styles.ellipsisText}>••</Text>
+                  </View>
+                );
+              }
+
+              const pageNum = Number(page);
+              const isActive = pageNum === safeCurrentPage;
+
+              return (
+                <TouchableOpacity
+                  key={`page-${pageNum}`}
+                  style={[styles.pageBtn, isActive && styles.pageBtnActive]}
+                  onPress={() => onPageChange(pageNum)}
+                  disabled={isActive}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.pageBtnText, isActive && styles.pageBtnTextActive]}>
+                    {pageNum}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Labeled Next Button */}
+          <TouchableOpacity
+            style={[styles.navBtn, isLastPage && styles.navBtnDisabled]}
+            onPress={() => !isLastPage && onPageChange(safeCurrentPage + 1)}
+            disabled={isLastPage}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.navBtnText, isLastPage && styles.navBtnTextDisabled]}>
+              Next
+            </Text>
+            <Ionicons
+              name="chevron-forward"
+              size={14}
+              color={isLastPage ? '#C7BEB5' : '#8C331A'}
+              style={{ marginLeft: 2 }}
+            />
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    marginTop: 10,
-    marginBottom: 4,
-    paddingTop: 10,
+    marginTop: 14,
+    marginBottom: 8,
+    paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#EFEAE4',
     width: '100%',
-    zIndex: 100, // Ensure floating dropdown renders above subsequent content
+    paddingHorizontal: 22, // 20–24dp horizontal screen-side spacing
+    zIndex: 100,
   },
   infoRow: {
-    marginBottom: 8,
-    paddingHorizontal: 2,
-  },
-  infoText: {
-    fontSize: 12,
-    color: '#6B5E55',
-    fontWeight: '500',
-  },
-  infoHighlight: {
-    fontWeight: '700',
-    color: '#2C201A',
-  },
-  mainControlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     width: '100%',
-    flexWrap: 'wrap',
-    gap: 8,
+    marginBottom: 12,
+    zIndex: 110,
   },
-  leftContainer: {
+  leftSelectorGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    zIndex: 110,
+    zIndex: 120,
   },
   pageSizeLabel: {
     fontSize: 12,
@@ -228,7 +222,7 @@ const styles = StyleSheet.create({
   },
   dropdownAnchor: {
     position: 'relative',
-    zIndex: 120,
+    zIndex: 130,
   },
   pageSizeBtn: {
     flexDirection: 'row',
@@ -252,9 +246,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#2C201A',
   },
-  floatingDropdown: {
+  floatingDropdownUpward: {
     position: 'absolute',
-    top: 34,
+    bottom: 34, // Opens UPWARD above the selector
     left: 0,
     minWidth: 64,
     backgroundColor: '#FFFFFF',
@@ -266,12 +260,12 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: {
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 3 },
+        shadowOffset: { width: 0, height: -3 },
         shadowOpacity: 0.15,
         shadowRadius: 6,
       },
       android: {
-        elevation: 8,
+        elevation: 10,
       },
     }),
   },
@@ -294,36 +288,55 @@ const styles = StyleSheet.create({
     color: '#8C331A',
     fontWeight: '700',
   },
-  rightContainer: {
+  infoText: {
+    fontSize: 12,
+    color: '#6B5E55',
+    fontWeight: '500',
+  },
+  infoHighlight: {
+    fontWeight: '700',
+    color: '#2C201A',
+  },
+  centeredPaginationRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    flexShrink: 1,
+    justifyContent: 'center', // Centered horizontally
+    width: '100%',
+    gap: 6,
   },
   navBtn: {
-    width: 28,
-    height: 30,
-    borderRadius: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 32,
+    paddingHorizontal: 10,
+    borderRadius: 8,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#D4C9BF',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   navBtnDisabled: {
     backgroundColor: '#F7F3EE',
     borderColor: '#EFEAE4',
   },
-  pageNumbersRow: {
+  navBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  navBtnTextDisabled: {
+    color: '#C7BEB5',
+  },
+  pageNumbersGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
+    gap: 4,
   },
   pageBtn: {
-    minWidth: 28,
-    height: 30,
-    paddingHorizontal: 5,
-    borderRadius: 7,
+    minWidth: 32,
+    height: 32,
+    paddingHorizontal: 6,
+    borderRadius: 8,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2D9CE',
@@ -335,7 +348,7 @@ const styles = StyleSheet.create({
     borderColor: '#8C331A',
   },
   pageBtnText: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: '600',
     color: '#52433B',
   },
@@ -344,13 +357,13 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   ellipsisBox: {
-    minWidth: 16,
-    height: 30,
+    minWidth: 18,
+    height: 32,
     justifyContent: 'center',
     alignItems: 'center',
   },
   ellipsisText: {
-    fontSize: 10,
+    fontSize: 11,
     color: '#A09489',
     letterSpacing: 0.5,
   },
