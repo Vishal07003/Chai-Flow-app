@@ -9,6 +9,7 @@ import profileService from './profile.service';
 import notificationService from './notification.service';
 import billingService from './billing.service';
 import companyService from './company.service';
+import reportsService from './reports.service';
 import apiClient from './api';
 
 export {
@@ -24,6 +25,7 @@ export {
   notificationService,
   billingService,
   companyService,
+  reportsService,
 };
 
 export default {
@@ -39,4 +41,5 @@ export default {
   notification: notificationService,
   billing: billingService,
   company: companyService,
+  reports: reportsService,
 };

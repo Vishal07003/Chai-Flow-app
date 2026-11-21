@@ -149,6 +149,37 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun shareFile(filePath: String, title: String, mimeType: String, promise: Promise) {
+        try {
+            val file = File(filePath)
+            if (!file.exists()) {
+                promise.reject("FILE_NOT_FOUND", "The specified file does not exist: $filePath")
+                return
+            }
+
+            val authority = "${reactContext.packageName}.provider"
+            val uri: Uri = FileProvider.getUriForFile(reactContext, authority, file)
+
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = if (mimeType.isNotBlank()) mimeType else "*/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, title)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            val chooser = Intent.createChooser(shareIntent, title).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            reactContext.startActivity(chooser)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("SHARE_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
     fun printPdf(filePath: String, jobName: String, promise: Promise) {
         val currentActivity = reactContext.currentActivity
         if (currentActivity == null) {
