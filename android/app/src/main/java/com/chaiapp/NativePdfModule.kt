@@ -105,6 +105,19 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
 
+            // Check if there is an application capable of opening PDFs
+            val pm = reactContext.packageManager
+            if (viewIntent.resolveActivity(pm) == null) {
+                // If direct resolve is null, fallback to chooser or notify user
+                val chooser = Intent.createChooser(viewIntent, title).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                reactContext.startActivity(chooser)
+                promise.resolve(true)
+                return
+            }
+
             val chooser = Intent.createChooser(viewIntent, title).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -121,7 +134,7 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
     fun sharePdf(filePath: String, title: String, promise: Promise) {
         try {
             val file = File(filePath)
-            if (!file.exists()) {
+            if (!file.exists() || file.length() == 0L) {
                 promise.reject("FILE_NOT_FOUND", "The specified PDF file does not exist: $filePath")
                 return
             }
@@ -152,7 +165,7 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
     fun shareFile(filePath: String, title: String, mimeType: String, promise: Promise) {
         try {
             val file = File(filePath)
-            if (!file.exists()) {
+            if (!file.exists() || file.length() == 0L) {
                 promise.reject("FILE_NOT_FOUND", "The specified file does not exist: $filePath")
                 return
             }
@@ -176,6 +189,36 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("SHARE_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun openFile(filePath: String, title: String, mimeType: String, promise: Promise) {
+        try {
+            val file = File(filePath)
+            if (!file.exists() || file.length() == 0L) {
+                promise.reject("FILE_NOT_FOUND", "The specified file does not exist or is empty: $filePath")
+                return
+            }
+
+            val authority = "${reactContext.packageName}.provider"
+            val uri: Uri = FileProvider.getUriForFile(reactContext, authority, file)
+
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, if (mimeType.isNotBlank()) mimeType else "*/*")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            val chooser = Intent.createChooser(viewIntent, title).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            reactContext.startActivity(chooser)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("VIEW_ERROR", "Failed to open file viewer: ${e.localizedMessage}", e)
         }
     }
 

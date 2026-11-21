@@ -91,11 +91,16 @@ export const pdfService = {
     invoiceNumber?: string,
   ): Promise<boolean> {
     const { filePath, filename } = await this.downloadInvoicePdf(invoiceId, invoiceNumber);
+    return await this.openPdfFile(filePath, `Invoice ${filename}`);
+  },
 
+  /**
+   * Opens an already downloaded PDF file on device using NativePdfModule.
+   */
+  async openPdfFile(filePath: string, title: string = 'View PDF'): Promise<boolean> {
     if (Platform.OS === 'android' && NativePdfModule?.viewPdf) {
-      return await NativePdfModule.viewPdf(filePath, `Invoice ${filename}`);
+      return await NativePdfModule.viewPdf(filePath, title);
     }
-
     throw new Error('Native PDF viewer is not available on this platform.');
   },
 

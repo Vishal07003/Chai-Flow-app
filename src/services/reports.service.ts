@@ -301,7 +301,7 @@ export const reportsService = {
     format: 'pdf' | 'excel',
     reportType: ReportType,
     params: DateFilterParams
-  ): Promise<{ filePath: string; filename: string }> {
+  ): Promise<{ filePath: string; filename: string; size: number }> {
     const token = await apiClient.getAccessToken();
     const qs = buildQueryString(params);
     const endpoint = format === 'pdf' ? '/reports/export/pdf/' : '/reports/export/excel/';
@@ -344,7 +344,7 @@ export const reportsService = {
       throw new Error('Downloaded report file is empty (0 bytes).');
     }
 
-    return { filePath, filename };
+    return { filePath, filename, size: stat.size };
   },
 
   /**
@@ -365,6 +365,18 @@ export const reportsService = {
       message: `ChaiFlow Report: ${filename}`,
     });
     return true;
+  },
+
+  /**
+   * Directly opens the spreadsheet file with an installed spreadsheet app (e.g. Google Sheets, Microsoft Excel)
+   * or falls back to the native chooser.
+   */
+  async openExcelFile(filePath: string, filename: string): Promise<boolean> {
+    const mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    if (Platform.OS === 'android' && NativePdfModule?.openFile) {
+      return await NativePdfModule.openFile(filePath, `Spreadsheet: ${filename}`, mimeType);
+    }
+    return this.shareExcelFile(filePath, filename);
   },
 };
 

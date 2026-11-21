@@ -15,6 +15,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Header from '../../components/common/Header';
+import { ReportsExportDialog } from '../../components/ReportsExportDialog';
 import {
   reportsService,
   ReportType,
@@ -68,6 +69,15 @@ export default function ReportsScreen({ navigation }: any) {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null);
+
+  // Export dialog states
+  const [exportDialogVisible, setExportDialogVisible] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'excel'>('pdf');
+  const [exportStatus, setExportStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const [exportFilename, setExportFilename] = useState('');
+  const [exportFilePath, setExportFilePath] = useState('');
+  const [exportFileSize, setExportFileSize] = useState<number | undefined>(undefined);
+  const [exportErrorMsg, setExportErrorMsg] = useState('');
 
   const [overviewData, setOverviewData] = useState<OverviewReportData | null>(null);
   const [salesData, setSalesData] = useState<SalesReportData | null>(null);
@@ -142,38 +152,46 @@ export default function ReportsScreen({ navigation }: any) {
     return unsubscribe;
   }, [navigation, loadActiveReport]);
 
-  // Handle Export
+  // Handle Export with custom reports dialog
   const handleExport = async (format: 'pdf' | 'excel') => {
     if (exporting) return;
     setExporting(format);
+    setExportFormat(format);
+    setExportStatus('loading');
+    setExportErrorMsg('');
+    setExportFilename('');
+    setExportFilePath('');
+    setExportFileSize(undefined);
+    setExportDialogVisible(true);
+
     try {
       const res = await reportsService.exportReport(format, activeTab, currentParams);
-      Alert.alert(
-        `${format.toUpperCase()} Export Complete`,
-        `Report successfully saved to:\n${res.filename}`,
-        [
-          { text: 'Done' },
-          format === 'pdf'
-            ? {
-                text: 'Open PDF',
-                onPress: () => {
-                  pdfService.openInvoicePdf('', res.filename).catch(() => {});
-                },
-              }
-            : {
-                text: 'Share / Open',
-                onPress: () => {
-                  reportsService.shareExcelFile(res.filePath, res.filename).catch(err => {
-                    Alert.alert('Share Error', err?.message || 'Could not open file.');
-                  });
-                },
-              },
-        ]
-      );
+      setExportFilename(res.filename);
+      setExportFilePath(res.filePath);
+      setExportFileSize(res.size);
+      setExportStatus('success');
     } catch (err: any) {
-      Alert.alert('Export Failed', err?.message || 'Could not download report file.');
+      console.warn('[ReportsScreen] Export error:', err);
+      setExportStatus('error');
+      setExportErrorMsg(err?.message || `Failed to download ${format.toUpperCase()} report.`);
     } finally {
       setExporting(null);
+    }
+  };
+
+  const handleExportAction = async () => {
+    if (!exportFilePath) return;
+    try {
+      if (exportFormat === 'pdf') {
+        await pdfService.openPdfFile(exportFilePath, `Report: ${exportFilename}`);
+      } else {
+        await reportsService.openExcelFile(exportFilePath, exportFilename);
+      }
+    } catch (err: any) {
+      Alert.alert(
+        `${exportFormat.toUpperCase()} Viewer`,
+        err?.message || `Could not open ${exportFormat.toUpperCase()} file. Please ensure a compatible viewer is installed.`
+      );
     }
   };
 
@@ -691,14 +709,20 @@ export default function ReportsScreen({ navigation }: any) {
         showNotification={false}
       />
 
-      {/* Dropdown Selectors: Date Range & Report Section */}
+      {/* Inline Dropdown Selectors: Date Range & Report Section */}
       <View style={styles.dropdownsContainer}>
-        {/* Date Range Dropdown */}
+        {/* Date Range Dropdown Column */}
         <View style={styles.dropdownColumn}>
           <Text style={styles.dropdownLabel}>Date Range</Text>
           <TouchableOpacity
-            style={styles.dropdownSelector}
-            onPress={() => setDateDropdownOpen(true)}
+            style={[
+              styles.dropdownSelector,
+              dateDropdownOpen && styles.dropdownSelectorActive,
+            ]}
+            onPress={() => {
+              setDateDropdownOpen(prev => !prev);
+              setReportDropdownOpen(false);
+            }}
             activeOpacity={0.7}
           >
             <View style={styles.dropdownSelectorInner}>
@@ -707,16 +731,64 @@ export default function ReportsScreen({ navigation }: any) {
                 {FILTER_PILLS.find(p => p.id === filterType)?.label || 'Select Date Range'}
               </Text>
             </View>
-            <Ionicons name="chevron-down" size={16} color="#8A7E75" />
+            <Ionicons
+              name={dateDropdownOpen ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color="#8A7E75"
+            />
           </TouchableOpacity>
+
+          {/* Inline Expanded Date Range Options */}
+          {dateDropdownOpen && (
+            <View style={styles.inlineDropdownList}>
+              <ScrollView
+                style={styles.inlineDropdownScroll}
+                nestedScrollEnabled={true}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={true}
+              >
+                {FILTER_PILLS.map(p => {
+                  const isSelected = filterType === p.id;
+                  return (
+                    <TouchableOpacity
+                      key={p.id}
+                      style={[styles.inlineDropdownItem, isSelected && styles.inlineDropdownItemActive]}
+                      onPress={() => {
+                        setDateDropdownOpen(false);
+                        if (p.id === 'custom') {
+                          setCustomModalVisible(true);
+                        } else {
+                          setFilterType(p.id);
+                        }
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.inlineDropdownItemText, isSelected && styles.inlineDropdownItemTextActive]}>
+                        {p.label}
+                      </Text>
+                      {isSelected && (
+                        <Ionicons name="checkmark" size={16} color="#8C331A" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
         </View>
 
-        {/* Report Section Dropdown */}
+        {/* Report Section Dropdown Column */}
         <View style={styles.dropdownColumn}>
           <Text style={styles.dropdownLabel}>Report Section</Text>
           <TouchableOpacity
-            style={styles.dropdownSelector}
-            onPress={() => setReportDropdownOpen(true)}
+            style={[
+              styles.dropdownSelector,
+              reportDropdownOpen && styles.dropdownSelectorActive,
+            ]}
+            onPress={() => {
+              setReportDropdownOpen(prev => !prev);
+              setDateDropdownOpen(false);
+            }}
             activeOpacity={0.7}
           >
             <View style={styles.dropdownSelectorInner}>
@@ -730,115 +802,57 @@ export default function ReportsScreen({ navigation }: any) {
                 {REPORT_TABS.find(t => t.id === activeTab)?.label || 'Select Section'}
               </Text>
             </View>
-            <Ionicons name="chevron-down" size={16} color="#8A7E75" />
+            <Ionicons
+              name={reportDropdownOpen ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color="#8A7E75"
+            />
           </TouchableOpacity>
+
+          {/* Inline Expanded Report Section Options */}
+          {reportDropdownOpen && (
+            <View style={styles.inlineDropdownList}>
+              <ScrollView
+                style={styles.inlineDropdownScroll}
+                nestedScrollEnabled={true}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={true}
+              >
+                {REPORT_TABS.map(t => {
+                  const isSelected = activeTab === t.id;
+                  return (
+                    <TouchableOpacity
+                      key={t.id}
+                      style={[styles.inlineDropdownItem, isSelected && styles.inlineDropdownItemActive]}
+                      onPress={() => {
+                        setActiveTab(t.id);
+                        setSubSearchQuery('');
+                        setReportDropdownOpen(false);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.inlineItemLeft}>
+                        <Ionicons
+                          name={t.icon}
+                          size={15}
+                          color={isSelected ? '#8C331A' : '#6B5E55'}
+                          style={{ marginRight: 8 }}
+                        />
+                        <Text style={[styles.inlineDropdownItemText, isSelected && styles.inlineDropdownItemTextActive]}>
+                          {t.label}
+                        </Text>
+                      </View>
+                      {isSelected && (
+                        <Ionicons name="checkmark" size={16} color="#8C331A" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
         </View>
       </View>
-
-      {/* Date Range Selection Modal */}
-      <Modal
-        visible={dateDropdownOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setDateDropdownOpen(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setDateDropdownOpen(false)}
-        >
-          <View style={styles.dropdownModalCard}>
-            <View style={styles.dropdownModalHeader}>
-              <Text style={styles.dropdownModalTitle}>Select Date Range</Text>
-              <TouchableOpacity onPress={() => setDateDropdownOpen(false)}>
-                <Ionicons name="close" size={20} color="#6B5E55" />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.dropdownModalList} bounces={false}>
-              {FILTER_PILLS.map(p => {
-                const isSelected = filterType === p.id;
-                return (
-                  <TouchableOpacity
-                    key={p.id}
-                    style={[styles.dropdownModalItem, isSelected && styles.dropdownModalItemActive]}
-                    onPress={() => {
-                      setDateDropdownOpen(false);
-                      if (p.id === 'custom') {
-                        setCustomModalVisible(true);
-                      } else {
-                        setFilterType(p.id);
-                      }
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.dropdownModalItemText, isSelected && styles.dropdownModalItemTextActive]}>
-                      {p.label}
-                    </Text>
-                    {isSelected && (
-                      <Ionicons name="checkmark-circle" size={18} color="#8C331A" />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      {/* Report Section Selection Modal */}
-      <Modal
-        visible={reportDropdownOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setReportDropdownOpen(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setReportDropdownOpen(false)}
-        >
-          <View style={styles.dropdownModalCard}>
-            <View style={styles.dropdownModalHeader}>
-              <Text style={styles.dropdownModalTitle}>Select Report Section</Text>
-              <TouchableOpacity onPress={() => setReportDropdownOpen(false)}>
-                <Ionicons name="close" size={20} color="#6B5E55" />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.dropdownModalList} bounces={false}>
-              {REPORT_TABS.map(t => {
-                const isSelected = activeTab === t.id;
-                return (
-                  <TouchableOpacity
-                    key={t.id}
-                    style={[styles.dropdownModalItem, isSelected && styles.dropdownModalItemActive]}
-                    onPress={() => {
-                      setActiveTab(t.id);
-                      setSubSearchQuery('');
-                      setReportDropdownOpen(false);
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.dropdownItemLeft}>
-                      <Ionicons
-                        name={t.icon}
-                        size={17}
-                        color={isSelected ? '#8C331A' : '#6B5E55'}
-                        style={{ marginRight: 10 }}
-                      />
-                      <Text style={[styles.dropdownModalItemText, isSelected && styles.dropdownModalItemTextActive]}>
-                        {t.label}
-                      </Text>
-                    </View>
-                    {isSelected && (
-                      <Ionicons name="checkmark-circle" size={18} color="#8C331A" />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
-      </Modal>
 
       {/* Search Input for items within sub-report */}
       {activeTab !== 'overview' && activeTab !== 'profit-loss' && (
@@ -974,6 +988,19 @@ export default function ReportsScreen({ navigation }: any) {
           </View>
         </View>
       </Modal>
+
+      {/* Custom Reports Export Dialog */}
+      <ReportsExportDialog
+        visible={exportDialogVisible}
+        format={exportFormat}
+        status={exportStatus}
+        filename={exportFilename}
+        fileSize={exportFileSize}
+        errorMessage={exportErrorMsg}
+        onClose={() => setExportDialogVisible(false)}
+        onAction={handleExportAction}
+        onRetry={() => handleExport(exportFormat)}
+      />
     </SafeAreaView>
   );
 }
@@ -1016,6 +1043,9 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     minHeight: 40,
   },
+  dropdownSelectorActive: {
+    borderColor: '#8C331A',
+  },
   dropdownSelectorInner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1028,59 +1058,46 @@ const styles = StyleSheet.create({
     color: '#2C201A',
     flexShrink: 1,
   },
-  dropdownModalCard: {
+  inlineDropdownList: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    width: '88%',
-    maxWidth: 380,
-    maxHeight: '75%',
-    paddingVertical: 14,
-    elevation: 8,
+    borderWidth: 1,
+    borderColor: '#E8E1D9',
+    borderRadius: 10,
+    marginTop: 6,
+    maxHeight: 220,
+    overflow: 'hidden',
+    elevation: 3,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
   },
-  dropdownModalHeader: {
+  inlineDropdownScroll: {
+    maxHeight: 220,
+  },
+  inlineDropdownItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0EAE1',
-  },
-  dropdownModalTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#2C201A',
-  },
-  dropdownModalList: {
+    paddingVertical: 9,
     paddingHorizontal: 10,
-    paddingTop: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F7F3EF',
   },
-  dropdownModalItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    marginVertical: 2,
-  },
-  dropdownModalItemActive: {
+  inlineDropdownItemActive: {
     backgroundColor: '#FAF0E6',
   },
-  dropdownItemLeft: {
+  inlineItemLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
   },
-  dropdownModalItemText: {
-    fontSize: 13,
+  inlineDropdownItemText: {
+    fontSize: 12.5,
     fontWeight: '600',
     color: '#4B3E36',
   },
-  dropdownModalItemTextActive: {
+  inlineDropdownItemTextActive: {
     fontWeight: '800',
     color: '#8C331A',
   },
