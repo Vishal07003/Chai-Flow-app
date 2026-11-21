@@ -75,11 +75,14 @@ export default function ReportsScreen({ navigation }: any) {
   const [exportDialogVisible, setExportDialogVisible] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'excel'>('pdf');
   const [exportStatus, setExportStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const [exportTitle, setExportTitle] = useState<string | undefined>(undefined);
+  const [exportSubtitle, setExportSubtitle] = useState<string | undefined>(undefined);
   const [exportFilename, setExportFilename] = useState('');
   const [exportFilePath, setExportFilePath] = useState('');
   const [exportFileSize, setExportFileSize] = useState<number | undefined>(undefined);
   const [exportErrorMsg, setExportErrorMsg] = useState('');
   const [downloadingToPublic, setDownloadingToPublic] = useState(false);
+  const [activeReceiptPayment, setActiveReceiptPayment] = useState<any | null>(null);
 
   const [overviewData, setOverviewData] = useState<OverviewReportData | null>(null);
   const [salesData, setSalesData] = useState<SalesReportData | null>(null);
@@ -159,6 +162,9 @@ export default function ReportsScreen({ navigation }: any) {
     if (exporting) return;
     setExporting(format);
     setExportFormat(format);
+    setExportTitle(undefined);
+    setExportSubtitle(undefined);
+    setActiveReceiptPayment(null);
     setExportStatus('loading');
     setExportErrorMsg('');
     setExportFilename('');
@@ -203,12 +209,53 @@ export default function ReportsScreen({ navigation }: any) {
     }
   };
 
+  // Action: Open / Preview PDF directly
+  const handleOpenReceiptPdf = async () => {
+    if (!exportFilePath) return;
+    try {
+      await pdfService.openPdfFile(exportFilePath, exportTitle || 'Payment Receipt');
+    } catch (err: any) {
+      console.warn('[ReportsScreen] Open PDF error:', err);
+      Alert.alert('Preview Failed', err?.message || 'Could not open PDF viewer.');
+    }
+  };
+
+  // Professional branded Payment Receipt PDF generator & sharing
+  const handleGenerateReceiptPdf = async (p: any) => {
+    if (exporting) return;
+    setExporting('pdf');
+    setExportFormat('pdf');
+    setActiveReceiptPayment(p);
+    setExportTitle('Payment Receipt');
+    setExportSubtitle(`Generating official receipt for ${p.customer_name} (₹${p.amount})...`);
+    setExportStatus('loading');
+    setExportErrorMsg('');
+    setExportFilename('');
+    setExportFilePath('');
+    setExportFileSize(undefined);
+    setExportDialogVisible(true);
+
+    try {
+      const res = await pdfService.downloadPaymentReceiptPdf(p.id, p.received_at);
+      setExportFilename(res.filename);
+      setExportFilePath(res.filePath);
+      setExportFileSize(res.size);
+      setExportStatus('success');
+    } catch (err: any) {
+      console.warn('[ReportsScreen] Receipt PDF error:', err);
+      setExportStatus('error');
+      setExportErrorMsg(err?.message || 'Failed to generate payment receipt PDF.');
+    } finally {
+      setExporting(null);
+    }
+  };
+
   // Action: Native File Sharing (Android Share Sheet with real attachment)
   const handleShareFile = async () => {
     if (!exportFilePath || !exportFilename) return;
     try {
       if (exportFormat === 'pdf') {
-        await pdfService.sharePdfFile(exportFilePath, `Report: ${exportFilename}`);
+        await pdfService.sharePdfFile(exportFilePath, exportTitle || `Report: ${exportFilename}`);
       } else {
         await reportsService.shareExcelFile(exportFilePath, exportFilename);
       }
@@ -221,14 +268,9 @@ export default function ReportsScreen({ navigation }: any) {
     }
   };
 
-  // Preserved payment receipt sharing
-  const handleSharePayment = async (p: any) => {
-    try {
-      const msg = `🧾 *ChaiFlow Payment Receipt*\nCustomer: ${p.customer_name}\nAmount: ₹${p.amount}\nMethod: ${p.method}\nRef: ${p.reference_number || 'N/A'}\nDate: ${p.received_at}`;
-      await Share.share({ message: msg });
-    } catch (err) {
-      console.log('Share err', err);
-    }
+  // Preserved payment receipt sharing fallback
+  const handleSharePayment = (p: any) => {
+    handleGenerateReceiptPdf(p);
   };
 
   // Preserved reminder sending for overdue
@@ -1029,19 +1071,28 @@ export default function ReportsScreen({ navigation }: any) {
         </View>
       </Modal>
 
-      {/* Custom Reports Export Dialog */}
+      {/* Custom Reports Export & Receipt Dialog */}
       <ReportsExportDialog
         visible={exportDialogVisible}
         format={exportFormat}
         status={exportStatus}
+        title={exportTitle}
+        subtitle={exportSubtitle}
         filename={exportFilename}
         fileSize={exportFileSize}
         errorMessage={exportErrorMsg}
         downloadingToPublic={downloadingToPublic}
         onClose={() => setExportDialogVisible(false)}
+        onOpen={activeReceiptPayment ? handleOpenReceiptPdf : undefined}
         onDownload={handleSaveToPublicDownloads}
         onShare={handleShareFile}
-        onRetry={() => handleExport(exportFormat)}
+        onRetry={() => {
+          if (activeReceiptPayment) {
+            handleGenerateReceiptPdf(activeReceiptPayment);
+          } else {
+            handleExport(exportFormat);
+          }
+        }}
       />
     </SafeAreaView>
   );

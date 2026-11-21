@@ -349,20 +349,19 @@ export const reportsService = {
 
   /**
    * Opens Android native share sheet allowing Excel and all installed file viewers
-   * to open, view, or share the exported .xlsx spreadsheet file.
+   * to open, view, or share the exported .xlsx spreadsheet file with actual binary attachment.
    */
   async shareExcelFile(filePath: string, filename: string): Promise<boolean> {
     const mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     if (Platform.OS === 'android' && NativePdfModule?.shareFile) {
-      return await NativePdfModule.shareFile(filePath, `Spreadsheet: ${filename}`, mimeType);
+      return await NativePdfModule.shareFile(filePath, `Share ${filename}`, mimeType);
     }
 
-    // Fallback using React Native Share API with file URI
+    // Fallback using React Native Share API with file URI (no text message that overrides file attachment)
     const fileUri = Platform.OS === 'android' ? `file://${filePath}` : filePath;
     await Share.share({
       title: filename,
       url: fileUri,
-      message: `ChaiFlow Report: ${filename}`,
     });
     return true;
   },

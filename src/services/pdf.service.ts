@@ -9,6 +9,14 @@ export interface InvoicePdfDownloadResult {
   filePath: string;
   filename: string;
   publicPath?: string;
+  size?: number;
+}
+
+export interface PaymentReceiptPdfDownloadResult {
+  filePath: string;
+  filename: string;
+  publicPath?: string;
+  size: number;
 }
 
 export const pdfService = {
@@ -139,6 +147,77 @@ export const pdfService = {
     }
 
     throw new Error('Native PDF sharing is not available on this platform.');
+  },
+
+  /**
+   * Constructs the authenticated Payment Receipt PDF download URL for a given payment ID.
+   */
+  getPaymentReceiptUrl(paymentId: number | string): string {
+    return `${API_BASE_URL}/billing/payments/${paymentId}/receipt/`;
+  },
+
+  /**
+   * Downloads and validates an individual branded Payment Receipt PDF from Django backend.
+   * Validates non-zero byte size and %PDF signature.
+   */
+  async downloadPaymentReceiptPdf(
+    paymentId: number | string,
+    receivedDate?: string,
+  ): Promise<PaymentReceiptPdfDownloadResult> {
+    const token = await apiClient.getAccessToken();
+    const dateStr = (receivedDate ? receivedDate.slice(0, 10) : new Date().toISOString().slice(0, 10)).replace(/[^0-9-]/g, '');
+    const filename = `ChaiFlow_Receipt_${paymentId}_${dateStr}.pdf`;
+
+    const targetDir = RNFS.DocumentDirectoryPath;
+    const filePath = `${targetDir}/${filename}`;
+
+    const headers: Record<string, string> = {
+      Accept: 'application/pdf',
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const downloadUrl = this.getPaymentReceiptUrl(paymentId);
+
+    const downloadResult = await RNFS.downloadFile({
+      fromUrl: downloadUrl,
+      toFile: filePath,
+      headers,
+    }).promise;
+
+    if (downloadResult.statusCode !== 200) {
+      if (await RNFS.exists(filePath)) {
+        await RNFS.unlink(filePath).catch(() => {});
+      }
+      throw new Error(`Failed to download payment receipt (Status ${downloadResult.statusCode})`);
+    }
+
+    const fileExists = await RNFS.exists(filePath);
+    if (!fileExists) {
+      throw new Error('Downloaded receipt PDF file was not found on device storage.');
+    }
+
+    const stat = await RNFS.stat(filePath);
+    if (stat.size <= 0) {
+      await RNFS.unlink(filePath).catch(() => {});
+      throw new Error('Downloaded receipt PDF is empty (0 bytes).');
+    }
+
+    // Verify %PDF header signature in file
+    try {
+      const headerChunk = await RNFS.read(filePath, 5, 0, 'utf8');
+      if (!headerChunk.startsWith('%PDF')) {
+        await RNFS.unlink(filePath).catch(() => {});
+        throw new Error('Downloaded file is not a valid PDF document.');
+      }
+    } catch (err: any) {
+      if (err.message?.includes('valid PDF document')) {
+        throw err;
+      }
+    }
+
+    return { filePath, filename, size: stat.size };
   },
 
   /**

@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -16,6 +17,7 @@ import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import android.print.PageRange
 import android.print.PrintDocumentInfo
+import android.util.Log
 import androidx.core.content.FileProvider
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -30,10 +32,16 @@ import java.io.OutputStream
 class NativePdfModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
 
+    companion object {
+        private const val TAG = "NativePdfModule"
+        private const val MIME_PDF = "application/pdf"
+        private const val MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    }
+
     override fun getName(): String = "NativePdfModule"
 
     @ReactMethod
-    fun saveToPublicDownloads(sourceFilePath: String, filename: String, promise: Promise) {
+    fun saveToPublicDownloads(sourceFilePath: String, rawFilename: String, promise: Promise) {
         try {
             val sourceFile = File(sourceFilePath)
             if (!sourceFile.exists() || sourceFile.length() == 0L) {
@@ -41,13 +49,21 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
                 return
             }
 
+            // Sanitize filename to prevent duplicate/concatenated extensions
+            var filename = rawFilename
+            if (filename.contains(".xlsx", ignoreCase = true) && filename.endsWith(".pdf", ignoreCase = true)) {
+                filename = filename.replace(Regex("(?i)\\.xlsx\\.pdf$"), ".xlsx")
+            }
+
             var finalDestination = ""
             val mimeType = when {
-                filename.endsWith(".pdf", ignoreCase = true) -> "application/pdf"
-                filename.endsWith(".xlsx", ignoreCase = true) -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                filename.endsWith(".xlsx", ignoreCase = true) -> MIME_XLSX
                 filename.endsWith(".xls", ignoreCase = true) -> "application/vnd.ms-excel"
+                filename.endsWith(".pdf", ignoreCase = true) -> MIME_PDF
                 else -> "*/*"
             }
+
+            Log.d(TAG, "saveToPublicDownloads: filename=$filename, mimeType=$mimeType, sourceSize=${sourceFile.length()}")
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 // Scoped Storage: Insert into MediaStore.Downloads
@@ -88,8 +104,10 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
                 finalDestination = destFile.absolutePath
             }
 
+            Log.d(TAG, "saveToPublicDownloads completed: destination=$finalDestination")
             promise.resolve(finalDestination)
         } catch (e: Exception) {
+            Log.e(TAG, "saveToPublicDownloads failed", e)
             promise.reject("SAVE_FAILED", "Failed saving to public Downloads: ${e.localizedMessage}", e)
         }
     }
@@ -107,22 +125,9 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
             val uri: Uri = FileProvider.getUriForFile(reactContext, authority, file)
 
             val viewIntent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/pdf")
+                setDataAndType(uri, MIME_PDF)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-
-            // Check if there is an application capable of opening PDFs
-            val pm = reactContext.packageManager
-            if (viewIntent.resolveActivity(pm) == null) {
-                // If direct resolve is null, fallback to chooser or notify user
-                val chooser = Intent.createChooser(viewIntent, title).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                reactContext.startActivity(chooser)
-                promise.resolve(true)
-                return
             }
 
             val chooser = Intent.createChooser(viewIntent, title).apply {
@@ -130,9 +135,17 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
+            // Grant read URI permission to target apps resolving this intent
+            val resInfoList = reactContext.packageManager.queryIntentActivities(chooser, PackageManager.MATCH_DEFAULT_ONLY)
+            for (resolveInfo in resInfoList) {
+                val packageName = resolveInfo.activityInfo.packageName
+                reactContext.grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
             reactContext.startActivity(chooser)
             promise.resolve(true)
         } catch (e: Exception) {
+            Log.e(TAG, "viewPdf failed", e)
             promise.reject("VIEW_ERROR", "Failed to open PDF viewer: ${e.localizedMessage}", e)
         }
     }
@@ -149,10 +162,12 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
             val authority = "${reactContext.packageName}.provider"
             val uri: Uri = FileProvider.getUriForFile(reactContext, authority, file)
 
+            Log.d(TAG, "sharePdf: path=$filePath, exists=${file.exists()}, size=${file.length()}, uri=$uri")
+
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/pdf"
+                type = MIME_PDF
                 putExtra(Intent.EXTRA_STREAM, uri)
-                clipData = ClipData.newRawUri(title, uri)
+                clipData = ClipData.newRawUri("PDF Report", uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
@@ -161,9 +176,16 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
+            val resInfoList = reactContext.packageManager.queryIntentActivities(chooser, PackageManager.MATCH_DEFAULT_ONLY)
+            for (resolveInfo in resInfoList) {
+                val packageName = resolveInfo.activityInfo.packageName
+                reactContext.grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
             reactContext.startActivity(chooser)
             promise.resolve(true)
         } catch (e: Exception) {
+            Log.e(TAG, "sharePdf failed", e)
             promise.reject("SHARE_ERROR", e.localizedMessage, e)
         }
     }
@@ -180,11 +202,21 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
             val authority = "${reactContext.packageName}.provider"
             val uri: Uri = FileProvider.getUriForFile(reactContext, authority, file)
 
-            val resolvedMime = if (mimeType.isNotBlank()) mimeType else "*/*"
+            val resolvedMime = when {
+                file.name.endsWith(".xlsx", ignoreCase = true) -> MIME_XLSX
+                file.name.endsWith(".xls", ignoreCase = true) -> "application/vnd.ms-excel"
+                file.name.endsWith(".pdf", ignoreCase = true) -> MIME_PDF
+                mimeType.isNotBlank() -> mimeType
+                else -> "*/*"
+            }
+
+            Log.d(TAG, "shareFile: path=$filePath, exists=${file.exists()}, size=${file.length()}, uri=$uri, mime=$resolvedMime")
+
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                setDataAndType(uri, resolvedMime)
                 type = resolvedMime
                 putExtra(Intent.EXTRA_STREAM, uri)
-                clipData = ClipData.newRawUri(title, uri)
+                clipData = ClipData.newRawUri("Attachment", uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
@@ -193,9 +225,16 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
+            val resInfoList = reactContext.packageManager.queryIntentActivities(chooser, PackageManager.MATCH_DEFAULT_ONLY)
+            for (resolveInfo in resInfoList) {
+                val packageName = resolveInfo.activityInfo.packageName
+                reactContext.grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
             reactContext.startActivity(chooser)
             promise.resolve(true)
         } catch (e: Exception) {
+            Log.e(TAG, "shareFile failed", e)
             promise.reject("SHARE_ERROR", e.localizedMessage, e)
         }
     }
@@ -212,8 +251,18 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
             val authority = "${reactContext.packageName}.provider"
             val uri: Uri = FileProvider.getUriForFile(reactContext, authority, file)
 
+            val resolvedMime = when {
+                file.name.endsWith(".xlsx", ignoreCase = true) -> MIME_XLSX
+                file.name.endsWith(".xls", ignoreCase = true) -> "application/vnd.ms-excel"
+                file.name.endsWith(".pdf", ignoreCase = true) -> MIME_PDF
+                mimeType.isNotBlank() -> mimeType
+                else -> "*/*"
+            }
+
+            Log.d(TAG, "openFile: path=$filePath, uri=$uri, mime=$resolvedMime")
+
             val viewIntent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, if (mimeType.isNotBlank()) mimeType else "*/*")
+                setDataAndType(uri, resolvedMime)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
@@ -223,9 +272,16 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
+            val resInfoList = reactContext.packageManager.queryIntentActivities(chooser, PackageManager.MATCH_DEFAULT_ONLY)
+            for (resolveInfo in resInfoList) {
+                val packageName = resolveInfo.activityInfo.packageName
+                reactContext.grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
             reactContext.startActivity(chooser)
             promise.resolve(true)
         } catch (e: Exception) {
+            Log.e(TAG, "openFile failed", e)
             promise.reject("VIEW_ERROR", "Failed to open file viewer: ${e.localizedMessage}", e)
         }
     }

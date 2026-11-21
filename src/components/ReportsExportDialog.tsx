@@ -14,10 +14,13 @@ export interface ReportsExportDialogProps {
   visible: boolean;
   format: 'pdf' | 'excel';
   status: 'loading' | 'success' | 'error';
+  title?: string;
+  subtitle?: string;
   filename?: string;
   fileSize?: number;
   errorMessage?: string;
   onClose: () => void;
+  onOpen?: () => void; // Preview / Open PDF directly
   onDownload?: () => void; // Save to public Android Downloads
   onShare?: () => void; // Open Android Share Sheet with attached file
   onRetry?: () => void;
@@ -28,10 +31,13 @@ export function ReportsExportDialog({
   visible,
   format,
   status,
+  title,
+  subtitle,
   filename,
   fileSize,
   errorMessage,
   onClose,
+  onOpen,
   onDownload,
   onShare,
   onRetry,
@@ -103,15 +109,21 @@ export function ReportsExportDialog({
 
           {/* Dialog Title */}
           <Text style={styles.title}>
-            {status === 'loading' && `Generating ${formatTitle}...`}
-            {status === 'success' && `${formatTitle} Export Complete`}
-            {status === 'error' && `${formatTitle} Export Failed`}
+            {title ? (
+              status === 'loading' ? `Generating ${title}...` :
+              status === 'success' ? `${title} Ready` :
+              `${title} Failed`
+            ) : (
+              status === 'loading' ? `Generating ${formatTitle}...` :
+              status === 'success' ? `${formatTitle} Export Complete` :
+              `${formatTitle} Export Failed`
+            )}
           </Text>
 
           {/* Dialog Description & Body */}
           {status === 'loading' && (
             <Text style={styles.subtitle}>
-              Please wait while your {formatTitle} report is compiled and saved.
+              {subtitle || `Please wait while your ${formatTitle} document is compiled and saved.`}
             </Text>
           )}
 
@@ -141,49 +153,63 @@ export function ReportsExportDialog({
             </Text>
           )}
 
-          {/* Actions: Two clear, equal-width buttons (Download & Share) */}
-          <View style={styles.actionRow}>
+          {/* Actions: Download & Share (+ Open preview if provided) */}
+          <View style={[styles.actionRow, onOpen && status === 'success' ? styles.actionRowCol : null]}>
             {status === 'loading' ? (
               <View style={styles.loadingPlaceholder}>
                 <Text style={styles.loadingTip}>Export in progress...</Text>
               </View>
             ) : status === 'success' ? (
               <>
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.downloadBtn]}
-                  onPress={onDownload}
-                  disabled={downloadingToPublic}
-                  activeOpacity={0.8}
-                >
-                  {downloadingToPublic ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <Ionicons
-                        name="download-outline"
-                        size={17}
-                        color="#FFFFFF"
-                        style={{ marginRight: 6 }}
-                      />
-                      <Text style={styles.downloadBtnText}>Download</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
+                {onOpen && (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.openBtn]}
+                    onPress={onOpen}
+                    disabled={downloadingToPublic}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="eye-outline" size={17} color="#2C201A" style={{ marginRight: 6 }} />
+                    <Text style={styles.openBtnText}>Preview / Open PDF</Text>
+                  </TouchableOpacity>
+                )}
 
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.shareBtn]}
-                  onPress={onShare}
-                  disabled={downloadingToPublic}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons
-                    name="share-social-outline"
-                    size={17}
-                    color="#FFFFFF"
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={styles.shareBtnText}>Share</Text>
-                </TouchableOpacity>
+                <View style={styles.splitBtnRow}>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.downloadBtn, onOpen ? { flex: 1 } : null]}
+                    onPress={onDownload}
+                    disabled={downloadingToPublic}
+                    activeOpacity={0.8}
+                  >
+                    {downloadingToPublic ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons
+                          name="download-outline"
+                          size={17}
+                          color="#FFFFFF"
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text style={styles.downloadBtnText}>Download</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.shareBtn, onOpen ? { flex: 1 } : null]}
+                    onPress={onShare}
+                    disabled={downloadingToPublic}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons
+                      name="share-social-outline"
+                      size={17}
+                      color="#FFFFFF"
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={styles.shareBtnText}>Share</Text>
+                  </TouchableOpacity>
+                </View>
               </>
             ) : (
               <>
@@ -357,6 +383,27 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: 10,
     gap: 12,
+  },
+  actionRowCol: {
+    flexDirection: 'column',
+    gap: 10,
+  },
+  splitBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    gap: 12,
+  },
+  openBtn: {
+    width: '100%',
+    backgroundColor: '#FAF0E6',
+    borderWidth: 1.5,
+    borderColor: '#8C331A',
+  },
+  openBtnText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#8C331A',
   },
   loadingPlaceholder: {
     paddingVertical: 8,
