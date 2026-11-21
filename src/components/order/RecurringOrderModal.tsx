@@ -514,7 +514,7 @@ export default function RecurringOrderModal({
                     <View key={prod.id} style={[styles.prodRow, qty > 0 && styles.prodRowSelected]}>
                       <View style={{ flex: 1, marginRight: 8 }}>
                         <Text style={styles.prodName}>{prod.name}</Text>
-                        <Text style={styles.prodPrice}>₹{prod.price} / unit</Text>
+                        <Text style={styles.prodPrice}>{prod.price.startsWith('₹') ? prod.price : `₹${prod.price}`} / unit</Text>
                       </View>
 
                       <View style={styles.stepperContainer}>

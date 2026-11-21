@@ -152,8 +152,17 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     setTimeout(() => setToastConfig(null), 2500);
   }, []);
 
-  const parseProductPrice = useCallback((priceStr: string): number => {
-    return parseInt(priceStr.replace(/[^0-9]/g, '')) || 0;
+  const parseProductPrice = useCallback((priceStr: string | number): number => {
+    if (typeof priceStr === 'number') return priceStr;
+    const clean = String(priceStr || '0').replace(/[^0-9.]/g, '');
+    return parseFloat(clean) || 0;
+  }, []);
+
+  const formatPriceDisplay = useCallback((priceVal: string | number): string => {
+    if (priceVal === undefined || priceVal === null) return '₹0';
+    const str = String(priceVal).trim();
+    if (str.startsWith('₹')) return str;
+    return `₹${str}`;
   }, []);
 
   // Filtered Products
@@ -259,6 +268,13 @@ export default function QuickBillingScreen({ route, navigation }: any) {
           setSelectedPartnerId(Number(draft.delivery_partner_id || draft.delivery_partner));
         } else {
           setSelectedPartnerId(null);
+        }
+
+        // Populate Delivery Address
+        if (draft.delivery_address) {
+          setDeliveryAddress(draft.delivery_address);
+        } else if (draft.customer && (draft as any).customer_address) {
+          setDeliveryAddress((draft as any).customer_address);
         }
 
         // Populate Discount, Due Date, Notes
@@ -673,6 +689,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         await draftService.updateDraft(editingDraft.id, {
           customer_id: selectedCustomer ? selectedCustomer.id : null,
           delivery_partner_id: selectedPartnerId,
+          delivery_address: deliveryAddress.trim() || undefined,
           items: itemsPayload,
           discount_amount: discountAmount,
           due_date: cleanDueDate,
@@ -699,6 +716,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         const createdDraft = await draftService.createDraft({
           customer_id: selectedCustomer ? selectedCustomer.id : null,
           delivery_partner_id: selectedPartnerId,
+          delivery_address: deliveryAddress.trim() || undefined,
           billing_source: 'quick_billing',
           items: itemsPayload,
           discount_amount: discountAmount,
@@ -785,6 +803,26 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     }
 
     // Quick Billing Mode -> Save as Draft (New or Edit)
+    if (selectedPartnerId) {
+      const effectiveAddress = deliveryAddress.trim() || selectedCustomer?.address?.trim();
+      if (!selectedCustomer && !deliveryAddress.trim()) {
+        Toast.show({
+          type: 'error',
+          text1: 'Delivery Address Required',
+          text2: 'Please enter a destination address for this walk-in delivery order.',
+        });
+        return;
+      }
+      if (selectedCustomer && !effectiveAddress) {
+        Toast.show({
+          type: 'error',
+          text1: 'Delivery Address Required',
+          text2: 'Selected customer has no saved address. Please enter a delivery address.',
+        });
+        return;
+      }
+    }
+
     const assignedPartnerName = selectedPartnerId
       ? partners.find(p => p.id === selectedPartnerId)?.name || 'Assigned Delivery Partner'
       : 'None (Self pickup / Counter)';
@@ -926,6 +964,37 @@ export default function QuickBillingScreen({ route, navigation }: any) {
             placeholder="Select Delivery Partner (Optional)"
             optional={true}
           />
+
+          {/* Delivery Address field: Shown when in Order Mode OR when a Delivery Partner is selected in Draft Mode */}
+          {(!isOrderMode && selectedPartnerId) && (
+            <View style={{ marginTop: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                <Ionicons name="location-outline" size={14} color="#8C331A" style={{ marginRight: 4 }} />
+                <Text style={styles.orderFieldLabel}>
+                  DELIVERY DESTINATION ADDRESS {selectedCustomer ? '(OPTIONAL OVERRIDE)' : '* (REQUIRED FOR WALK-IN)'}
+                </Text>
+              </View>
+              <View style={styles.orderAddressBox}>
+                <TextInput
+                  style={[styles.orderAddressInput, { minHeight: 44 }]}
+                  multiline
+                  placeholder={
+                    selectedCustomer?.address
+                      ? `Defaults to customer address: ${selectedCustomer.address}`
+                      : "Enter destination address for delivery partner..."
+                  }
+                  placeholderTextColor="#9CA3AF"
+                  value={deliveryAddress}
+                  onChangeText={setDeliveryAddress}
+                />
+              </View>
+              {selectedCustomer?.address && !deliveryAddress ? (
+                <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 4, fontStyle: 'italic' }}>
+                  Leave blank to use customer's saved address ({selectedCustomer.address})
+                </Text>
+              ) : null}
+            </View>
+          )}
         </View>
 
         {/* PRODUCTS SECTION HEADER & VIEW TOGGLE */}
@@ -1002,7 +1071,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
                   <Text style={styles.threeGridCardTitle} numberOfLines={2}>
                     {p.name}
                   </Text>
-                  <Text style={styles.threeGridCardPrice}>₹{p.price}</Text>
+                  <Text style={styles.threeGridCardPrice}>{formatPriceDisplay(p.price)}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -1029,7 +1098,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
                       <Text style={styles.productIdTag}>#{p.id}</Text>
                     </View>
                     <Text style={styles.productListPrice}>
-                      ₹{p.price} {p.unit ? `• per ${p.unit}` : ''}
+                      {formatPriceDisplay(p.price)} {p.unit ? `• per ${p.unit}` : ''}
                     </Text>
                   </View>
 
@@ -1636,11 +1705,11 @@ const styles = StyleSheet.create({
   productThreeGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    gap: '2.5%',
     marginBottom: 14,
   },
   threeGridCard: {
-    width: '31.5%',
+    width: '31.6%',
     backgroundColor: '#FFFFFF',
     borderRadius: 10,
     padding: 6,
