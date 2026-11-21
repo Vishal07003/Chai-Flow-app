@@ -41,7 +41,7 @@ const REPORT_TABS: Array<{ id: ReportType; label: string; icon: string }> = [
   { id: 'customers', label: 'Customers', icon: 'people-outline' },
   { id: 'deliveries', label: 'Deliveries', icon: 'bicycle-outline' },
   { id: 'discounts', label: 'Discounts', icon: 'pricetag-outline' },
-  { id: 'profit-loss', label: 'P & L', icon: 'trending-up-outline' },
+  { id: 'profit-loss', label: 'Profit & Loss', icon: 'trending-up-outline' },
 ];
 
 const FILTER_PILLS: Array<{ id: DateFilterType; label: string }> = [
@@ -51,13 +51,15 @@ const FILTER_PILLS: Array<{ id: DateFilterType; label: string }> = [
   { id: 'this_month', label: 'This Month' },
   { id: 'last_month', label: 'Last Month' },
   { id: 'this_year', label: 'This Year' },
-  { id: 'custom', label: 'Custom' },
+  { id: 'custom', label: 'Custom Date Range' },
 ];
 
 export default function ReportsScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<ReportType>('overview');
   const [filterType, setFilterType] = useState<DateFilterType>('this_month');
+  const [dateDropdownOpen, setDateDropdownOpen] = useState(false);
+  const [reportDropdownOpen, setReportDropdownOpen] = useState(false);
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [customModalVisible, setCustomModalVisible] = useState(false);
@@ -689,56 +691,154 @@ export default function ReportsScreen({ navigation }: any) {
         showNotification={false}
       />
 
-      {/* Date Filter Bar */}
-      <View style={styles.filterBarContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
-          {FILTER_PILLS.map(p => (
-            <TouchableOpacity
-              key={p.id}
-              style={[styles.filterPill, filterType === p.id && styles.filterPillActive]}
-              onPress={() => {
-                if (p.id === 'custom') {
-                  setCustomModalVisible(true);
-                } else {
-                  setFilterType(p.id);
-                }
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.filterPillText, filterType === p.id && styles.filterPillTextActive]}>
-                {p.label}
+      {/* Dropdown Selectors: Date Range & Report Section */}
+      <View style={styles.dropdownsContainer}>
+        {/* Date Range Dropdown */}
+        <View style={styles.dropdownColumn}>
+          <Text style={styles.dropdownLabel}>Date Range</Text>
+          <TouchableOpacity
+            style={styles.dropdownSelector}
+            onPress={() => setDateDropdownOpen(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.dropdownSelectorInner}>
+              <Ionicons name="calendar-outline" size={15} color="#8C331A" style={{ marginRight: 6 }} />
+              <Text style={styles.dropdownSelectorText} numberOfLines={1}>
+                {FILTER_PILLS.find(p => p.id === filterType)?.label || 'Select Date Range'}
               </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
+            </View>
+            <Ionicons name="chevron-down" size={16} color="#8A7E75" />
+          </TouchableOpacity>
+        </View>
 
-      {/* Report Selector Tabs */}
-      <View style={styles.tabsContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScroll}>
-          {REPORT_TABS.map(t => (
-            <TouchableOpacity
-              key={t.id}
-              style={[styles.tabBtn, activeTab === t.id && styles.tabBtnActive]}
-              onPress={() => {
-                setActiveTab(t.id);
-                setSubSearchQuery('');
-              }}
-              activeOpacity={0.7}
-            >
+        {/* Report Section Dropdown */}
+        <View style={styles.dropdownColumn}>
+          <Text style={styles.dropdownLabel}>Report Section</Text>
+          <TouchableOpacity
+            style={styles.dropdownSelector}
+            onPress={() => setReportDropdownOpen(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.dropdownSelectorInner}>
               <Ionicons
-                name={t.icon}
+                name={REPORT_TABS.find(t => t.id === activeTab)?.icon || 'document-text-outline'}
                 size={15}
-                color={activeTab === t.id ? '#FFFFFF' : '#8C331A'}
+                color="#8C331A"
                 style={{ marginRight: 6 }}
               />
-              <Text style={[styles.tabBtnText, activeTab === t.id && styles.tabBtnTextActive]}>
-                {t.label}
+              <Text style={styles.dropdownSelectorText} numberOfLines={1}>
+                {REPORT_TABS.find(t => t.id === activeTab)?.label || 'Select Section'}
               </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+            </View>
+            <Ionicons name="chevron-down" size={16} color="#8A7E75" />
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {/* Date Range Selection Modal */}
+      <Modal
+        visible={dateDropdownOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDateDropdownOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setDateDropdownOpen(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Select Date Range</Text>
+              <TouchableOpacity onPress={() => setDateDropdownOpen(false)}>
+                <Ionicons name="close" size={20} color="#6B5E55" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.dropdownModalList} bounces={false}>
+              {FILTER_PILLS.map(p => {
+                const isSelected = filterType === p.id;
+                return (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={[styles.dropdownModalItem, isSelected && styles.dropdownModalItemActive]}
+                    onPress={() => {
+                      setDateDropdownOpen(false);
+                      if (p.id === 'custom') {
+                        setCustomModalVisible(true);
+                      } else {
+                        setFilterType(p.id);
+                      }
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.dropdownModalItemText, isSelected && styles.dropdownModalItemTextActive]}>
+                      {p.label}
+                    </Text>
+                    {isSelected && (
+                      <Ionicons name="checkmark-circle" size={18} color="#8C331A" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Report Section Selection Modal */}
+      <Modal
+        visible={reportDropdownOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReportDropdownOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setReportDropdownOpen(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Select Report Section</Text>
+              <TouchableOpacity onPress={() => setReportDropdownOpen(false)}>
+                <Ionicons name="close" size={20} color="#6B5E55" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.dropdownModalList} bounces={false}>
+              {REPORT_TABS.map(t => {
+                const isSelected = activeTab === t.id;
+                return (
+                  <TouchableOpacity
+                    key={t.id}
+                    style={[styles.dropdownModalItem, isSelected && styles.dropdownModalItemActive]}
+                    onPress={() => {
+                      setActiveTab(t.id);
+                      setSubSearchQuery('');
+                      setReportDropdownOpen(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.dropdownItemLeft}>
+                      <Ionicons
+                        name={t.icon}
+                        size={17}
+                        color={isSelected ? '#8C331A' : '#6B5E55'}
+                        style={{ marginRight: 10 }}
+                      />
+                      <Text style={[styles.dropdownModalItemText, isSelected && styles.dropdownModalItemTextActive]}>
+                        {t.label}
+                      </Text>
+                    </View>
+                    {isSelected && (
+                      <Ionicons name="checkmark-circle" size={18} color="#8C331A" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Search Input for items within sub-report */}
       {activeTab !== 'overview' && activeTab !== 'profit-loss' && (
@@ -883,64 +983,106 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FAF8F5',
   },
-  filterBarContainer: {
+  dropdownsContainer: {
+    flexDirection: 'row',
     backgroundColor: '#FAF8F5',
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 8,
+    gap: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#EFEAE4',
-    paddingVertical: 8,
   },
-  filterScroll: {
-    paddingHorizontal: 12,
+  dropdownColumn: {
+    flex: 1,
   },
-  filterPill: {
+  dropdownLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B5E55',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  dropdownSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E8E1D9',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginRight: 8,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    minHeight: 40,
   },
-  filterPillActive: {
-    backgroundColor: '#8C331A',
-    borderColor: '#8C331A',
-  },
-  filterPillText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#6B5E55',
-  },
-  filterPillTextActive: {
-    color: '#FFFFFF',
-  },
-  tabsContainer: {
-    backgroundColor: '#FAF8F5',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#EFEAE4',
-  },
-  tabScroll: {
-    paddingHorizontal: 12,
-  },
-  tabBtn: {
+  dropdownSelectorInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F5ECE5',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    marginRight: 8,
+    flex: 1,
+    marginRight: 4,
   },
-  tabBtnActive: {
-    backgroundColor: '#8C331A',
-  },
-  tabBtnText: {
-    fontSize: 12,
+  dropdownSelectorText: {
+    fontSize: 13,
     fontWeight: '700',
-    color: '#8C331A',
+    color: '#2C201A',
+    flexShrink: 1,
   },
-  tabBtnTextActive: {
-    color: '#FFFFFF',
+  dropdownModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    width: '88%',
+    maxWidth: 380,
+    maxHeight: '75%',
+    paddingVertical: 14,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+  },
+  dropdownModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0EAE1',
+  },
+  dropdownModalTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#2C201A',
+  },
+  dropdownModalList: {
+    paddingHorizontal: 10,
+    paddingTop: 6,
+  },
+  dropdownModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginVertical: 2,
+  },
+  dropdownModalItemActive: {
+    backgroundColor: '#FAF0E6',
+  },
+  dropdownItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dropdownModalItemText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#4B3E36',
+  },
+  dropdownModalItemTextActive: {
+    fontWeight: '800',
+    color: '#8C331A',
   },
   searchBox: {
     flexDirection: 'row',
