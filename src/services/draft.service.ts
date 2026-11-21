@@ -30,9 +30,10 @@ export interface DraftInvoice {
   customer: number | null;
   customer_name: string;
   customer_phone: string;
-  delivery_partner: number | null;
+  delivery_partner?: number | null;
   delivery_partner_id?: number | null;
   delivery_partner_name?: string | null;
+  delivery_address?: string;
   billing_source: DraftBillingSource;
   status: DraftStatus;
   subtotal: string;
@@ -62,6 +63,7 @@ export interface DraftItemInput {
 export interface CreateDraftPayload {
   customer_id?: number | null;
   delivery_partner_id?: number | null;
+  delivery_address?: string;
   billing_source?: DraftBillingSource;
   items?: DraftItemInput[];
   order_ids?: number[];
@@ -73,6 +75,7 @@ export interface CreateDraftPayload {
 export interface UpdateDraftPayload {
   customer_id?: number | null;
   delivery_partner_id?: number | null;
+  delivery_address?: string;
   items?: DraftItemInput[];
   order_ids?: number[];
   discount_amount?: number | string;
