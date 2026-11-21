@@ -54,6 +54,7 @@ export interface InvoiceItem {
   numericAmount?: number;
   due: string;
   date?: string;
+  createdAt?: string;
   isOverdue?: boolean;
   status?: 'PENDING' | 'OVERDUE' | 'PAID';
   items?: InvoiceLineItem[];
@@ -455,6 +456,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
               ? `Overdue • ₹${pendingNum.toLocaleString()} due`
               : `₹${pendingNum.toLocaleString()} due`,
             date: inv.created_at ? new Date(inv.created_at).toLocaleDateString() : 'Today',
+            createdAt: inv.finalized_at || inv.created_at || undefined,
             isOverdue: isOverdue,
             status: isPaid ? 'PAID' : isOverdue ? 'OVERDUE' : 'PENDING',
             deliveryPartnerName: 'Rahul Sharma',

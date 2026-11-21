@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header, EmptyState, FloatingButton } from '../../components/common';
+import { ReportsPagination } from '../../components/ReportsPagination';
 import orderService, {
   BackendOrder,
   OrderInvoicePreview,
@@ -69,6 +70,15 @@ export default function OrdersScreen({ navigation }: any) {
   const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('ALL');
   const [historyPartnerFilter, setHistoryPartnerFilter] = useState<number | null>(null);
   const [historyCustomerFilter, setHistoryCustomerFilter] = useState<number | null>(null);
+
+  // History Pagination
+  const [historyPage, setHistoryPage] = useState<number>(1);
+  const [historyPageSize, setHistoryPageSize] = useState<number>(10);
+
+  // Reset history page when filters, query, or page size change
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [historyStatusFilter, historyPartnerFilter, historyCustomerFilter, searchQuery, historyPageSize]);
 
   // Recurring Orders State
   const [recurringOrders, setRecurringOrders] = useState<BackendRecurringOrder[]>([]);
@@ -281,10 +291,17 @@ export default function OrdersScreen({ navigation }: any) {
         o.customer_name?.toLowerCase().includes(q) ||
         o.company_name?.toLowerCase().includes(q) ||
         o.delivery_address?.toLowerCase().includes(q) ||
-        o.delivery_partner_name?.toLowerCase().includes(q)
+        o.delivery_partner_name?.toLowerCase().includes(q) ||
+        (o.invoice_number && o.invoice_number.toLowerCase().includes(q))
       );
     });
   }, [orders, historyStatusFilter, historyCustomerFilter, historyPartnerFilter, searchQuery]);
+
+  // Paginated History Orders
+  const paginatedHistoryOrders = useMemo(() => {
+    const start = (historyPage - 1) * historyPageSize;
+    return filteredHistoryOrders.slice(start, start + historyPageSize);
+  }, [filteredHistoryOrders, historyPage, historyPageSize]);
 
   // 3. Recurring Orders Filtered
   const filteredRecurringOrders = useMemo(() => {
@@ -1276,12 +1293,25 @@ export default function OrdersScreen({ navigation }: any) {
             />
           ) : (
             <FlatList
-              data={filteredHistoryOrders}
+              data={paginatedHistoryOrders}
               keyExtractor={item => String(item.id)}
               renderItem={renderOrderCard}
               contentContainerStyle={styles.listContent}
               refreshControl={
                 <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#8C331A']} />
+              }
+              ListFooterComponent={
+                filteredHistoryOrders.length > 0 ? (
+                  <View style={styles.historyPaginationWrapper}>
+                    <ReportsPagination
+                      currentPage={historyPage}
+                      totalRecords={filteredHistoryOrders.length}
+                      pageSize={historyPageSize}
+                      onPageChange={setHistoryPage}
+                      onPageSizeChange={setHistoryPageSize}
+                    />
+                  </View>
+                ) : null
               }
             />
           )}
@@ -1655,9 +1685,10 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#EFEAE4',
   },
@@ -1672,7 +1703,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   clientName: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '800',
     color: '#2A2421',
     marginTop: 1,
@@ -1683,8 +1714,8 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   statusPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
     borderRadius: 6,
   },
   statusPillText: {
@@ -1692,22 +1723,22 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   cardBody: {
-    marginVertical: 8,
+    marginVertical: 6,
   },
   addressText: {
     fontSize: 11,
     color: '#8E8278',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   itemsSummary: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: '#4B3F38',
     fontWeight: '600',
   },
   driverTagRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 3,
   },
   driverTagText: {
     fontSize: 11,
@@ -1719,7 +1750,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 8,
+    paddingTop: 6,
     borderTopWidth: 1,
     borderTopColor: '#FAF8F5',
   },
@@ -1734,7 +1765,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   amountValue: {
-    fontSize: 15,
+    fontSize: 14.5,
     fontWeight: '800',
     color: '#2A2421',
     marginTop: 1,
@@ -1744,8 +1775,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#ECFDF5',
     paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 8,
+    paddingVertical: 4,
+    borderRadius: 7,
     borderWidth: 1,
     borderColor: '#A7F3D0',
   },
@@ -1759,9 +1790,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#8C331A',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 7,
   },
   generateBtnText: {
     fontSize: 11,
@@ -1772,14 +1803,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#FAF8F5',
     borderWidth: 1,
     borderColor: '#EFEAE4',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 7,
   },
   viewDetailsBtnText: {
     fontSize: 11,
     fontWeight: '700',
     color: '#8C331A',
+  },
+  historyPaginationWrapper: {
+    paddingVertical: 10,
+    paddingBottom: 20,
   },
   modalOverlay: {
     flex: 1,

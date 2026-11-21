@@ -7,10 +7,12 @@ import {
   ScrollView,
   TextInput,
   Share,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../components/common';
+import { ReportsPagination } from '../../components/ReportsPagination';
 
 import { useApp, InvoiceItem } from '../../context/AppContext';
 
@@ -27,9 +29,16 @@ export default function InvoicesScreen({ navigation }: any) {
 
   const [activeTab, setActiveTab] = useState<
     'PENDING' | 'OVERDUE' | 'PAID' | 'ALL'
-  >('PENDING');
+  >('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [toastMessage, setToastMessage] = useState('');
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // Reset to page 1 on activeTab, searchQuery, or pageSize change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchQuery, pageSize]);
 
   const filteredInvoices = useMemo(() => {
     let list = [...invoices];
@@ -55,6 +64,12 @@ export default function InvoicesScreen({ navigation }: any) {
 
     return list;
   }, [invoices, activeTab, searchQuery]);
+
+  // Paginated slice
+  const paginatedInvoices = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredInvoices.slice(start, start + pageSize);
+  }, [filteredInvoices, currentPage, pageSize]);
 
   const pendingCount = invoices.filter(
     i => i.status !== 'PAID' && !i.isOverdue,
@@ -93,6 +108,150 @@ export default function InvoicesScreen({ navigation }: any) {
     setTimeout(() => setToastMessage(''), 2500);
   };
 
+  const formatInvoiceDateTime = (item: InvoiceItem) => {
+    const rawDate = item.createdAt || item.date;
+    if (!rawDate) return null;
+
+    try {
+      const d = new Date(rawDate);
+      if (isNaN(d.getTime())) {
+        return item.date || null;
+      }
+
+      // Format in Asia/Kolkata timezone: e.g. "21 Nov 2026 • 5:46 PM"
+      const datePart = d.toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'Asia/Kolkata',
+      });
+
+      const timePart = d.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'Asia/Kolkata',
+      });
+
+      // If raw date was just a date string without time information (like '2026-11-21' or '27 Jul 2026')
+      if (timePart === '12:00 AM' && !rawDate.includes(':') && !rawDate.includes('T')) {
+        return datePart;
+      }
+
+      return `${datePart} • ${timePart}`;
+    } catch {
+      return item.date || null;
+    }
+  };
+
+  const renderInvoiceCard = ({ item }: { item: InvoiceItem }) => {
+    const isPaid = item.status === 'PAID';
+    const isOverdue = item.isOverdue || item.status === 'OVERDUE';
+    const formattedDate = formatInvoiceDateTime(item);
+
+    return (
+      <TouchableOpacity
+        key={item.id}
+        activeOpacity={0.85}
+        style={styles.invoiceCard}
+        onPress={() =>
+          navigation.navigate('InvoiceDetail', { invoice: item })
+        }
+      >
+        <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderLeft}>
+            <View style={styles.invIconBox}>
+              <Ionicons name="receipt" size={17} color="#8C331A" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.invNoText}>
+                {item.invoiceNo || item.id}
+              </Text>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => {
+                  const matched = customers.find(
+                    c => c.name.toLowerCase() === item.name.toLowerCase(),
+                  ) || {
+                    id: `c_${item.id}`,
+                    name: item.name,
+                    address: item.customerAddress || 'Local Market Area',
+                    amount: item.numericAmount || 0,
+                    deliveryStatus: 'Active Customer',
+                    hasDot: true,
+                    isOverdue: item.isOverdue || false,
+                  };
+                  navigation.navigate('CustomerDetail', { customer: matched });
+                }}
+              >
+                <Text style={styles.custNameText}>{item.name}</Text>
+              </TouchableOpacity>
+              {formattedDate ? (
+                <Text style={styles.cardDateText}>{formattedDate}</Text>
+              ) : null}
+            </View>
+          </View>
+
+          <View
+            style={[
+              styles.statusBadge,
+              isPaid
+                ? styles.badgeGreen
+                : isOverdue
+                ? styles.badgeRed
+                : styles.badgeOrange,
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusBadgeText,
+                isPaid
+                  ? styles.textGreen
+                  : isOverdue
+                  ? styles.textRed
+                  : styles.textOrange,
+              ]}
+            >
+              {isPaid ? 'PAID' : isOverdue ? 'OVERDUE' : 'PENDING'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.cardDivider} />
+
+        <View style={styles.cardBottomRow}>
+          <View>
+            <Text style={styles.dueLabel}>Terms / Due</Text>
+            <Text style={styles.dueVal}>{item.due}</Text>
+          </View>
+
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={styles.amountLabel}>Total Payable</Text>
+            <Text style={styles.amountVal}>{item.amount}</Text>
+          </View>
+        </View>
+
+        {/* Card Action Buttons */}
+        <View style={styles.cardActionsRow}>
+          {!isPaid && (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={styles.cardActionPaidBtn}
+              onPress={() => handleMarkPaid(item.id)}
+            >
+              <Ionicons
+                name="checkmark-circle-outline"
+                size={14}
+                color="#059669"
+              />
+              <Text style={styles.cardActionPaidText}>Mark Paid</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <Header
@@ -108,242 +267,179 @@ export default function InvoicesScreen({ navigation }: any) {
         </View>
       )}
 
-      {/* Fixed Top Section: Hero Card, Filter Tabs & Search Bar */}
-      <View style={styles.fixedTopContainer}>
-        {/* Top Header Card & New Order Action */}
-        <View style={styles.heroCard}>
-          <View style={styles.heroTopRow}>
-            <View>
-              <Text style={styles.heroSub}>Total Orders</Text>
-              <Text style={styles.heroValue}>
-                ₹{totalOrdersVal.toLocaleString()}
-              </Text>
-            </View>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              style={styles.createNewBtn}
-              onPress={() => navigation.navigate('CreateInvoice')}
-            >
-              <Ionicons name="add-circle" size={18} color="#8C331A" />
-              <Text style={styles.createNewBtnText}>New Order</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Paid & Unpaid Stats Sub-Row */}
-          <View style={styles.heroStatsRow}>
-            <View style={styles.heroStatCol}>
-              <View style={styles.statDotPaid} />
-              <Text style={styles.heroStatLabel}>Paid:</Text>
-              <Text style={styles.heroStatValPaid}>
-                ₹{totalPaidVal.toLocaleString()}
-              </Text>
-            </View>
-            <View style={styles.heroStatDivider} />
-            <View style={styles.heroStatCol}>
-              <View style={styles.statDotUnpaid} />
-              <Text style={styles.heroStatLabel}>Unpaid:</Text>
-              <Text style={styles.heroStatValUnpaid}>
-                ₹{totalUnpaidVal.toLocaleString()}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Filter Tabs */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabsScroll}
-        >
-          {[
-            { id: 'PENDING', label: `Pending (${pendingCount})` },
-            { id: 'OVERDUE', label: `Overdue (${overdueCount})` },
-            { id: 'PAID', label: `Paid (${paidCount})` },
-            { id: 'ALL', label: `All (${invoices.length})` },
-          ].map(tab => (
-            <TouchableOpacity
-              key={tab.id}
-              activeOpacity={0.8}
-              style={[
-                styles.tabChip,
-                activeTab === tab.id && styles.tabChipActive,
-              ]}
-              onPress={() => setActiveTab(tab.id as any)}
-            >
-              <Text
-                style={[
-                  styles.tabChipText,
-                  activeTab === tab.id && styles.tabChipTextActive,
-                ]}
-              >
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        {/* Search Input Bar */}
-        <View style={styles.searchBox}>
-          <Ionicons
-            name="search-outline"
-            size={18}
-            color="#8A7E75"
-            style={{ marginRight: 8 }}
-          />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search order by customer, ID or amount..."
-            placeholderTextColor="#A09489"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery !== '' && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={18} color="#8A7E75" />
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
-      {/* Scrollable List Area */}
-      <ScrollView
+      {/* FlatList using items wrapper: [ { type: 'HEADER' }, { type: 'SEARCH' }, { type: 'ORDERS_HEADING' }, ...paginatedInvoices ] */}
+      <FlatList
+        data={[
+          { _itemType: 'HEADER' },
+          { _itemType: 'SEARCH' },
+          { _itemType: 'ORDERS_HEADING' },
+          ...paginatedInvoices.map(inv => ({ _itemType: 'ORDER', ...inv })),
+        ]}
+        keyExtractor={(item: any, index) =>
+          item._itemType === 'ORDER' ? item.id : `sys_${item._itemType}_${index}`
+        }
+        stickyHeaderIndices={[1]}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>
-            {activeTab === 'PENDING'
-              ? 'PENDING ORDERS LIST'
-              : activeTab === 'OVERDUE'
-              ? 'OVERDUE ORDERS LIST'
-              : activeTab === 'PAID'
-              ? 'PAID ORDERS LIST'
-              : 'ALL ORDERS LIST'}
-          </Text>
-          <Text style={styles.countBadge}>{filteredInvoices.length} Items</Text>
-        </View>
-
-        {/* Invoice Cards List */}
-        {filteredInvoices.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="document-text-outline" size={48} color="#D1C7BD" />
-            <Text style={styles.emptyTitle}>No Orders Found</Text>
-            <Text style={styles.emptySub}>
-              There are no orders matching your current filter settings.
-            </Text>
-            <TouchableOpacity
-              style={[styles.createNewBtn, { marginTop: 14 }]}
-              onPress={() => navigation.navigate('CreateInvoice')}
-            >
-              <Text style={styles.createNewBtnText}>+ Create Order</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          filteredInvoices.map(item => {
-            const isPaid = item.status === 'PAID';
-            const isOverdue = item.isOverdue || item.status === 'OVERDUE';
-
+        renderItem={({ item }: { item: any }) => {
+          if (item._itemType === 'HEADER') {
             return (
-              <TouchableOpacity
-                key={item.id}
-                activeOpacity={0.85}
-                style={styles.invoiceCard}
-                onPress={() =>
-                  navigation.navigate('InvoiceDetail', { invoice: item })
-                }
-              >
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardHeaderLeft}>
-                    <View style={styles.invIconBox}>
-                      <Ionicons name="receipt" size={20} color="#8C331A" />
-                    </View>
+              <View style={styles.headerTopSection}>
+                {/* Top Header Card & New Order Action */}
+                <View style={styles.heroCard}>
+                  <View style={styles.heroTopRow}>
                     <View>
-                      <Text style={styles.invNoText}>
-                        {item.invoiceNo || item.id}
+                      <Text style={styles.heroSub}>Total Orders</Text>
+                      <Text style={styles.heroValue}>
+                        ₹{totalOrdersVal.toLocaleString()}
                       </Text>
-                      <TouchableOpacity
-                        activeOpacity={0.7}
-                        onPress={() => {
-                          const matched = customers.find(
-                            c => c.name.toLowerCase() === item.name.toLowerCase(),
-                          ) || {
-                            id: `c_${item.id}`,
-                            name: item.name,
-                            address: item.customerAddress || 'Local Market Area',
-                            amount: item.numericAmount || 0,
-                            deliveryStatus: 'Active Customer',
-                            hasDot: true,
-                            isOverdue: item.isOverdue || false,
-                          };
-                          navigation.navigate('CustomerDetail', { customer: matched });
-                        }}
-                      >
-                        <Text style={styles.custNameText}>{item.name}</Text>
-                      </TouchableOpacity>
+                    </View>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      style={styles.createNewBtn}
+                      onPress={() => navigation.navigate('CreateInvoice')}
+                    >
+                      <Ionicons name="add-circle" size={18} color="#8C331A" />
+                      <Text style={styles.createNewBtnText}>New Order</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Paid & Unpaid Stats Sub-Row */}
+                  <View style={styles.heroStatsRow}>
+                    <View style={styles.heroStatCol}>
+                      <View style={styles.statDotPaid} />
+                      <Text style={styles.heroStatLabel}>Paid:</Text>
+                      <Text style={styles.heroStatValPaid}>
+                        ₹{totalPaidVal.toLocaleString()}
+                      </Text>
+                    </View>
+                    <View style={styles.heroStatDivider} />
+                    <View style={styles.heroStatCol}>
+                      <View style={styles.statDotUnpaid} />
+                      <Text style={styles.heroStatLabel}>Unpaid:</Text>
+                      <Text style={styles.heroStatValUnpaid}>
+                        ₹{totalUnpaidVal.toLocaleString()}
+                      </Text>
                     </View>
                   </View>
-
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      isPaid
-                        ? styles.badgeGreen
-                        : isOverdue
-                        ? styles.badgeRed
-                        : styles.badgeOrange,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.statusBadgeText,
-                        isPaid
-                          ? styles.textGreen
-                          : isOverdue
-                          ? styles.textRed
-                          : styles.textOrange,
-                      ]}
-                    >
-                      {isPaid ? 'PAID' : isOverdue ? 'OVERDUE' : 'PENDING'}
-                    </Text>
-                  </View>
                 </View>
 
-                <View style={styles.cardDivider} />
-
-                <View style={styles.cardBottomRow}>
-                  <View>
-                    <Text style={styles.dueLabel}>Terms / Due</Text>
-                    <Text style={styles.dueVal}>{item.due}</Text>
-                  </View>
-
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.amountLabel}>Total Payable</Text>
-                    <Text style={styles.amountVal}>{item.amount}</Text>
-                  </View>
-                </View>
-
-                {/* Card Action Buttons */}
-                <View style={styles.cardActionsRow}>
-                  {!isPaid && (
+                {/* Filter Tabs */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.tabsScroll}
+                >
+                  {[
+                    { id: 'ALL', label: `All (${invoices.length})` },
+                    { id: 'PENDING', label: `Pending (${pendingCount})` },
+                    { id: 'OVERDUE', label: `Overdue (${overdueCount})` },
+                    { id: 'PAID', label: `Paid (${paidCount})` },
+                  ].map(tab => (
                     <TouchableOpacity
+                      key={tab.id}
                       activeOpacity={0.8}
-                      style={styles.cardActionPaidBtn}
-                      onPress={() => handleMarkPaid(item.id)}
+                      style={[
+                        styles.tabChip,
+                        activeTab === tab.id && styles.tabChipActive,
+                      ]}
+                      onPress={() => setActiveTab(tab.id as any)}
                     >
-                      <Ionicons
-                        name="checkmark-circle-outline"
-                        size={14}
-                        color="#059669"
-                      />
-                      <Text style={styles.cardActionPaidText}>Mark Paid</Text>
+                      <Text
+                        style={[
+                          styles.tabChipText,
+                          activeTab === tab.id && styles.tabChipTextActive,
+                        ]}
+                      >
+                        {tab.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            );
+          }
+
+          if (item._itemType === 'SEARCH') {
+            return (
+              <View style={styles.stickySearchWrapper}>
+                <View style={styles.searchBox}>
+                  <Ionicons
+                    name="search-outline"
+                    size={18}
+                    color="#8A7E75"
+                    style={{ marginRight: 8 }}
+                  />
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Search order by customer, ID or amount..."
+                    placeholderTextColor="#A09489"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                  />
+                  {searchQuery !== '' && (
+                    <TouchableOpacity onPress={() => setSearchQuery('')}>
+                      <Ionicons name="close-circle" size={18} color="#8A7E75" />
                     </TouchableOpacity>
                   )}
                 </View>
-              </TouchableOpacity>
+              </View>
             );
-          })
-        )}
-      </ScrollView>
+          }
+
+          if (item._itemType === 'ORDERS_HEADING') {
+            return (
+              <View style={styles.headingWrapper}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionTitle}>
+                    {activeTab === 'PENDING'
+                      ? 'PENDING ORDERS LIST'
+                      : activeTab === 'OVERDUE'
+                      ? 'OVERDUE ORDERS LIST'
+                      : activeTab === 'PAID'
+                      ? 'PAID ORDERS LIST'
+                      : 'ALL ORDERS LIST'}
+                  </Text>
+                  <Text style={styles.countBadge}>{filteredInvoices.length} Items</Text>
+                </View>
+              </View>
+            );
+          }
+
+          // Order Card
+          return renderInvoiceCard({ item });
+        }}
+        ListEmptyComponent={
+          filteredInvoices.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="document-text-outline" size={48} color="#D1C7BD" />
+              <Text style={styles.emptyTitle}>No Orders Found</Text>
+              <Text style={styles.emptySub}>
+                There are no orders matching your current filter settings.
+              </Text>
+              <TouchableOpacity
+                style={[styles.createNewBtn, { marginTop: 14 }]}
+                onPress={() => navigation.navigate('CreateInvoice')}
+              >
+                <Text style={styles.createNewBtnText}>+ Create Order</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null
+        }
+        ListFooterComponent={
+          filteredInvoices.length > 0 ? (
+            <View style={styles.paginationContainer}>
+              <ReportsPagination
+                currentPage={currentPage}
+                totalRecords={filteredInvoices.length}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={setPageSize}
+              />
+            </View>
+          ) : null
+        }
+      />
     </SafeAreaView>
   );
 }
@@ -373,21 +469,31 @@ const styles = StyleSheet.create({
     marginLeft: 10,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 10,
     paddingBottom: 90,
   },
-  fixedTopContainer: {
+  headerTopSection: {
     paddingHorizontal: 16,
     paddingTop: 12,
+  },
+  stickySearchWrapper: {
     backgroundColor: '#FAF8F5',
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 2,
+    zIndex: 10,
+    elevation: 3,
+  },
+  headingWrapper: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 4,
   },
 
   heroCard: {
     backgroundColor: '#7A2E19',
-    borderRadius: 20,
-    padding: 18,
-    marginBottom: 14,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 12,
     elevation: 4,
     shadowColor: '#7A2E19',
     shadowOffset: { width: 0, height: 4 },
@@ -405,7 +511,7 @@ const styles = StyleSheet.create({
     color: '#F7D3C6',
   },
   heroValue: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: '800',
     color: '#FFFFFF',
     marginTop: 2,
@@ -414,9 +520,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 14,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: 12,
   },
   createNewBtnText: {
     color: '#8C331A',
@@ -428,8 +534,8 @@ const styles = StyleSheet.create({
   heroStatsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 14,
-    paddingTop: 12,
+    marginTop: 12,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.18)',
   },
@@ -476,13 +582,13 @@ const styles = StyleSheet.create({
   },
 
   tabsScroll: {
-    marginBottom: 12,
+    marginBottom: 8,
   },
   tabChip: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+    borderRadius: 11,
     marginRight: 8,
     borderWidth: 1,
     borderColor: '#EFECE9',
@@ -504,12 +610,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 13,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderWidth: 1,
     borderColor: '#EFECE9',
-    marginBottom: 12,
+    marginBottom: 6,
   },
   searchInput: {
     flex: 1,
@@ -522,7 +628,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   sectionTitle: {
     fontSize: 12,
@@ -543,6 +649,7 @@ const styles = StyleSheet.create({
   emptyContainer: {
     alignItems: 'center',
     paddingVertical: 40,
+    paddingHorizontal: 16,
   },
   emptyTitle: {
     fontSize: 16,
@@ -557,12 +664,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  /* Invoice Card */
+  /* Compact Invoice Card */
   invoiceCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 13,
+    marginHorizontal: 16,
+    marginBottom: 9,
     borderWidth: 1,
     borderColor: '#EFECE9',
     elevation: 2,
@@ -579,15 +688,17 @@ const styles = StyleSheet.create({
   cardHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
   },
   invIconBox: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 33,
+    height: 33,
+    borderRadius: 10,
     backgroundColor: '#FDEBE4',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
+    marginRight: 9,
   },
   invNoText: {
     fontSize: 11,
@@ -595,15 +706,21 @@ const styles = StyleSheet.create({
     color: '#8C331A',
   },
   custNameText: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#2C201A',
+  },
+  cardDateText: {
+    fontSize: 10.5,
+    fontWeight: '500',
+    color: '#8A7E75',
+    marginTop: 1,
   },
 
   statusBadge: {
     paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingVertical: 3.5,
+    borderRadius: 7,
   },
   badgeGreen: { backgroundColor: '#ECFDF5' },
   badgeRed: { backgroundColor: '#FFE4E6' },
@@ -616,13 +733,13 @@ const styles = StyleSheet.create({
   cardDivider: {
     height: 1,
     backgroundColor: '#F5F2EF',
-    marginVertical: 12,
+    marginVertical: 8,
   },
 
   cardBottomRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   dueLabel: {
     fontSize: 10,
@@ -640,7 +757,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   amountVal: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: '#8C331A',
   },
@@ -648,21 +765,26 @@ const styles = StyleSheet.create({
   cardActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
   },
 
   cardActionPaidBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ECFDF5',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
   cardActionPaidText: {
     fontSize: 11,
     fontWeight: '800',
     color: '#059669',
     marginLeft: 4,
+  },
+
+  paginationContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
 });

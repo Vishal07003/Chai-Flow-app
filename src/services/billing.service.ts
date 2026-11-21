@@ -46,6 +46,8 @@ export interface BackendInvoice {
   total_paid: string;
   pending_amount: string;
   is_overdue?: boolean;
+  due_date?: string | null;
+  finalized_at?: string | null;
 }
 
 export interface CreateInvoicePayload {
