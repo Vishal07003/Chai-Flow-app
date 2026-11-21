@@ -18,8 +18,10 @@ export interface ReportsExportDialogProps {
   fileSize?: number;
   errorMessage?: string;
   onClose: () => void;
-  onAction?: () => void; // "Open PDF" or "Share / Open Excel"
+  onDownload?: () => void; // Save to public Android Downloads
+  onShare?: () => void; // Open Android Share Sheet with attached file
   onRetry?: () => void;
+  downloadingToPublic?: boolean;
 }
 
 export function ReportsExportDialog({
@@ -30,8 +32,10 @@ export function ReportsExportDialog({
   fileSize,
   errorMessage,
   onClose,
-  onAction,
+  onDownload,
+  onShare,
   onRetry,
+  downloadingToPublic = false,
 }: ReportsExportDialogProps) {
   if (!visible) return null;
 
@@ -52,13 +56,25 @@ export function ReportsExportDialog({
       transparent
       animationType="fade"
       onRequestClose={() => {
-        if (status !== 'loading') {
+        if (status !== 'loading' && !downloadingToPublic) {
           onClose();
         }
       }}
     >
       <View style={styles.overlay}>
         <View style={styles.card}>
+          {/* Top-Right Close (X) Button */}
+          {status !== 'loading' && !downloadingToPublic && (
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={onClose}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="close" size={22} color="#6B5E55" />
+            </TouchableOpacity>
+          )}
+
           {/* Header Icon */}
           <View style={styles.iconContainer}>
             {status === 'loading' && (
@@ -71,7 +87,7 @@ export function ReportsExportDialog({
                 <Ionicons
                   name={isPdf ? 'document-text' : 'stats-chart'}
                   size={28}
-                  color={isPdf ? '#DC2626' : '#15803D'}
+                  color={isPdf ? '#DC2626' : '#16865B'}
                 />
                 <View style={styles.badge}>
                   <Ionicons name="checkmark" size={12} color="#FFFFFF" />
@@ -104,8 +120,8 @@ export function ReportsExportDialog({
               <View style={styles.fileIconBox}>
                 <Ionicons
                   name={isPdf ? 'document-text-outline' : 'grid-outline'}
-                  size={20}
-                  color="#8C331A"
+                  size={22}
+                  color={isPdf ? '#DC2626' : '#16865B'}
                 />
               </View>
               <View style={styles.fileDetails}>
@@ -113,7 +129,7 @@ export function ReportsExportDialog({
                   {filename || `ChaiFlow_Report.${isPdf ? 'pdf' : 'xlsx'}`}
                 </Text>
                 <Text style={styles.fileMeta}>
-                  {formatBytes(fileSize)} • Saved to device
+                  {formatBytes(fileSize)} • Ready for Download & Share
                 </Text>
               </View>
             </View>
@@ -125,7 +141,7 @@ export function ReportsExportDialog({
             </Text>
           )}
 
-          {/* Actions */}
+          {/* Actions: Two clear, equal-width buttons (Download & Share) */}
           <View style={styles.actionRow}>
             {status === 'loading' ? (
               <View style={styles.loadingPlaceholder}>
@@ -134,32 +150,45 @@ export function ReportsExportDialog({
             ) : status === 'success' ? (
               <>
                 <TouchableOpacity
-                  style={styles.cancelBtn}
-                  onPress={onClose}
-                  activeOpacity={0.7}
+                  style={[styles.actionBtn, styles.downloadBtn]}
+                  onPress={onDownload}
+                  disabled={downloadingToPublic}
+                  activeOpacity={0.8}
                 >
-                  <Text style={styles.cancelBtnText}>Close</Text>
+                  {downloadingToPublic ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons
+                        name="download-outline"
+                        size={17}
+                        color="#FFFFFF"
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text style={styles.downloadBtnText}>Download</Text>
+                    </>
+                  )}
                 </TouchableOpacity>
+
                 <TouchableOpacity
-                  style={styles.primaryBtn}
-                  onPress={onAction}
+                  style={[styles.actionBtn, styles.shareBtn]}
+                  onPress={onShare}
+                  disabled={downloadingToPublic}
                   activeOpacity={0.8}
                 >
                   <Ionicons
-                    name={isPdf ? 'open-outline' : 'share-social-outline'}
-                    size={16}
+                    name="share-social-outline"
+                    size={17}
                     color="#FFFFFF"
                     style={{ marginRight: 6 }}
                   />
-                  <Text style={styles.primaryBtnText}>
-                    {isPdf ? 'Open PDF' : 'Share / Open'}
-                  </Text>
+                  <Text style={styles.shareBtnText}>Share</Text>
                 </TouchableOpacity>
               </>
             ) : (
               <>
                 <TouchableOpacity
-                  style={styles.cancelBtn}
+                  style={[styles.actionBtn, styles.cancelBtn]}
                   onPress={onClose}
                   activeOpacity={0.7}
                 >
@@ -167,12 +196,12 @@ export function ReportsExportDialog({
                 </TouchableOpacity>
                 {onRetry && (
                   <TouchableOpacity
-                    style={styles.primaryBtn}
+                    style={[styles.actionBtn, styles.downloadBtn]}
                     onPress={onRetry}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="refresh-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.primaryBtnText}>Retry</Text>
+                    <Ionicons name="refresh-outline" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.downloadBtnText}>Retry</Text>
                   </TouchableOpacity>
                 )}
               </>
@@ -193,6 +222,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   card: {
+    position: 'relative',
     backgroundColor: '#FAF8F5',
     borderRadius: 20,
     width: '100%',
@@ -213,8 +243,20 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  closeBtn: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    zIndex: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F3EDE6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   iconContainer: {
-    marginBottom: 14,
+    marginBottom: 12,
   },
   iconCircle: {
     width: 60,
@@ -238,7 +280,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: -2,
     right: -2,
-    backgroundColor: '#15803D',
+    backgroundColor: '#16865B',
     width: 20,
     height: 20,
     borderRadius: 10,
@@ -275,13 +317,13 @@ const styles = StyleSheet.create({
     borderColor: '#EAE3DA',
     padding: 12,
     width: '100%',
-    marginVertical: 12,
+    marginVertical: 14,
   },
   fileIconBox: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     borderRadius: 8,
-    backgroundColor: '#F5ECE5',
+    backgroundColor: '#F7F2EB',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
@@ -293,7 +335,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#2C201A',
-    marginBottom: 2,
+    marginBottom: 3,
   },
   fileMeta: {
     fontSize: 11,
@@ -311,10 +353,10 @@ const styles = StyleSheet.create({
   actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     width: '100%',
     marginTop: 10,
-    gap: 10,
+    gap: 12,
   },
   loadingPlaceholder: {
     paddingVertical: 8,
@@ -327,35 +369,39 @@ const styles = StyleSheet.create({
     color: '#8A7E75',
     fontWeight: '600',
   },
-  cancelBtn: {
+  actionBtn: {
     flex: 1,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
+    flexDirection: 'row',
+    height: 44,
     borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  downloadBtn: {
+    backgroundColor: '#16865B',
+  },
+  downloadBtnText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  shareBtn: {
+    backgroundColor: '#8C331A',
+  },
+  shareBtnText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  cancelBtn: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#D4C9BF',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   cancelBtnText: {
     fontSize: 13,
     fontWeight: '700',
     color: '#6B5E55',
-  },
-  primaryBtn: {
-    flex: 1.3,
-    flexDirection: 'row',
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: '#8C331A',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#FFFFFF',
   },
 });

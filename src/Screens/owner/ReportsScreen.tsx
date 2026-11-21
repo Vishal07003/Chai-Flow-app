@@ -79,6 +79,7 @@ export default function ReportsScreen({ navigation }: any) {
   const [exportFilePath, setExportFilePath] = useState('');
   const [exportFileSize, setExportFileSize] = useState<number | undefined>(undefined);
   const [exportErrorMsg, setExportErrorMsg] = useState('');
+  const [downloadingToPublic, setDownloadingToPublic] = useState(false);
 
   const [overviewData, setOverviewData] = useState<OverviewReportData | null>(null);
   const [salesData, setSalesData] = useState<SalesReportData | null>(null);
@@ -180,18 +181,42 @@ export default function ReportsScreen({ navigation }: any) {
     }
   };
 
-  const handleExportAction = async () => {
-    if (!exportFilePath) return;
+  // Action: Save to Public Downloads folder (Android MediaStore)
+  const handleSaveToPublicDownloads = async () => {
+    if (!exportFilePath || !exportFilename || downloadingToPublic) return;
+    setDownloadingToPublic(true);
+    try {
+      const publicPath = await reportsService.saveToPublicDownloads(exportFilePath, exportFilename);
+      Alert.alert(
+        'Downloaded Successfully',
+        `File saved to public Downloads:\n${exportFilename}\n\nYou can access it anytime from your device File Manager.`,
+        [{ text: 'OK' }]
+      );
+    } catch (err: any) {
+      console.warn('[ReportsScreen] Save to public downloads error:', err);
+      Alert.alert(
+        'Download Failed',
+        err?.message || 'Could not save file to public Downloads.'
+      );
+    } finally {
+      setDownloadingToPublic(false);
+    }
+  };
+
+  // Action: Native File Sharing (Android Share Sheet with real attachment)
+  const handleShareFile = async () => {
+    if (!exportFilePath || !exportFilename) return;
     try {
       if (exportFormat === 'pdf') {
-        await pdfService.openPdfFile(exportFilePath, `Report: ${exportFilename}`);
+        await pdfService.sharePdfFile(exportFilePath, `Report: ${exportFilename}`);
       } else {
-        await reportsService.openExcelFile(exportFilePath, exportFilename);
+        await reportsService.shareExcelFile(exportFilePath, exportFilename);
       }
     } catch (err: any) {
+      console.warn('[ReportsScreen] Share error:', err);
       Alert.alert(
-        `${exportFormat.toUpperCase()} Viewer`,
-        err?.message || `Could not open ${exportFormat.toUpperCase()} file. Please ensure a compatible viewer is installed.`
+        'Share Failed',
+        err?.message || `Could not share ${exportFormat.toUpperCase()} file.`
       );
     }
   };
@@ -1012,8 +1037,10 @@ export default function ReportsScreen({ navigation }: any) {
         filename={exportFilename}
         fileSize={exportFileSize}
         errorMessage={exportErrorMsg}
+        downloadingToPublic={downloadingToPublic}
         onClose={() => setExportDialogVisible(false)}
-        onAction={handleExportAction}
+        onDownload={handleSaveToPublicDownloads}
+        onShare={handleShareFile}
         onRetry={() => handleExport(exportFormat)}
       />
     </SafeAreaView>

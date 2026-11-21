@@ -105,6 +105,26 @@ export const pdfService = {
   },
 
   /**
+   * Shares an already downloaded PDF file via Android Share Sheet as a real attachment.
+   */
+  async sharePdfFile(filePath: string, title: string = 'Share Report'): Promise<boolean> {
+    if (Platform.OS === 'android' && NativePdfModule?.sharePdf) {
+      return await NativePdfModule.sharePdf(filePath, title);
+    }
+    throw new Error('Native PDF sharing is not available on this platform.');
+  },
+
+  /**
+   * Copies a downloaded PDF file into public Android Downloads using MediaStore.
+   */
+  async saveToPublicDownloads(filePath: string, filename: string): Promise<string> {
+    if (Platform.OS === 'android' && NativePdfModule?.saveToPublicDownloads) {
+      return await NativePdfModule.saveToPublicDownloads(filePath, filename);
+    }
+    return filePath;
+  },
+
+  /**
    * Opens Android native share sheet allowing WhatsApp and all installed apps
    * to receive the actual A4 PDF attachment.
    */

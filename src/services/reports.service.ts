@@ -368,6 +368,16 @@ export const reportsService = {
   },
 
   /**
+   * Copies an exported file (PDF or Excel) into public Android Downloads using MediaStore.
+   */
+  async saveToPublicDownloads(filePath: string, filename: string): Promise<string> {
+    if (Platform.OS === 'android' && NativePdfModule?.saveToPublicDownloads) {
+      return await NativePdfModule.saveToPublicDownloads(filePath, filename);
+    }
+    return filePath;
+  },
+
+  /**
    * Directly opens the spreadsheet file with an installed spreadsheet app (e.g. Google Sheets, Microsoft Excel)
    * or falls back to the native chooser.
    */

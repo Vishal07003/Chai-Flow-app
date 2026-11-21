@@ -1,5 +1,6 @@
 package com.chaiapp
 
+import android.content.ClipData
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -41,12 +42,18 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
             }
 
             var finalDestination = ""
+            val mimeType = when {
+                filename.endsWith(".pdf", ignoreCase = true) -> "application/pdf"
+                filename.endsWith(".xlsx", ignoreCase = true) -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                filename.endsWith(".xls", ignoreCase = true) -> "application/vnd.ms-excel"
+                else -> "*/*"
+            }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 // Scoped Storage: Insert into MediaStore.Downloads
                 val contentValues = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
-                    put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                    put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
                     put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
                 }
@@ -145,7 +152,7 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "application/pdf"
                 putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, title)
+                clipData = ClipData.newRawUri(title, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
@@ -173,10 +180,11 @@ class NativePdfModule(private val reactContext: ReactApplicationContext) :
             val authority = "${reactContext.packageName}.provider"
             val uri: Uri = FileProvider.getUriForFile(reactContext, authority, file)
 
+            val resolvedMime = if (mimeType.isNotBlank()) mimeType else "*/*"
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = if (mimeType.isNotBlank()) mimeType else "*/*"
+                type = resolvedMime
                 putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, title)
+                clipData = ClipData.newRawUri(title, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
