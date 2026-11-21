@@ -17,6 +17,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Header from '../../components/common/Header';
 import { ReportsExportDialog } from '../../components/ReportsExportDialog';
+import { ReportsPagination } from '../../components/ReportsPagination';
 import {
   reportsService,
   ReportType,
@@ -97,6 +98,35 @@ export default function ReportsScreen({ navigation }: any) {
   // Search query within active sub-list
   const [subSearchQuery, setSubSearchQuery] = useState('');
 
+  // Pagination states (per report section, with selectable rows per page: 10, 15, 30, 50)
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [salesPage, setSalesPage] = useState(1);
+  const [collectionsPage, setCollectionsPage] = useState(1);
+  const [outstandingPage, setOutstandingPage] = useState(1);
+  const [productsPage, setProductsPage] = useState(1);
+  const [customersPage, setCustomersPage] = useState(1);
+  const [deliveriesPartnersPage, setDeliveriesPartnersPage] = useState(1);
+  const [deliveriesDiscrepanciesPage, setDeliveriesDiscrepanciesPage] = useState(1);
+  const [discountsPage, setDiscountsPage] = useState(1);
+  const [pnlExpensesPage, setPnlExpensesPage] = useState(1);
+
+  const resetAllPages = useCallback(() => {
+    setSalesPage(1);
+    setCollectionsPage(1);
+    setOutstandingPage(1);
+    setProductsPage(1);
+    setCustomersPage(1);
+    setDeliveriesPartnersPage(1);
+    setDeliveriesDiscrepanciesPage(1);
+    setDiscountsPage(1);
+    setPnlExpensesPage(1);
+  }, []);
+
+  const handlePageSizeChange = useCallback((newSize: number) => {
+    setPageSize(newSize);
+    resetAllPages();
+  }, [resetAllPages]);
+
   const currentParams: DateFilterParams = useMemo(() => {
     return {
       filter_type: filterType,
@@ -146,8 +176,14 @@ export default function ReportsScreen({ navigation }: any) {
   }, [activeTab, currentParams]);
 
   useEffect(() => {
+    resetAllPages();
     loadActiveReport();
-  }, [loadActiveReport]);
+  }, [loadActiveReport, resetAllPages]);
+
+  // Reset pagination on search query change
+  useEffect(() => {
+    resetAllPages();
+  }, [subSearchQuery, resetAllPages]);
 
   // Refocus trigger
   useEffect(() => {
@@ -363,6 +399,8 @@ export default function ReportsScreen({ navigation }: any) {
         i.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase())
     );
 
+    const paginatedInvoices = filtered.slice((salesPage - 1) * pageSize, salesPage * pageSize);
+
     return (
       <View style={styles.tabContent}>
         {/* Source Breakdown */}
@@ -388,7 +426,7 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>FINALIZED INVOICES ({filtered.length})</Text>
         </View>
-        {filtered.map(item => (
+        {paginatedInvoices.map(item => (
           <View key={item.id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
               <Text style={styles.itemTitle}>{item.customer_name}</Text>
@@ -405,6 +443,14 @@ export default function ReportsScreen({ navigation }: any) {
             </View>
           </View>
         ))}
+
+        <ReportsPagination
+          currentPage={salesPage}
+          totalRecords={filtered.length}
+          pageSize={pageSize}
+          onPageSizeChange={handlePageSizeChange}
+          onPageChange={setSalesPage}
+        />
       </View>
     );
   };
@@ -418,6 +464,8 @@ export default function ReportsScreen({ navigation }: any) {
         p.method.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
         p.reference_number.toLowerCase().includes(subSearchQuery.toLowerCase())
     );
+
+    const paginatedPayments = filtered.slice((collectionsPage - 1) * pageSize, collectionsPage * pageSize);
 
     return (
       <View style={styles.tabContent}>
@@ -438,7 +486,7 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>PAID TRANSACTIONS ({filtered.length})</Text>
         </View>
-        {filtered.map(p => (
+        {paginatedPayments.map(p => (
           <View key={p.id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
               <Text style={styles.itemTitle}>{p.customer_name}</Text>
@@ -462,6 +510,14 @@ export default function ReportsScreen({ navigation }: any) {
             </View>
           </View>
         ))}
+
+        <ReportsPagination
+          currentPage={collectionsPage}
+          totalRecords={filtered.length}
+          pageSize={pageSize}
+          onPageSizeChange={handlePageSizeChange}
+          onPageChange={setCollectionsPage}
+        />
       </View>
     );
   };
@@ -469,6 +525,14 @@ export default function ReportsScreen({ navigation }: any) {
   const renderOutstanding = () => {
     if (!outstandingData) return null;
     const { summary, customer_dues, invoices } = outstandingData;
+
+    const filteredDues = customer_dues.filter(
+      c =>
+        c.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
+        c.customer_phone.toLowerCase().includes(subSearchQuery.toLowerCase())
+    );
+
+    const paginatedDues = filteredDues.slice((outstandingPage - 1) * pageSize, outstandingPage * pageSize);
 
     return (
       <View style={styles.tabContent}>
@@ -499,9 +563,9 @@ export default function ReportsScreen({ navigation }: any) {
 
         {/* Customer Dues */}
         <View style={styles.subListHeader}>
-          <Text style={styles.boxTitle}>CUSTOMER OUTSTANDING ({customer_dues.length})</Text>
+          <Text style={styles.boxTitle}>CUSTOMER OUTSTANDING ({filteredDues.length})</Text>
         </View>
-        {customer_dues.map(c => (
+        {paginatedDues.map(c => (
           <View key={c.customer_name} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
               <Text style={styles.itemTitle}>{c.customer_name}</Text>
@@ -528,18 +592,33 @@ export default function ReportsScreen({ navigation }: any) {
             </View>
           </View>
         ))}
+
+        <ReportsPagination
+          currentPage={outstandingPage}
+          totalRecords={filteredDues.length}
+          pageSize={pageSize}
+          onPageSizeChange={handlePageSizeChange}
+          onPageChange={setOutstandingPage}
+        />
       </View>
     );
   };
 
   const renderProducts = () => {
     if (!productsData) return null;
+
+    const filteredProducts = productsData.products.filter(p =>
+      p.product_name.toLowerCase().includes(subSearchQuery.toLowerCase())
+    );
+
+    const paginatedProducts = filteredProducts.slice((productsPage - 1) * pageSize, productsPage * pageSize);
+
     return (
       <View style={styles.tabContent}>
         <View style={styles.subListHeader}>
-          <Text style={styles.boxTitle}>PRODUCT VELOCITY & SALES ({productsData.products.length})</Text>
+          <Text style={styles.boxTitle}>PRODUCT VELOCITY & SALES ({filteredProducts.length})</Text>
         </View>
-        {productsData.products.map(p => (
+        {paginatedProducts.map(p => (
           <View key={p.product_name} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
               <Text style={styles.itemTitle}>{p.product_name}</Text>
@@ -562,18 +641,35 @@ export default function ReportsScreen({ navigation }: any) {
             </View>
           </View>
         ))}
+
+        <ReportsPagination
+          currentPage={productsPage}
+          totalRecords={filteredProducts.length}
+          pageSize={pageSize}
+          onPageSizeChange={handlePageSizeChange}
+          onPageChange={setProductsPage}
+        />
       </View>
     );
   };
 
   const renderCustomers = () => {
     if (!customersData) return null;
+
+    const filteredCustomers = customersData.customers.filter(
+      c =>
+        c.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
+        c.customer_phone.toLowerCase().includes(subSearchQuery.toLowerCase())
+    );
+
+    const paginatedCustomers = filteredCustomers.slice((customersPage - 1) * pageSize, customersPage * pageSize);
+
     return (
       <View style={styles.tabContent}>
         <View style={styles.subListHeader}>
-          <Text style={styles.boxTitle}>CUSTOMER RANKING ({customersData.customers.length})</Text>
+          <Text style={styles.boxTitle}>CUSTOMER RANKING ({filteredCustomers.length})</Text>
         </View>
-        {customersData.customers.map(c => (
+        {paginatedCustomers.map(c => (
           <View key={c.customer_id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
               <Text style={styles.itemTitle}>{c.customer_name}</Text>
@@ -588,6 +684,14 @@ export default function ReportsScreen({ navigation }: any) {
             </View>
           </View>
         ))}
+
+        <ReportsPagination
+          currentPage={customersPage}
+          totalRecords={filteredCustomers.length}
+          pageSize={pageSize}
+          onPageSizeChange={handlePageSizeChange}
+          onPageChange={setCustomersPage}
+        />
       </View>
     );
   };
@@ -595,6 +699,25 @@ export default function ReportsScreen({ navigation }: any) {
   const renderDeliveries = () => {
     if (!deliveriesData) return null;
     const { summary, partners, discrepancies } = deliveriesData;
+
+    const filteredPartners = partners.filter(prt =>
+      prt.partner_name.toLowerCase().includes(subSearchQuery.toLowerCase())
+    );
+
+    const filteredDiscrepancies = discrepancies.filter(
+      d =>
+        d.product_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
+        d.partner_name.toLowerCase().includes(subSearchQuery.toLowerCase())
+    );
+
+    const paginatedPartners = filteredPartners.slice(
+      (deliveriesPartnersPage - 1) * pageSize,
+      deliveriesPartnersPage * pageSize
+    );
+    const paginatedDiscrepancies = filteredDiscrepancies.slice(
+      (deliveriesDiscrepanciesPage - 1) * pageSize,
+      deliveriesDiscrepanciesPage * pageSize
+    );
 
     return (
       <View style={styles.tabContent}>
@@ -619,9 +742,9 @@ export default function ReportsScreen({ navigation }: any) {
 
         {/* Partner Roster */}
         <View style={styles.subListHeader}>
-          <Text style={styles.boxTitle}>PARTNER PERFORMANCE ({partners.length})</Text>
+          <Text style={styles.boxTitle}>PARTNER PERFORMANCE ({filteredPartners.length})</Text>
         </View>
-        {partners.map(prt => (
+        {paginatedPartners.map(prt => (
           <View key={prt.partner_name} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
               <Text style={styles.itemTitle}>{prt.partner_name}</Text>
@@ -633,13 +756,21 @@ export default function ReportsScreen({ navigation }: any) {
           </View>
         ))}
 
+        <ReportsPagination
+          currentPage={deliveriesPartnersPage}
+          totalRecords={filteredPartners.length}
+          pageSize={pageSize}
+          onPageSizeChange={handlePageSizeChange}
+          onPageChange={setDeliveriesPartnersPage}
+        />
+
         {/* Discrepancies */}
-        {discrepancies.length > 0 && (
+        {filteredDiscrepancies.length > 0 && (
           <View style={{ marginTop: 12 }}>
             <Text style={[styles.boxTitle, { color: '#DC2626', marginBottom: 8 }]}>
-              DELIVERY DISCREPANCIES ({discrepancies.length})
+              DELIVERY DISCREPANCIES ({filteredDiscrepancies.length})
             </Text>
-            {discrepancies.map(d => (
+            {paginatedDiscrepancies.map(d => (
               <View key={`${d.delivery_id}_${d.product_name}`} style={[styles.itemCard, { borderColor: '#FCA5A5' }]}>
                 <View style={styles.itemCardLeft}>
                   <Text style={styles.itemTitle}>{d.product_name}</Text>
@@ -654,6 +785,14 @@ export default function ReportsScreen({ navigation }: any) {
                 </View>
               </View>
             ))}
+
+            <ReportsPagination
+              currentPage={deliveriesDiscrepanciesPage}
+              totalRecords={filteredDiscrepancies.length}
+              pageSize={pageSize}
+          onPageSizeChange={handlePageSizeChange}
+              onPageChange={setDeliveriesDiscrepanciesPage}
+            />
           </View>
         )}
       </View>
@@ -662,6 +801,15 @@ export default function ReportsScreen({ navigation }: any) {
 
   const renderDiscounts = () => {
     if (!discountsData) return null;
+
+    const filteredInvoices = discountsData.invoices.filter(
+      item =>
+        item.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
+        item.invoice_number.toLowerCase().includes(subSearchQuery.toLowerCase())
+    );
+
+    const paginatedInvoices = filteredInvoices.slice((discountsPage - 1) * pageSize, discountsPage * pageSize);
+
     return (
       <View style={styles.tabContent}>
         <View style={styles.metricsBox}>
@@ -685,9 +833,9 @@ export default function ReportsScreen({ navigation }: any) {
         </View>
 
         <View style={styles.subListHeader}>
-          <Text style={styles.boxTitle}>DISCOUNTED INVOICES</Text>
+          <Text style={styles.boxTitle}>DISCOUNTED INVOICES ({filteredInvoices.length})</Text>
         </View>
-        {discountsData.invoices.map(item => (
+        {paginatedInvoices.map(item => (
           <View key={item.id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
               <Text style={styles.itemTitle}>{item.customer_name}</Text>
@@ -700,6 +848,14 @@ export default function ReportsScreen({ navigation }: any) {
             </View>
           </View>
         ))}
+
+        <ReportsPagination
+          currentPage={discountsPage}
+          totalRecords={filteredInvoices.length}
+          pageSize={pageSize}
+          onPageSizeChange={handlePageSizeChange}
+          onPageChange={setDiscountsPage}
+        />
       </View>
     );
   };
@@ -708,6 +864,11 @@ export default function ReportsScreen({ navigation }: any) {
     if (!pnlData) return null;
     const { summary, expense_categories } = pnlData;
     const isCostPartial = summary.cost_coverage_status !== 'complete';
+
+    const paginatedExpenses = expense_categories.slice(
+      (pnlExpensesPage - 1) * pageSize,
+      pnlExpensesPage * pageSize
+    );
 
     return (
       <View style={styles.tabContent}>
@@ -753,7 +914,7 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>OPERATING EXPENSES BREAKDOWN ({expense_categories.length})</Text>
         </View>
-        {expense_categories.map(cat => (
+        {paginatedExpenses.map(cat => (
           <View key={cat.category} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
               <Text style={styles.itemTitle}>{cat.category_display}</Text>
@@ -764,6 +925,14 @@ export default function ReportsScreen({ navigation }: any) {
             </View>
           </View>
         ))}
+
+        <ReportsPagination
+          currentPage={pnlExpensesPage}
+          totalRecords={expense_categories.length}
+          pageSize={pageSize}
+          onPageSizeChange={handlePageSizeChange}
+          onPageChange={setPnlExpensesPage}
+        />
       </View>
     );
   };
