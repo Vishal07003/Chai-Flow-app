@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -30,7 +30,7 @@ export const EXACT_CATEGORIES = [
   'Packed Foods',
 ];
 
-export const SUGGESTED_UNITS = [
+export const PRODUCT_UNITS = [
   'Pc',
   'Plate',
   'Pack',
@@ -38,6 +38,11 @@ export const SUGGESTED_UNITS = [
   'Glass',
   'Box',
   'Meal',
+  'Kg',
+  'Gram',
+  'Litre',
+  'Ml',
+  'Dozen',
 ];
 
 export default function ProductDetailScreen({ route, navigation }: any) {
@@ -66,6 +71,8 @@ export default function ProductDetailScreen({ route, navigation }: any) {
 
   // Category Dropdown Modal state
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  // Unit Dropdown Modal state
+  const [unitDropdownOpen, setUnitDropdownOpen] = useState(false);
 
   // Image states: imageUrl is the final/backend URL; pendingLocalUri is a newly selected image from camera/gallery
   const [imageUrl, setImageUrl] = useState(initialProduct.imageUrl || '');
@@ -74,6 +81,9 @@ export default function ProductDetailScreen({ route, navigation }: any) {
 
   const [showToast, setShowToast] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Scroll ref for keyboard-aware scrolling
+  const scrollRef = useRef<any>(null);
 
   // Unsaved changes check
   const initialPriceClean = initialProduct.price
@@ -420,8 +430,14 @@ export default function ProductDetailScreen({ route, navigation }: any) {
       )}
 
       <KeyboardAwareScrollView
+        ref={scrollRef}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        enableOnAndroid={true}
+        enableAutomaticScroll={true}
+        extraScrollHeight={Platform.OS === 'android' ? 140 : 100}
+        extraHeight={Platform.OS === 'android' ? 140 : 100}
+        keyboardOpeningTime={0}
         keyboardShouldPersistTaps="handled"
       >
         {/* Product Image Section */}
@@ -460,7 +476,7 @@ export default function ProductDetailScreen({ route, navigation }: any) {
             </View>
           ) : (
             <View style={styles.emptyImageBox}>
-              <Ionicons name="image-outline" size={36} color="#C4BCB5" />
+              <Ionicons name="image-outline" size={28} color="#C4BCB5" />
               <Text style={styles.emptyImageText}>No product image selected</Text>
               <Text style={styles.emptyImageSub}>Upload from gallery or take a live photo</Text>
             </View>
@@ -473,7 +489,7 @@ export default function ProductDetailScreen({ route, navigation }: any) {
               onPress={handleChooseFromGallery}
               activeOpacity={0.8}
             >
-              <Ionicons name="images-outline" size={17} color="#8C331A" style={{ marginRight: 6 }} />
+              <Ionicons name="images-outline" size={15} color="#8C331A" style={{ marginRight: 5 }} />
               <Text style={styles.imageBtnText}>
                 {activePreviewUri ? 'Replace from Gallery' : 'Choose from Gallery'}
               </Text>
@@ -484,7 +500,7 @@ export default function ProductDetailScreen({ route, navigation }: any) {
               onPress={handleCaptureFromCamera}
               activeOpacity={0.8}
             >
-              <Ionicons name="camera-outline" size={17} color="#8C331A" style={{ marginRight: 6 }} />
+              <Ionicons name="camera-outline" size={15} color="#8C331A" style={{ marginRight: 5 }} />
               <Text style={styles.imageBtnText}>Open Camera</Text>
             </TouchableOpacity>
           </View>
@@ -516,34 +532,18 @@ export default function ProductDetailScreen({ route, navigation }: any) {
 
           <View style={{ flex: 1, marginLeft: 8 }}>
             <Text style={styles.label}>Unit *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. Plate, Cup..."
-              placeholderTextColor="#A3968C"
-              value={unit}
-              onChangeText={setUnit}
-            />
+            <TouchableOpacity
+              style={styles.unitDropdownInput}
+              onPress={() => setUnitDropdownOpen(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.dropdownSelectedText} numberOfLines={1}>
+                {unit || 'Select Unit'}
+              </Text>
+              <Ionicons name="chevron-down" size={17} color="#8E8278" />
+            </TouchableOpacity>
           </View>
         </View>
-
-        {/* Suggested Units Pills */}
-        <Text style={styles.subPillLabel}>QUICK SELECT UNIT</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillsScroll}>
-          {SUGGESTED_UNITS.map(u => (
-            <TouchableOpacity
-              key={u}
-              style={[styles.unitPill, unit.toLowerCase() === u.toLowerCase() && styles.unitPillActive]}
-              onPress={() => setUnit(u)}
-              activeOpacity={0.7}
-            >
-              <Text
-                style={[styles.unitPillText, unit.toLowerCase() === u.toLowerCase() && styles.unitPillTextActive]}
-              >
-                {u}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
 
         {/* 3. Category Dropdown Field */}
         <Text style={styles.label}>Category *</Text>
@@ -677,6 +677,69 @@ export default function ProductDetailScreen({ route, navigation }: any) {
         </View>
       </Modal>
 
+      {/* Unit Dropdown Selection Modal */}
+      <Modal
+        visible={unitDropdownOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setUnitDropdownOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Select Unit</Text>
+              <TouchableOpacity
+                onPress={() => setUnitDropdownOpen(false)}
+                style={styles.dropdownModalCloseBtn}
+              >
+                <Ionicons name="close" size={20} color="#554A42" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {PRODUCT_UNITS.map(u => {
+                const isSelected = unit.toLowerCase() === u.toLowerCase();
+                return (
+                  <TouchableOpacity
+                    key={u}
+                    style={[
+                      styles.categoryOptionRow,
+                      isSelected && styles.categoryOptionRowActive,
+                    ]}
+                    onPress={() => {
+                      setUnit(u);
+                      setUnitDropdownOpen(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.catOptionLeft}>
+                      <Ionicons
+                        name="cube-outline"
+                        size={18}
+                        color={isSelected ? '#8C331A' : '#6B5E55'}
+                        style={{ marginRight: 10 }}
+                      />
+                      <Text
+                        style={[
+                          styles.categoryOptionText,
+                          isSelected && styles.categoryOptionTextActive,
+                        ]}
+                      >
+                        {u}
+                      </Text>
+                    </View>
+
+                    {isSelected && (
+                      <Ionicons name="checkmark-circle" size={20} color="#8C331A" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       <CustomDialog
         visible={dialogConfig.visible}
         title={dialogConfig.title}
@@ -751,23 +814,23 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 14,
-    paddingBottom: 40,
+    paddingBottom: Platform.OS === 'android' ? 60 : 40,
   },
   imageCardContainer: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E8E1D9',
-    padding: 12,
-    marginBottom: 14,
+    padding: 10,
+    marginBottom: 10,
   },
   previewBox: {
     width: '100%',
-    height: 150,
-    borderRadius: 10,
+    height: 96,
+    borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: '#EFECE8',
-    marginBottom: 10,
+    marginBottom: 8,
     position: 'relative',
   },
   previewImage: {
@@ -776,29 +839,29 @@ const styles = StyleSheet.create({
   },
   imageStatusBadge: {
     position: 'absolute',
-    bottom: 8,
-    left: 8,
+    bottom: 6,
+    left: 6,
     backgroundColor: 'rgba(44, 32, 26, 0.75)',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
   },
   imageStatusText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
     color: '#FFFFFF',
   },
   clearImageBtn: {
     position: 'absolute',
-    top: 8,
-    right: 8,
+    top: 6,
+    right: 6,
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    width: 32,
-    height: 32,
+    borderRadius: 14,
+    width: 28,
+    height: 28,
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 2,
@@ -808,26 +871,26 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
   },
   emptyImageBox: {
-    height: 110,
-    borderRadius: 10,
+    height: 92,
+    borderRadius: 8,
     borderWidth: 1.5,
     borderColor: '#E8E1D9',
     borderStyle: 'dashed',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
     backgroundColor: '#FAF8F5',
   },
   emptyImageText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: '#6B5E55',
-    marginTop: 6,
+    marginTop: 4,
   },
   emptyImageSub: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#A0958D',
-    marginTop: 2,
+    marginTop: 1,
   },
   imageActionButtonsRow: {
     flexDirection: 'row',
@@ -842,14 +905,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E8E1D9',
     borderRadius: 8,
-    height: 38,
+    height: 32,
   },
   cameraBtn: {
     backgroundColor: '#FEF9F6',
     borderColor: '#EFE3D9',
   },
   imageBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#8C331A',
   },
@@ -892,6 +955,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     height: 46,
     marginBottom: 12,
+  },
+  unitDropdownInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E8E1D9',
+    paddingHorizontal: 14,
+    height: 46,
+    marginBottom: 10,
   },
   dropdownLeft: {
     flexDirection: 'row',

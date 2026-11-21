@@ -1044,17 +1044,22 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         {/* PRODUCT CATALOG: GRID OR LIST LAYOUT */}
         {productViewMode === 'grid' ? (
           <View style={styles.productThreeGrid}>
-            {filteredProducts.map(p => {
+            {filteredProducts.map((p, idx) => {
               const rawQty = cartQuantities[p.id];
               const numQty = rawQty !== undefined ? (parseInt(rawQty, 10) || 0) : 0;
               const isSelected = addedOrder.includes(p.id) && numQty > 0;
               const imgUri = TEA_IMAGES[p.name] || DEFAULT_TEA_IMAGE;
+              const isThirdInRow = (idx + 1) % 3 === 0;
 
               return (
                 <TouchableOpacity
                   key={p.id}
                   activeOpacity={0.8}
-                  style={[styles.threeGridCard, isSelected && styles.threeGridCardSelected]}
+                  style={[
+                    styles.threeGridCard,
+                    isThirdInRow && styles.threeGridCardThird,
+                    isSelected && styles.threeGridCardSelected,
+                  ]}
                   onPress={() => updateQuantity(p.id, 1)}
                 >
                   {isSelected && (
@@ -1705,11 +1710,11 @@ const styles = StyleSheet.create({
   productThreeGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: '2.5%',
     marginBottom: 14,
   },
   threeGridCard: {
     width: '31.6%',
+    marginRight: '2.6%',
     backgroundColor: '#FFFFFF',
     borderRadius: 10,
     padding: 6,
@@ -1717,6 +1722,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#E5E7EB',
+  },
+  threeGridCardThird: {
+    marginRight: 0,
   },
   threeGridCardSelected: {
     borderColor: '#8C331A',
