@@ -11,6 +11,7 @@ import {
   Linking,
   Modal,
   Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -709,7 +710,7 @@ export default function ReportsScreen({ navigation }: any) {
         showNotification={false}
       />
 
-      {/* Inline Dropdown Selectors: Date Range & Report Section */}
+      {/* Dropdown Selectors: Date Range & Report Section with Floating Overlay */}
       <View style={styles.dropdownsContainer}>
         {/* Date Range Dropdown Column */}
         <View style={styles.dropdownColumn}>
@@ -738,21 +739,22 @@ export default function ReportsScreen({ navigation }: any) {
             />
           </TouchableOpacity>
 
-          {/* Inline Expanded Date Range Options */}
+          {/* Floating Overlay Date Range Options */}
           {dateDropdownOpen && (
-            <View style={styles.inlineDropdownList}>
+            <View style={styles.overlayDropdownList}>
               <ScrollView
-                style={styles.inlineDropdownScroll}
+                style={styles.overlayDropdownScroll}
                 nestedScrollEnabled={true}
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={true}
+                bounces={false}
               >
                 {FILTER_PILLS.map(p => {
                   const isSelected = filterType === p.id;
                   return (
                     <TouchableOpacity
                       key={p.id}
-                      style={[styles.inlineDropdownItem, isSelected && styles.inlineDropdownItemActive]}
+                      style={[styles.overlayDropdownItem, isSelected && styles.overlayDropdownItemActive]}
                       onPress={() => {
                         setDateDropdownOpen(false);
                         if (p.id === 'custom') {
@@ -763,7 +765,7 @@ export default function ReportsScreen({ navigation }: any) {
                       }}
                       activeOpacity={0.7}
                     >
-                      <Text style={[styles.inlineDropdownItemText, isSelected && styles.inlineDropdownItemTextActive]}>
+                      <Text style={[styles.overlayDropdownItemText, isSelected && styles.overlayDropdownItemTextActive]}>
                         {p.label}
                       </Text>
                       {isSelected && (
@@ -809,21 +811,22 @@ export default function ReportsScreen({ navigation }: any) {
             />
           </TouchableOpacity>
 
-          {/* Inline Expanded Report Section Options */}
+          {/* Floating Overlay Report Section Options */}
           {reportDropdownOpen && (
-            <View style={styles.inlineDropdownList}>
+            <View style={styles.overlayDropdownList}>
               <ScrollView
-                style={styles.inlineDropdownScroll}
+                style={styles.overlayDropdownScroll}
                 nestedScrollEnabled={true}
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={true}
+                bounces={false}
               >
                 {REPORT_TABS.map(t => {
                   const isSelected = activeTab === t.id;
                   return (
                     <TouchableOpacity
                       key={t.id}
-                      style={[styles.inlineDropdownItem, isSelected && styles.inlineDropdownItemActive]}
+                      style={[styles.overlayDropdownItem, isSelected && styles.overlayDropdownItemActive]}
                       onPress={() => {
                         setActiveTab(t.id);
                         setSubSearchQuery('');
@@ -831,14 +834,14 @@ export default function ReportsScreen({ navigation }: any) {
                       }}
                       activeOpacity={0.7}
                     >
-                      <View style={styles.inlineItemLeft}>
+                      <View style={styles.overlayItemLeft}>
                         <Ionicons
                           name={t.icon}
                           size={15}
                           color={isSelected ? '#8C331A' : '#6B5E55'}
                           style={{ marginRight: 8 }}
                         />
-                        <Text style={[styles.inlineDropdownItemText, isSelected && styles.inlineDropdownItemTextActive]}>
+                        <Text style={[styles.overlayDropdownItemText, isSelected && styles.overlayDropdownItemTextActive]}>
                           {t.label}
                         </Text>
                       </View>
@@ -853,6 +856,18 @@ export default function ReportsScreen({ navigation }: any) {
           )}
         </View>
       </View>
+
+      {/* Invisible backdrop to dismiss open dropdown on outside tap */}
+      {(dateDropdownOpen || reportDropdownOpen) && (
+        <TouchableOpacity
+          style={styles.dropdownBackdrop}
+          activeOpacity={1}
+          onPress={() => {
+            setDateDropdownOpen(false);
+            setReportDropdownOpen(false);
+          }}
+        />
+      )}
 
       {/* Search Input for items within sub-report */}
       {activeTab !== 'overview' && activeTab !== 'profit-loss' && (
@@ -1019,9 +1034,13 @@ const styles = StyleSheet.create({
     gap: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#EFEAE4',
+    zIndex: 100,
+    elevation: 6,
   },
   dropdownColumn: {
     flex: 1,
+    position: 'relative',
+    zIndex: 100,
   },
   dropdownLabel: {
     fontSize: 11,
@@ -1058,48 +1077,66 @@ const styles = StyleSheet.create({
     color: '#2C201A',
     flexShrink: 1,
   },
-  inlineDropdownList: {
+  overlayDropdownList: {
+    position: 'absolute',
+    top: 60, // Sits directly beneath the label and 40px selector input
+    left: 0,
+    right: 0,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E8E1D9',
-    borderRadius: 10,
-    marginTop: 6,
-    maxHeight: 220,
+    borderRadius: 12,
+    maxHeight: 240,
     overflow: 'hidden',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
+    zIndex: 999,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 10,
+      },
+    }),
   },
-  inlineDropdownScroll: {
-    maxHeight: 220,
+  overlayDropdownScroll: {
+    maxHeight: 240,
   },
-  inlineDropdownItem: {
+  overlayDropdownItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 9,
-    paddingHorizontal: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#F7F3EF',
   },
-  inlineDropdownItemActive: {
+  overlayDropdownItemActive: {
     backgroundColor: '#FAF0E6',
   },
-  inlineItemLeft: {
+  overlayItemLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
   },
-  inlineDropdownItemText: {
+  overlayDropdownItemText: {
     fontSize: 12.5,
     fontWeight: '600',
     color: '#4B3E36',
   },
-  inlineDropdownItemTextActive: {
+  overlayDropdownItemTextActive: {
     fontWeight: '800',
     color: '#8C331A',
+  },
+  dropdownBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 90,
   },
   searchBox: {
     flexDirection: 'row',
