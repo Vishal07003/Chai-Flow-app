@@ -813,7 +813,7 @@ export default function ReportsScreen({ navigation }: any) {
 
           {/* Floating Overlay Report Section Options */}
           {reportDropdownOpen && (
-            <View style={styles.overlayDropdownList}>
+            <View style={[styles.overlayDropdownList, styles.overlayDropdownListSection]}>
               <ScrollView
                 style={styles.overlayDropdownScroll}
                 nestedScrollEnabled={true}
@@ -1086,7 +1086,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E8E1D9',
     borderRadius: 12,
-    maxHeight: 240,
     overflow: 'hidden',
     zIndex: 999,
     ...Platform.select({
@@ -1101,14 +1100,18 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  overlayDropdownListSection: {
+    maxHeight: 380, // Accommodates all 9 report sections cleanly on Android
+  },
   overlayDropdownScroll: {
-    maxHeight: 240,
+    maxHeight: 380,
   },
   overlayDropdownItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
+    paddingVertical: 11,
+    minHeight: 44,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#F7F3EF',
