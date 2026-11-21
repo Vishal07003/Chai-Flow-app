@@ -48,11 +48,13 @@ const REPORT_TABS: Array<{ id: ReportType; label: string; icon: string }> = [
 ];
 
 const FILTER_PILLS: Array<{ id: DateFilterType; label: string }> = [
+  { id: 'last_30_days', label: 'Last 30 Days' },
+  { id: 'last_month', label: 'Last Month' },
+  { id: 'last_3_months', label: 'Last 3 Months' },
   { id: 'today', label: 'Today' },
   { id: 'yesterday', label: 'Yesterday' },
   { id: 'this_week', label: 'This Week' },
   { id: 'this_month', label: 'This Month' },
-  { id: 'last_month', label: 'Last Month' },
   { id: 'this_year', label: 'This Year' },
   { id: 'custom', label: 'Custom Date Range' },
 ];
@@ -60,12 +62,16 @@ const FILTER_PILLS: Array<{ id: DateFilterType; label: string }> = [
 export default function ReportsScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<ReportType>('overview');
-  const [filterType, setFilterType] = useState<DateFilterType>('this_month');
+  const [filterType, setFilterType] = useState<DateFilterType>('last_30_days');
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false);
   const [reportDropdownOpen, setReportDropdownOpen] = useState(false);
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [customModalVisible, setCustomModalVisible] = useState(false);
+  const [exportModalVisible, setExportModalVisible] = useState(false);
+  const [exportPeriod, setExportPeriod] = useState<DateFilterType>('last_30_days');
+  const [exportCustomFrom, setExportCustomFrom] = useState('');
+  const [exportCustomTo, setExportCustomTo] = useState('');
 
   // Data states
   const [loading, setLoading] = useState(false);
@@ -194,7 +200,8 @@ export default function ReportsScreen({ navigation }: any) {
   }, [navigation, loadActiveReport]);
 
   // Handle Export with custom reports dialog
-  const handleExport = async (format: 'pdf' | 'excel') => {
+  const handleExport = async (format: 'pdf' | 'excel', customParamsOverride?: DateFilterParams) => {
+    setExportModalVisible(false);
     if (exporting) return;
     setExporting(format);
     setExportFormat(format);
@@ -208,8 +215,14 @@ export default function ReportsScreen({ navigation }: any) {
     setExportFileSize(undefined);
     setExportDialogVisible(true);
 
+    const exportParams: DateFilterParams = customParamsOverride || {
+      filter_type: exportPeriod,
+      from_date: exportPeriod === 'custom' ? (exportCustomFrom || customFrom) : undefined,
+      to_date: exportPeriod === 'custom' ? (exportCustomTo || customTo) : undefined,
+    };
+
     try {
-      const res = await reportsService.exportReport(format, activeTab, currentParams);
+      const res = await reportsService.exportReport(format, activeTab, exportParams);
       setExportFilename(res.filename);
       setExportFilePath(res.filePath);
       setExportFileSize(res.size);
@@ -393,14 +406,13 @@ export default function ReportsScreen({ navigation }: any) {
   const renderSales = () => {
     if (!salesData) return null;
     const { summary, invoices } = salesData;
-    const q = subSearchQuery.trim().toLowerCase();
     const filtered = invoices.filter(
       i =>
-        i.invoice_number.toLowerCase().includes(q) ||
-        i.customer_name.toLowerCase().includes(q) ||
-        (i.source && i.source.toLowerCase().includes(q))
+        i.invoice_number.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
+        i.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase())
     );
 
+    const pageSize = 10;
     const paginatedInvoices = filtered.slice((salesPage - 1) * pageSize, salesPage * pageSize);
 
     return (
@@ -428,14 +440,6 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>FINALIZED INVOICES ({filtered.length})</Text>
         </View>
-
-        {q !== '' && filtered.length === 0 && (
-          <View style={styles.emptySearchBox}>
-            <Ionicons name="search-outline" size={32} color="#A09489" />
-            <Text style={styles.emptySearchText}>No matching records found</Text>
-          </View>
-        )}
-
         {paginatedInvoices.map(item => (
           <View key={item.id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -458,7 +462,6 @@ export default function ReportsScreen({ navigation }: any) {
           currentPage={salesPage}
           totalRecords={filtered.length}
           pageSize={pageSize}
-          onPageSizeChange={handlePageSizeChange}
           onPageChange={setSalesPage}
         />
       </View>
@@ -468,15 +471,14 @@ export default function ReportsScreen({ navigation }: any) {
   const renderCollections = () => {
     if (!collectionsData) return null;
     const { summary, payments } = collectionsData;
-    const q = subSearchQuery.trim().toLowerCase();
     const filtered = payments.filter(
       p =>
-        p.customer_name.toLowerCase().includes(q) ||
-        String(p.id).includes(q) ||
-        p.method.toLowerCase().includes(q) ||
-        (p.reference_number && p.reference_number.toLowerCase().includes(q))
+        p.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
+        p.method.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
+        p.reference_number.toLowerCase().includes(subSearchQuery.toLowerCase())
     );
 
+    const pageSize = 10;
     const paginatedPayments = filtered.slice((collectionsPage - 1) * pageSize, collectionsPage * pageSize);
 
     return (
@@ -498,14 +500,6 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>PAID TRANSACTIONS ({filtered.length})</Text>
         </View>
-
-        {q !== '' && filtered.length === 0 && (
-          <View style={styles.emptySearchBox}>
-            <Ionicons name="search-outline" size={32} color="#A09489" />
-            <Text style={styles.emptySearchText}>No matching records found</Text>
-          </View>
-        )}
-
         {paginatedPayments.map(p => (
           <View key={p.id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -535,7 +529,6 @@ export default function ReportsScreen({ navigation }: any) {
           currentPage={collectionsPage}
           totalRecords={filtered.length}
           pageSize={pageSize}
-          onPageSizeChange={handlePageSizeChange}
           onPageChange={setCollectionsPage}
         />
       </View>
@@ -545,14 +538,14 @@ export default function ReportsScreen({ navigation }: any) {
   const renderOutstanding = () => {
     if (!outstandingData) return null;
     const { summary, customer_dues, invoices } = outstandingData;
-    const q = subSearchQuery.trim().toLowerCase();
 
     const filteredDues = customer_dues.filter(
       c =>
-        c.customer_name.toLowerCase().includes(q) ||
-        (c.customer_phone && c.customer_phone.toLowerCase().includes(q))
+        c.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
+        c.customer_phone.toLowerCase().includes(subSearchQuery.toLowerCase())
     );
 
+    const pageSize = 10;
     const paginatedDues = filteredDues.slice((outstandingPage - 1) * pageSize, outstandingPage * pageSize);
 
     return (
@@ -586,14 +579,6 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>CUSTOMER OUTSTANDING ({filteredDues.length})</Text>
         </View>
-
-        {q !== '' && filteredDues.length === 0 && (
-          <View style={styles.emptySearchBox}>
-            <Ionicons name="search-outline" size={32} color="#A09489" />
-            <Text style={styles.emptySearchText}>No matching records found</Text>
-          </View>
-        )}
-
         {paginatedDues.map(c => (
           <View key={c.customer_name} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -626,7 +611,6 @@ export default function ReportsScreen({ navigation }: any) {
           currentPage={outstandingPage}
           totalRecords={filteredDues.length}
           pageSize={pageSize}
-          onPageSizeChange={handlePageSizeChange}
           onPageChange={setOutstandingPage}
         />
       </View>
@@ -635,12 +619,12 @@ export default function ReportsScreen({ navigation }: any) {
 
   const renderProducts = () => {
     if (!productsData) return null;
-    const q = subSearchQuery.trim().toLowerCase();
 
     const filteredProducts = productsData.products.filter(p =>
-      p.product_name.toLowerCase().includes(q)
+      p.product_name.toLowerCase().includes(subSearchQuery.toLowerCase())
     );
 
+    const pageSize = 10;
     const paginatedProducts = filteredProducts.slice((productsPage - 1) * pageSize, productsPage * pageSize);
 
     return (
@@ -648,14 +632,6 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>PRODUCT VELOCITY & SALES ({filteredProducts.length})</Text>
         </View>
-
-        {q !== '' && filteredProducts.length === 0 && (
-          <View style={styles.emptySearchBox}>
-            <Ionicons name="search-outline" size={32} color="#A09489" />
-            <Text style={styles.emptySearchText}>No matching records found</Text>
-          </View>
-        )}
-
         {paginatedProducts.map(p => (
           <View key={p.product_name} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -684,7 +660,6 @@ export default function ReportsScreen({ navigation }: any) {
           currentPage={productsPage}
           totalRecords={filteredProducts.length}
           pageSize={pageSize}
-          onPageSizeChange={handlePageSizeChange}
           onPageChange={setProductsPage}
         />
       </View>
@@ -693,15 +668,14 @@ export default function ReportsScreen({ navigation }: any) {
 
   const renderCustomers = () => {
     if (!customersData) return null;
-    const q = subSearchQuery.trim().toLowerCase();
 
     const filteredCustomers = customersData.customers.filter(
       c =>
-        c.customer_name.toLowerCase().includes(q) ||
-        (c.customer_phone && c.customer_phone.toLowerCase().includes(q)) ||
-        (c.address && c.address.toLowerCase().includes(q))
+        c.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
+        c.customer_phone.toLowerCase().includes(subSearchQuery.toLowerCase())
     );
 
+    const pageSize = 10;
     const paginatedCustomers = filteredCustomers.slice((customersPage - 1) * pageSize, customersPage * pageSize);
 
     return (
@@ -709,14 +683,6 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>CUSTOMER RANKING ({filteredCustomers.length})</Text>
         </View>
-
-        {q !== '' && filteredCustomers.length === 0 && (
-          <View style={styles.emptySearchBox}>
-            <Ionicons name="search-outline" size={32} color="#A09489" />
-            <Text style={styles.emptySearchText}>No matching records found</Text>
-          </View>
-        )}
-
         {paginatedCustomers.map(c => (
           <View key={c.customer_id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -737,7 +703,6 @@ export default function ReportsScreen({ navigation }: any) {
           currentPage={customersPage}
           totalRecords={filteredCustomers.length}
           pageSize={pageSize}
-          onPageSizeChange={handlePageSizeChange}
           onPageChange={setCustomersPage}
         />
       </View>
@@ -747,20 +712,18 @@ export default function ReportsScreen({ navigation }: any) {
   const renderDeliveries = () => {
     if (!deliveriesData) return null;
     const { summary, partners, discrepancies } = deliveriesData;
-    const q = subSearchQuery.trim().toLowerCase();
 
     const filteredPartners = partners.filter(prt =>
-      prt.partner_name.toLowerCase().includes(q)
+      prt.partner_name.toLowerCase().includes(subSearchQuery.toLowerCase())
     );
 
     const filteredDiscrepancies = discrepancies.filter(
       d =>
-        d.product_name.toLowerCase().includes(q) ||
-        d.partner_name.toLowerCase().includes(q) ||
-        String(d.delivery_id).includes(q) ||
-        String(d.order_id).includes(q)
+        d.product_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
+        d.partner_name.toLowerCase().includes(subSearchQuery.toLowerCase())
     );
 
+    const pageSize = 10;
     const paginatedPartners = filteredPartners.slice(
       (deliveriesPartnersPage - 1) * pageSize,
       deliveriesPartnersPage * pageSize
@@ -795,14 +758,6 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>PARTNER PERFORMANCE ({filteredPartners.length})</Text>
         </View>
-
-        {q !== '' && filteredPartners.length === 0 && (
-          <View style={styles.emptySearchBox}>
-            <Ionicons name="search-outline" size={32} color="#A09489" />
-            <Text style={styles.emptySearchText}>No matching records found</Text>
-          </View>
-        )}
-
         {paginatedPartners.map(prt => (
           <View key={prt.partner_name} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -819,7 +774,6 @@ export default function ReportsScreen({ navigation }: any) {
           currentPage={deliveriesPartnersPage}
           totalRecords={filteredPartners.length}
           pageSize={pageSize}
-          onPageSizeChange={handlePageSizeChange}
           onPageChange={setDeliveriesPartnersPage}
         />
 
@@ -849,7 +803,6 @@ export default function ReportsScreen({ navigation }: any) {
               currentPage={deliveriesDiscrepanciesPage}
               totalRecords={filteredDiscrepancies.length}
               pageSize={pageSize}
-              onPageSizeChange={handlePageSizeChange}
               onPageChange={setDeliveriesDiscrepanciesPage}
             />
           </View>
@@ -860,14 +813,14 @@ export default function ReportsScreen({ navigation }: any) {
 
   const renderDiscounts = () => {
     if (!discountsData) return null;
-    const q = subSearchQuery.trim().toLowerCase();
 
     const filteredInvoices = discountsData.invoices.filter(
       item =>
-        item.customer_name.toLowerCase().includes(q) ||
-        item.invoice_number.toLowerCase().includes(q)
+        item.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
+        item.invoice_number.toLowerCase().includes(subSearchQuery.toLowerCase())
     );
 
+    const pageSize = 10;
     const paginatedInvoices = filteredInvoices.slice((discountsPage - 1) * pageSize, discountsPage * pageSize);
 
     return (
@@ -895,14 +848,6 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>DISCOUNTED INVOICES ({filteredInvoices.length})</Text>
         </View>
-
-        {q !== '' && filteredInvoices.length === 0 && (
-          <View style={styles.emptySearchBox}>
-            <Ionicons name="search-outline" size={32} color="#A09489" />
-            <Text style={styles.emptySearchText}>No matching records found</Text>
-          </View>
-        )}
-
         {paginatedInvoices.map(item => (
           <View key={item.id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -921,7 +866,6 @@ export default function ReportsScreen({ navigation }: any) {
           currentPage={discountsPage}
           totalRecords={filteredInvoices.length}
           pageSize={pageSize}
-          onPageSizeChange={handlePageSizeChange}
           onPageChange={setDiscountsPage}
         />
       </View>
@@ -932,15 +876,9 @@ export default function ReportsScreen({ navigation }: any) {
     if (!pnlData) return null;
     const { summary, expense_categories } = pnlData;
     const isCostPartial = summary.cost_coverage_status !== 'complete';
-    const q = subSearchQuery.trim().toLowerCase();
 
-    const filteredExpenses = expense_categories.filter(
-      cat =>
-        cat.category_display.toLowerCase().includes(q) ||
-        cat.category.toLowerCase().includes(q)
-    );
-
-    const paginatedExpenses = filteredExpenses.slice(
+    const pageSize = 10;
+    const paginatedExpenses = expense_categories.slice(
       (pnlExpensesPage - 1) * pageSize,
       pnlExpensesPage * pageSize
     );
@@ -987,16 +925,8 @@ export default function ReportsScreen({ navigation }: any) {
 
         {/* Operating Expenses Breakdown */}
         <View style={styles.subListHeader}>
-          <Text style={styles.boxTitle}>OPERATING EXPENSES BREAKDOWN ({filteredExpenses.length})</Text>
+          <Text style={styles.boxTitle}>OPERATING EXPENSES BREAKDOWN ({expense_categories.length})</Text>
         </View>
-
-        {q !== '' && filteredExpenses.length === 0 && (
-          <View style={styles.emptySearchBox}>
-            <Ionicons name="search-outline" size={32} color="#A09489" />
-            <Text style={styles.emptySearchText}>No matching records found</Text>
-          </View>
-        )}
-
         {paginatedExpenses.map(cat => (
           <View key={cat.category} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -1011,9 +941,8 @@ export default function ReportsScreen({ navigation }: any) {
 
         <ReportsPagination
           currentPage={pnlExpensesPage}
-          totalRecords={filteredExpenses.length}
+          totalRecords={expense_categories.length}
           pageSize={pageSize}
-          onPageSizeChange={handlePageSizeChange}
           onPageChange={setPnlExpensesPage}
         />
       </View>
@@ -1022,12 +951,33 @@ export default function ReportsScreen({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Header with Back and Refresh */}
-      <Header
-        title="Business Reports Dashboard"
-        showBack={true}
-        showNotification={false}
-      />
+      {/* Header with Back, Title and Top-Right Export button */}
+      <View style={styles.topHeader}>
+        <View style={styles.topHeaderLeft}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-back" size={22} color="#8C331A" />
+          </TouchableOpacity>
+          <Text style={styles.topHeaderTitle}>Business Reports Dashboard</Text>
+        </View>
+
+        <TouchableOpacity
+          style={styles.headerExportBtn}
+          onPress={() => {
+            setExportPeriod(filterType);
+            setExportCustomFrom(customFrom);
+            setExportCustomTo(customTo);
+            setExportModalVisible(true);
+          }}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="download-outline" size={16} color="#FFFFFF" style={{ marginRight: 5 }} />
+          <Text style={styles.headerExportBtnText}>Export</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Dropdown Selectors: Date Range & Report Section with Floating Overlay */}
       <View style={styles.dropdownsContainer}>
@@ -1225,7 +1175,7 @@ export default function ReportsScreen({ navigation }: any) {
       ) : (
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 100 + insets.bottom }}
+          contentContainerStyle={{ paddingBottom: 30 + insets.bottom }}
           showsVerticalScrollIndicator={false}
         >
           {activeTab === 'overview' && renderOverview()}
@@ -1240,40 +1190,110 @@ export default function ReportsScreen({ navigation }: any) {
         </ScrollView>
       )}
 
-      {/* Bottom Export Bar */}
-      <View style={[styles.exportBar, { paddingBottom: Math.max(insets.bottom, 10), height: 60 + insets.bottom }]}>
+      {/* Export Options Modal (Triggered by Top-Right Export button) */}
+      <Modal
+        visible={exportModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setExportModalVisible(false)}
+      >
         <TouchableOpacity
-          style={[styles.exportBtn, styles.exportBtnPdf]}
-          onPress={() => handleExport('pdf')}
-          disabled={exporting !== null}
-          activeOpacity={0.8}
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setExportModalVisible(false)}
         >
-          {exporting === 'pdf' ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <>
-              <Ionicons name="document-text-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.exportBtnText}>Export PDF</Text>
-            </>
-          )}
-        </TouchableOpacity>
+          <View style={styles.exportModalCard} onStartShouldSetResponder={() => true}>
+            <View style={styles.exportModalHeader}>
+              <View>
+                <Text style={styles.exportModalTitle}>Export {REPORT_TABS.find(t => t.id === activeTab)?.label || 'Report'}</Text>
+                <Text style={styles.exportModalSub}>Choose reporting period and format</Text>
+              </View>
+              <TouchableOpacity onPress={() => setExportModalVisible(false)}>
+                <Ionicons name="close" size={22} color="#6B5E55" />
+              </TouchableOpacity>
+            </View>
 
-        <TouchableOpacity
-          style={[styles.exportBtn, styles.exportBtnExcel]}
-          onPress={() => handleExport('excel')}
-          disabled={exporting !== null}
-          activeOpacity={0.8}
-        >
-          {exporting === 'excel' ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <>
-              <Ionicons name="grid-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.exportBtnText}>Export Excel</Text>
-            </>
-          )}
+            {/* Export Period Selector Pills */}
+            <Text style={styles.exportSectionLabel}>REPORTING PERIOD</Text>
+            <View style={styles.exportPillsContainer}>
+              {[
+                { id: 'last_30_days', label: 'Last 30 Days' },
+                { id: 'last_month', label: 'Last Month' },
+                { id: 'last_3_months', label: 'Last 3 Months' },
+                { id: 'custom', label: 'Custom' },
+              ].map(p => {
+                const isSelected = exportPeriod === p.id;
+                return (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={[styles.exportPill, isSelected && styles.exportPillActive]}
+                    onPress={() => setExportPeriod(p.id as DateFilterType)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.exportPillText, isSelected && styles.exportPillTextActive]}>
+                      {p.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Custom inputs if exportPeriod is custom */}
+            {exportPeriod === 'custom' && (
+              <View style={styles.exportCustomInputs}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.inputLabel}>From (YYYY-MM-DD)</Text>
+                  <TextInput
+                    style={styles.dateInput}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#A09489"
+                    value={exportCustomFrom}
+                    onChangeText={setExportCustomFrom}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>To (YYYY-MM-DD)</Text>
+                  <TextInput
+                    style={styles.dateInput}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#A09489"
+                    value={exportCustomTo}
+                    onChangeText={setExportCustomTo}
+                  />
+                </View>
+              </View>
+            )}
+
+            {/* Export Format Action Buttons */}
+            <Text style={[styles.exportSectionLabel, { marginTop: 14 }]}>CHOOSE FORMAT</Text>
+            <View style={styles.exportModalActions}>
+              <TouchableOpacity
+                style={[styles.exportActionBtn, styles.exportActionBtnPdf]}
+                onPress={() => handleExport('pdf')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="document-text" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.exportActionBtnText}>Export PDF</Text>
+                  <Text style={styles.exportActionBtnSub}>Formatted PDF with tables & KPIs</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.exportActionBtn, styles.exportActionBtnExcel]}
+                onPress={() => handleExport('excel')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="grid" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.exportActionBtnText}>Export Excel</Text>
+                  <Text style={styles.exportActionBtnSub}>Spreadsheet (.xlsx) with all data rows</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
         </TouchableOpacity>
-      </View>
+      </Modal>
 
       {/* Custom Date Modal */}
       <Modal visible={customModalVisible} transparent animationType="fade">
@@ -1716,6 +1736,134 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#2C201A',
+  },
+  topHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FAF8F5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFEAE4',
+  },
+  topHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#F7EFE9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: '#EFE3D9',
+  },
+  topHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#7A2E19',
+    flexShrink: 1,
+  },
+  headerExportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#8C331A',
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  headerExportBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12.5,
+  },
+  exportModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+  },
+  exportModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 14,
+  },
+  exportModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#2C201A',
+  },
+  exportModalSub: {
+    fontSize: 11.5,
+    color: '#6B5E55',
+    marginTop: 2,
+  },
+  exportSectionLabel: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#8A7E75',
+    marginBottom: 8,
+    letterSpacing: 0.5,
+  },
+  exportPillsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  exportPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#E8E1D9',
+  },
+  exportPillActive: {
+    backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
+  },
+  exportPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2C201A',
+  },
+  exportPillTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  exportCustomInputs: {
+    flexDirection: 'row',
+    marginTop: 10,
+  },
+  exportModalActions: {
+    gap: 10,
+  },
+  exportActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 10,
+  },
+  exportActionBtnPdf: {
+    backgroundColor: '#8C331A',
+  },
+  exportActionBtnExcel: {
+    backgroundColor: '#059669',
+  },
+  exportActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  exportActionBtnSub: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 10.5,
+    marginTop: 1,
   },
   exportBar: {
     position: 'absolute',

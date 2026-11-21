@@ -6,6 +6,8 @@ import apiClient from './api';
 const { NativePdfModule } = NativeModules;
 
 export type ReportType =
+  | 'unified'
+  | 'business-report'
   | 'overview'
   | 'sales'
   | 'collections'
@@ -17,11 +19,13 @@ export type ReportType =
   | 'profit-loss';
 
 export type DateFilterType =
+  | 'last_30_days'
+  | 'last_month'
+  | 'last_3_months'
   | 'today'
   | 'yesterday'
   | 'this_week'
   | 'this_month'
-  | 'last_month'
   | 'this_year'
   | 'custom';
 
@@ -246,6 +250,135 @@ export interface ProfitLossReportData {
   }>;
 }
 
+export interface UnifiedReportData {
+  date_filter: DateFilterMetadata;
+  summary: {
+    gross_sales: string;
+    total_discounts: string;
+    net_sales: string;
+    total_collections: string;
+    portfolio_outstanding: string;
+    overdue_outstanding: string;
+    total_advance_credits: string;
+    total_invoices: number;
+    total_payment_transactions: number;
+    total_orders: number;
+    completed_deliveries: number;
+    operating_expenses: string;
+    cogs: string;
+    gross_profit: string;
+    net_profit: string;
+    profit_margin_pct: number;
+    cost_coverage_status: 'complete' | 'partial' | 'unavailable';
+    items_with_cost_count: number;
+    total_items_count: number;
+  };
+  sales_invoices: Array<{
+    id: number;
+    invoice_number: string;
+    invoice_date: string;
+    customer_name: string;
+    customer_phone: string;
+    source: string;
+    gross_amount: string;
+    discount_amount: string;
+    net_invoice_amount: string;
+    amount_paid: string;
+    pending_amount: string;
+    status: string;
+    due_date: string | null;
+  }>;
+  collection_transactions: Array<{
+    id: number;
+    customer_name: string;
+    payment_date: string;
+    amount_received: string;
+    method: string;
+    reference_number: string;
+    allocated_amount: string;
+    unallocated_advance: string;
+    is_advance: boolean;
+    allocated_invoices: string;
+  }>;
+  customer_outstanding: Array<{
+    customer_id: number;
+    customer_name: string;
+    phone: string;
+    total_billed: string;
+    total_collected: string;
+    current_outstanding: string;
+    overdue_balance: string;
+    advance_credit: string;
+    last_payment_date: string;
+  }>;
+  customer_payment_history: Array<{
+    customer_name: string;
+    payment_date: string;
+    payment_amount: string;
+    payment_method: string;
+    reference: string;
+    invoice_allocation: string;
+    remaining_balance: string;
+  }>;
+  discounts: {
+    total_discount_amount: string;
+    discounted_invoices_count: number;
+    invoices: Array<{
+      invoice_number: string;
+      customer_name: string;
+      invoice_date: string;
+      subtotal: string;
+      discount_amount: string;
+      grand_total: string;
+      discount_pct: number;
+    }>;
+  };
+  expenses: {
+    total_expenses: string;
+    items: Array<{
+      id: number;
+      title: string;
+      category: string;
+      category_display: string;
+      amount: string;
+      expense_date: string;
+      payment_method: string;
+    }>;
+  };
+  deliveries: {
+    total_deliveries: number;
+    delivered: number;
+    failed: number;
+    pending: number;
+    in_progress: number;
+    completion_rate_pct: number;
+    partners: Array<{
+      partner_name: string;
+      assigned: number;
+      delivered: number;
+      failed: number;
+    }>;
+    discrepancies: Array<{
+      delivery_id: number;
+      order_id: number;
+      partner_name: string;
+      product_name: string;
+      ordered_qty: number;
+      delivered_qty: number;
+      notes: string;
+    }>;
+  };
+  profit_loss: {
+    net_sales: string;
+    cogs: string;
+    cost_coverage_status: 'complete' | 'partial' | 'unavailable';
+    gross_profit: string;
+    operating_expenses: string;
+    net_profit: string;
+    profit_margin_pct: number;
+  };
+}
+
 // ----------------- Service Implementation ----------------- //
 
 const buildQueryString = (params: DateFilterParams): string => {
@@ -258,6 +391,10 @@ const buildQueryString = (params: DateFilterParams): string => {
 };
 
 export const reportsService = {
+  getUnifiedReport(params: DateFilterParams): Promise<UnifiedReportData> {
+    return apiClient.get<UnifiedReportData>(`/reports/unified/?${buildQueryString(params)}`);
+  },
+
   getOverview(params: DateFilterParams): Promise<OverviewReportData> {
     return apiClient.get<OverviewReportData>(`/reports/overview/?${buildQueryString(params)}`);
   },
@@ -308,9 +445,18 @@ export const reportsService = {
     const downloadUrl = `${API_BASE_URL}${endpoint}?report_type=${reportType}&${qs}`;
 
     const ext = format === 'pdf' ? 'pdf' : 'xlsx';
-    const cleanType = reportType.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const timestamp = new Date().toISOString().slice(0, 10);
-    const filename = `ChaiFlow_${cleanType}_${timestamp}.${ext}`;
+    let filename: string;
+    if (reportType === 'unified' || reportType === 'business-report') {
+      let periodSlug = 'Last_30_Days';
+      if (params.filter_type === 'last_month') periodSlug = 'Last_Month';
+      else if (params.filter_type === 'last_3_months') periodSlug = 'Last_3_Months';
+      else if (params.filter_type === 'custom') periodSlug = `Custom_${params.from_date || 'start'}_to_${params.to_date || 'end'}`;
+      filename = `ChaiFlow_Business_Report_${periodSlug}.${ext}`;
+    } else {
+      const cleanType = reportType.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const timestamp = new Date().toISOString().slice(0, 10);
+      filename = `ChaiFlow_${cleanType}_${timestamp}.${ext}`;
+    }
     const filePath = `${RNFS.DocumentDirectoryPath}/${filename}`;
 
     const headers: Record<string, string> = {
