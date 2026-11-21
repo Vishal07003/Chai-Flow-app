@@ -36,24 +36,38 @@ export function ReportsPagination({
   const isFirstPage = safeCurrentPage <= 1;
   const isLastPage = safeCurrentPage >= totalPages;
 
-  // Compute compact page window with ellipsis for large page counts
-  const getVisiblePageNumbers = (): (number | string)[] => {
-    if (totalPages <= 5) {
+  /**
+   * Sliding window pagination:
+   * Displays exactly a maximum of 5 consecutive page numbers at any time.
+   * If totalPages <= 5: displays all [1..totalPages].
+   * If totalPages > 5:
+   *   Page 1: [1, 2, 3, 4, 5]
+   *   Page 2: [1, 2, 3, 4, 5]
+   *   Page 3: [1, 2, 3, 4, 5]
+   *   Page 4: [2, 3, 4, 5, 6]
+   *   Page 5: [3, 4, 5, 6, 7]
+   *   ...
+   *   Last page 10: [6, 7, 8, 9, 10]
+   *   Last page 50: [46, 47, 48, 49, 50]
+   */
+  const getSlidingWindowPages = (): number[] => {
+    const maxButtons = 5;
+    if (totalPages <= maxButtons) {
       return Array.from({ length: totalPages }, (_, i) => i + 1);
     }
 
-    if (safeCurrentPage <= 3) {
-      return [1, 2, 3, 4, '...', totalPages];
+    let startPage = safeCurrentPage - 2;
+    if (startPage < 1) {
+      startPage = 1;
+    }
+    if (startPage + maxButtons - 1 > totalPages) {
+      startPage = totalPages - maxButtons + 1;
     }
 
-    if (safeCurrentPage >= totalPages - 2) {
-      return [1, '...', totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
-    }
-
-    return [1, '...', safeCurrentPage - 1, safeCurrentPage, safeCurrentPage + 1, '...', totalPages];
+    return Array.from({ length: maxButtons }, (_, i) => startPage + i);
   };
 
-  const visiblePages = getVisiblePageNumbers();
+  const visiblePages = getSlidingWindowPages();
 
   const handleSelectPageSize = (size: number) => {
     setDropdownOpen(false);
@@ -84,7 +98,7 @@ export function ReportsPagination({
               />
             </TouchableOpacity>
 
-            {/* Floating Overlay Dropdown Options (Opens UPWARD with bottom: 36 to prevent clipping by bottom export bar) */}
+            {/* Floating Overlay Dropdown Options (Opens UPWARD with bottom: 34 to prevent clipping by bottom export bar) */}
             {dropdownOpen && (
               <View style={styles.floatingDropdownUpward}>
                 {PAGE_SIZE_OPTIONS.map((opt) => {
@@ -112,11 +126,11 @@ export function ReportsPagination({
 
         {/* Right Side: Showing 1–10 of 37 records */}
         <Text style={styles.infoText}>
-          Showing <Text style={styles.infoHighlight}>{startRecord}–{endRecord}</Text> of <Text style={styles.infoHighlight}>{totalRecords}</Text>
+          Showing <Text style={styles.infoHighlight}>{startRecord}–{endRecord}</Text> of <Text style={styles.infoHighlight}>{totalRecords}</Text> records
         </Text>
       </View>
 
-      {/* 2. Main Centered Pagination Row: [Previous] [1] [2] [3] [Next] */}
+      {/* 2. Main Centered Pagination Row: [Previous] [1] [2] [3] [4] [5] [Next] */}
       {totalPages > 1 && (
         <View style={styles.centeredPaginationRow}>
           {/* Labeled Previous Button */}
@@ -137,18 +151,9 @@ export function ReportsPagination({
             </Text>
           </TouchableOpacity>
 
-          {/* Page Numbers */}
+          {/* Sliding Window Page Numbers (Max 5 consecutive buttons) */}
           <View style={styles.pageNumbersGroup}>
-            {visiblePages.map((page, index) => {
-              if (page === '...') {
-                return (
-                  <View key={`ellipsis-${index}`} style={styles.ellipsisBox}>
-                    <Text style={styles.ellipsisText}>••</Text>
-                  </View>
-                );
-              }
-
-              const pageNum = Number(page);
+            {visiblePages.map((pageNum) => {
               const isActive = pageNum === safeCurrentPage;
 
               return (
@@ -355,16 +360,5 @@ const styles = StyleSheet.create({
   pageBtnTextActive: {
     fontWeight: '800',
     color: '#FFFFFF',
-  },
-  ellipsisBox: {
-    minWidth: 18,
-    height: 32,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  ellipsisText: {
-    fontSize: 11,
-    color: '#A09489',
-    letterSpacing: 0.5,
   },
 });

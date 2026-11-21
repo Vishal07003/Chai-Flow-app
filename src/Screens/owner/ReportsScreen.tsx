@@ -393,10 +393,12 @@ export default function ReportsScreen({ navigation }: any) {
   const renderSales = () => {
     if (!salesData) return null;
     const { summary, invoices } = salesData;
+    const q = subSearchQuery.trim().toLowerCase();
     const filtered = invoices.filter(
       i =>
-        i.invoice_number.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
-        i.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase())
+        i.invoice_number.toLowerCase().includes(q) ||
+        i.customer_name.toLowerCase().includes(q) ||
+        (i.source && i.source.toLowerCase().includes(q))
     );
 
     const paginatedInvoices = filtered.slice((salesPage - 1) * pageSize, salesPage * pageSize);
@@ -426,6 +428,14 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>FINALIZED INVOICES ({filtered.length})</Text>
         </View>
+
+        {q !== '' && filtered.length === 0 && (
+          <View style={styles.emptySearchBox}>
+            <Ionicons name="search-outline" size={32} color="#A09489" />
+            <Text style={styles.emptySearchText}>No matching records found</Text>
+          </View>
+        )}
+
         {paginatedInvoices.map(item => (
           <View key={item.id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -458,11 +468,13 @@ export default function ReportsScreen({ navigation }: any) {
   const renderCollections = () => {
     if (!collectionsData) return null;
     const { summary, payments } = collectionsData;
+    const q = subSearchQuery.trim().toLowerCase();
     const filtered = payments.filter(
       p =>
-        p.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
-        p.method.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
-        p.reference_number.toLowerCase().includes(subSearchQuery.toLowerCase())
+        p.customer_name.toLowerCase().includes(q) ||
+        String(p.id).includes(q) ||
+        p.method.toLowerCase().includes(q) ||
+        (p.reference_number && p.reference_number.toLowerCase().includes(q))
     );
 
     const paginatedPayments = filtered.slice((collectionsPage - 1) * pageSize, collectionsPage * pageSize);
@@ -486,6 +498,14 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>PAID TRANSACTIONS ({filtered.length})</Text>
         </View>
+
+        {q !== '' && filtered.length === 0 && (
+          <View style={styles.emptySearchBox}>
+            <Ionicons name="search-outline" size={32} color="#A09489" />
+            <Text style={styles.emptySearchText}>No matching records found</Text>
+          </View>
+        )}
+
         {paginatedPayments.map(p => (
           <View key={p.id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -525,11 +545,12 @@ export default function ReportsScreen({ navigation }: any) {
   const renderOutstanding = () => {
     if (!outstandingData) return null;
     const { summary, customer_dues, invoices } = outstandingData;
+    const q = subSearchQuery.trim().toLowerCase();
 
     const filteredDues = customer_dues.filter(
       c =>
-        c.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
-        c.customer_phone.toLowerCase().includes(subSearchQuery.toLowerCase())
+        c.customer_name.toLowerCase().includes(q) ||
+        (c.customer_phone && c.customer_phone.toLowerCase().includes(q))
     );
 
     const paginatedDues = filteredDues.slice((outstandingPage - 1) * pageSize, outstandingPage * pageSize);
@@ -565,6 +586,14 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>CUSTOMER OUTSTANDING ({filteredDues.length})</Text>
         </View>
+
+        {q !== '' && filteredDues.length === 0 && (
+          <View style={styles.emptySearchBox}>
+            <Ionicons name="search-outline" size={32} color="#A09489" />
+            <Text style={styles.emptySearchText}>No matching records found</Text>
+          </View>
+        )}
+
         {paginatedDues.map(c => (
           <View key={c.customer_name} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -606,9 +635,10 @@ export default function ReportsScreen({ navigation }: any) {
 
   const renderProducts = () => {
     if (!productsData) return null;
+    const q = subSearchQuery.trim().toLowerCase();
 
     const filteredProducts = productsData.products.filter(p =>
-      p.product_name.toLowerCase().includes(subSearchQuery.toLowerCase())
+      p.product_name.toLowerCase().includes(q)
     );
 
     const paginatedProducts = filteredProducts.slice((productsPage - 1) * pageSize, productsPage * pageSize);
@@ -618,6 +648,14 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>PRODUCT VELOCITY & SALES ({filteredProducts.length})</Text>
         </View>
+
+        {q !== '' && filteredProducts.length === 0 && (
+          <View style={styles.emptySearchBox}>
+            <Ionicons name="search-outline" size={32} color="#A09489" />
+            <Text style={styles.emptySearchText}>No matching records found</Text>
+          </View>
+        )}
+
         {paginatedProducts.map(p => (
           <View key={p.product_name} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -655,11 +693,13 @@ export default function ReportsScreen({ navigation }: any) {
 
   const renderCustomers = () => {
     if (!customersData) return null;
+    const q = subSearchQuery.trim().toLowerCase();
 
     const filteredCustomers = customersData.customers.filter(
       c =>
-        c.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
-        c.customer_phone.toLowerCase().includes(subSearchQuery.toLowerCase())
+        c.customer_name.toLowerCase().includes(q) ||
+        (c.customer_phone && c.customer_phone.toLowerCase().includes(q)) ||
+        (c.address && c.address.toLowerCase().includes(q))
     );
 
     const paginatedCustomers = filteredCustomers.slice((customersPage - 1) * pageSize, customersPage * pageSize);
@@ -669,6 +709,14 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>CUSTOMER RANKING ({filteredCustomers.length})</Text>
         </View>
+
+        {q !== '' && filteredCustomers.length === 0 && (
+          <View style={styles.emptySearchBox}>
+            <Ionicons name="search-outline" size={32} color="#A09489" />
+            <Text style={styles.emptySearchText}>No matching records found</Text>
+          </View>
+        )}
+
         {paginatedCustomers.map(c => (
           <View key={c.customer_id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -699,15 +747,18 @@ export default function ReportsScreen({ navigation }: any) {
   const renderDeliveries = () => {
     if (!deliveriesData) return null;
     const { summary, partners, discrepancies } = deliveriesData;
+    const q = subSearchQuery.trim().toLowerCase();
 
     const filteredPartners = partners.filter(prt =>
-      prt.partner_name.toLowerCase().includes(subSearchQuery.toLowerCase())
+      prt.partner_name.toLowerCase().includes(q)
     );
 
     const filteredDiscrepancies = discrepancies.filter(
       d =>
-        d.product_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
-        d.partner_name.toLowerCase().includes(subSearchQuery.toLowerCase())
+        d.product_name.toLowerCase().includes(q) ||
+        d.partner_name.toLowerCase().includes(q) ||
+        String(d.delivery_id).includes(q) ||
+        String(d.order_id).includes(q)
     );
 
     const paginatedPartners = filteredPartners.slice(
@@ -744,6 +795,14 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>PARTNER PERFORMANCE ({filteredPartners.length})</Text>
         </View>
+
+        {q !== '' && filteredPartners.length === 0 && (
+          <View style={styles.emptySearchBox}>
+            <Ionicons name="search-outline" size={32} color="#A09489" />
+            <Text style={styles.emptySearchText}>No matching records found</Text>
+          </View>
+        )}
+
         {paginatedPartners.map(prt => (
           <View key={prt.partner_name} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -790,7 +849,7 @@ export default function ReportsScreen({ navigation }: any) {
               currentPage={deliveriesDiscrepanciesPage}
               totalRecords={filteredDiscrepancies.length}
               pageSize={pageSize}
-          onPageSizeChange={handlePageSizeChange}
+              onPageSizeChange={handlePageSizeChange}
               onPageChange={setDeliveriesDiscrepanciesPage}
             />
           </View>
@@ -801,11 +860,12 @@ export default function ReportsScreen({ navigation }: any) {
 
   const renderDiscounts = () => {
     if (!discountsData) return null;
+    const q = subSearchQuery.trim().toLowerCase();
 
     const filteredInvoices = discountsData.invoices.filter(
       item =>
-        item.customer_name.toLowerCase().includes(subSearchQuery.toLowerCase()) ||
-        item.invoice_number.toLowerCase().includes(subSearchQuery.toLowerCase())
+        item.customer_name.toLowerCase().includes(q) ||
+        item.invoice_number.toLowerCase().includes(q)
     );
 
     const paginatedInvoices = filteredInvoices.slice((discountsPage - 1) * pageSize, discountsPage * pageSize);
@@ -835,6 +895,14 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.subListHeader}>
           <Text style={styles.boxTitle}>DISCOUNTED INVOICES ({filteredInvoices.length})</Text>
         </View>
+
+        {q !== '' && filteredInvoices.length === 0 && (
+          <View style={styles.emptySearchBox}>
+            <Ionicons name="search-outline" size={32} color="#A09489" />
+            <Text style={styles.emptySearchText}>No matching records found</Text>
+          </View>
+        )}
+
         {paginatedInvoices.map(item => (
           <View key={item.id} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -864,8 +932,15 @@ export default function ReportsScreen({ navigation }: any) {
     if (!pnlData) return null;
     const { summary, expense_categories } = pnlData;
     const isCostPartial = summary.cost_coverage_status !== 'complete';
+    const q = subSearchQuery.trim().toLowerCase();
 
-    const paginatedExpenses = expense_categories.slice(
+    const filteredExpenses = expense_categories.filter(
+      cat =>
+        cat.category_display.toLowerCase().includes(q) ||
+        cat.category.toLowerCase().includes(q)
+    );
+
+    const paginatedExpenses = filteredExpenses.slice(
       (pnlExpensesPage - 1) * pageSize,
       pnlExpensesPage * pageSize
     );
@@ -912,8 +987,16 @@ export default function ReportsScreen({ navigation }: any) {
 
         {/* Operating Expenses Breakdown */}
         <View style={styles.subListHeader}>
-          <Text style={styles.boxTitle}>OPERATING EXPENSES BREAKDOWN ({expense_categories.length})</Text>
+          <Text style={styles.boxTitle}>OPERATING EXPENSES BREAKDOWN ({filteredExpenses.length})</Text>
         </View>
+
+        {q !== '' && filteredExpenses.length === 0 && (
+          <View style={styles.emptySearchBox}>
+            <Ionicons name="search-outline" size={32} color="#A09489" />
+            <Text style={styles.emptySearchText}>No matching records found</Text>
+          </View>
+        )}
+
         {paginatedExpenses.map(cat => (
           <View key={cat.category} style={styles.itemCard}>
             <View style={styles.itemCardLeft}>
@@ -928,7 +1011,7 @@ export default function ReportsScreen({ navigation }: any) {
 
         <ReportsPagination
           currentPage={pnlExpensesPage}
-          totalRecords={expense_categories.length}
+          totalRecords={filteredExpenses.length}
           pageSize={pageSize}
           onPageSizeChange={handlePageSizeChange}
           onPageChange={setPnlExpensesPage}
@@ -1106,7 +1189,7 @@ export default function ReportsScreen({ navigation }: any) {
       )}
 
       {/* Search Input for items within sub-report */}
-      {activeTab !== 'overview' && activeTab !== 'profit-loss' && (
+      {activeTab !== 'overview' && (
         <View style={styles.searchBox}>
           <Ionicons name="search-outline" size={16} color="#8A7E75" style={{ marginRight: 8 }} />
           <TextInput
@@ -1667,6 +1750,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12.5,
     fontWeight: '700',
+  },
+  emptySearchBox: {
+    paddingVertical: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    marginVertical: 12,
+  },
+  emptySearchText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#8A7E75',
+    marginTop: 8,
   },
   modalOverlay: {
     flex: 1,
