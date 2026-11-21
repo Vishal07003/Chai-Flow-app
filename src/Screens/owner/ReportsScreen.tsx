@@ -18,6 +18,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import Header from '../../components/common/Header';
 import { ReportsExportDialog } from '../../components/ReportsExportDialog';
 import { ReportsPagination } from '../../components/ReportsPagination';
+import CalendarPickerModal from '../../components/common/CalendarPickerModal';
 import {
   reportsService,
   ReportType,
@@ -72,6 +73,16 @@ export default function ReportsScreen({ navigation }: any) {
   const [exportPeriod, setExportPeriod] = useState<DateFilterType>('last_30_days');
   const [exportCustomFrom, setExportCustomFrom] = useState('');
   const [exportCustomTo, setExportCustomTo] = useState('');
+  const [fromCalendarVisible, setFromCalendarVisible] = useState(false);
+  const [toCalendarVisible, setToCalendarVisible] = useState(false);
+
+  // Helper date formatter: YYYY-MM-DD -> DD MMM YYYY
+  const formatDateDisplay = (isoStr: string) => {
+    if (!isoStr || !/^\d{4}-\d{2}-\d{2}$/.test(isoStr)) return 'Select date';
+    const [y, m, d] = isoStr.split('-').map(Number);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${String(d).padStart(2, '0')} ${months[m - 1]} ${y}`;
+  };
 
   // Data states
   const [loading, setLoading] = useState(false);
@@ -220,6 +231,21 @@ export default function ReportsScreen({ navigation }: any) {
       from_date: exportPeriod === 'custom' ? (exportCustomFrom || customFrom) : undefined,
       to_date: exportPeriod === 'custom' ? (exportCustomTo || customTo) : undefined,
     };
+
+    if (exportParams.filter_type === 'custom') {
+      if (!exportParams.from_date) {
+        Alert.alert('Validation Error', 'Please select a From Date.');
+        return;
+      }
+      if (!exportParams.to_date) {
+        Alert.alert('Validation Error', 'Please select a To Date.');
+        return;
+      }
+      if (exportParams.from_date > exportParams.to_date) {
+        Alert.alert('Validation Error', 'From Date cannot be later than To Date.');
+        return;
+      }
+    }
 
     try {
       const res = await reportsService.exportReport(format, activeTab, exportParams);
@@ -967,7 +993,10 @@ export default function ReportsScreen({ navigation }: any) {
         <TouchableOpacity
           style={styles.headerExportBtn}
           onPress={() => {
-            setExportPeriod(filterType);
+            const initialExportPeriod = (filterType === 'last_30_days' || filterType === 'last_3_months' || filterType === 'custom')
+              ? filterType
+              : 'last_30_days';
+            setExportPeriod(initialExportPeriod);
             setExportCustomFrom(customFrom);
             setExportCustomTo(customTo);
             setExportModalVisible(true);
@@ -1213,12 +1242,11 @@ export default function ReportsScreen({ navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            {/* Export Period Selector Pills */}
+            {/* Export Period Selector Pills - Exactly 3 Options */}
             <Text style={styles.exportSectionLabel}>REPORTING PERIOD</Text>
             <View style={styles.exportPillsContainer}>
               {[
                 { id: 'last_30_days', label: 'Last 30 Days' },
-                { id: 'last_month', label: 'Last Month' },
                 { id: 'last_3_months', label: 'Last 3 Months' },
                 { id: 'custom', label: 'Custom' },
               ].map(p => {
@@ -1238,28 +1266,47 @@ export default function ReportsScreen({ navigation }: any) {
               })}
             </View>
 
-            {/* Custom inputs if exportPeriod is custom */}
+            {/* Custom inputs with Tap-to-Open Calendar Pickers */}
             {exportPeriod === 'custom' && (
               <View style={styles.exportCustomInputs}>
                 <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.inputLabel}>From (YYYY-MM-DD)</Text>
-                  <TextInput
-                    style={styles.dateInput}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#A09489"
-                    value={exportCustomFrom}
-                    onChangeText={setExportCustomFrom}
-                  />
+                  <Text style={styles.inputLabel}>From Date</Text>
+                  <TouchableOpacity
+                    style={styles.datePickerInput}
+                    onPress={() => setFromCalendarVisible(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="calendar-outline" size={16} color="#8C331A" style={{ marginRight: 6 }} />
+                    <Text
+                      style={[
+                        styles.datePickerInputText,
+                        !exportCustomFrom && styles.datePickerPlaceholder,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {formatDateDisplay(exportCustomFrom)}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
+
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>To (YYYY-MM-DD)</Text>
-                  <TextInput
-                    style={styles.dateInput}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#A09489"
-                    value={exportCustomTo}
-                    onChangeText={setExportCustomTo}
-                  />
+                  <Text style={styles.inputLabel}>To Date</Text>
+                  <TouchableOpacity
+                    style={styles.datePickerInput}
+                    onPress={() => setToCalendarVisible(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="calendar-outline" size={16} color="#8C331A" style={{ marginRight: 6 }} />
+                    <Text
+                      style={[
+                        styles.datePickerInputText,
+                        !exportCustomTo && styles.datePickerPlaceholder,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {formatDateDisplay(exportCustomTo)}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             )}
@@ -1294,6 +1341,33 @@ export default function ReportsScreen({ navigation }: any) {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* From Date Calendar Picker Modal */}
+      <CalendarPickerModal
+        visible={fromCalendarVisible}
+        title="Select From Date"
+        initialDate={exportCustomFrom || undefined}
+        maxDate={exportCustomTo || undefined}
+        onClose={() => setFromCalendarVisible(false)}
+        onSelectDate={(selectedIso) => {
+          setExportCustomFrom(selectedIso);
+          if (exportCustomTo && selectedIso > exportCustomTo) {
+            setExportCustomTo(selectedIso);
+          }
+        }}
+      />
+
+      {/* To Date Calendar Picker Modal */}
+      <CalendarPickerModal
+        visible={toCalendarVisible}
+        title="Select To Date"
+        initialDate={exportCustomTo || undefined}
+        minDate={exportCustomFrom || undefined}
+        onClose={() => setToCalendarVisible(false)}
+        onSelectDate={(selectedIso) => {
+          setExportCustomTo(selectedIso);
+        }}
+      />
 
       {/* Custom Date Modal */}
       <Modal visible={customModalVisible} transparent animationType="fade">
@@ -1839,6 +1913,25 @@ const styles = StyleSheet.create({
   exportCustomInputs: {
     flexDirection: 'row',
     marginTop: 10,
+  },
+  datePickerInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#E8E1D9',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 42,
+  },
+  datePickerInputText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#2C201A',
+  },
+  datePickerPlaceholder: {
+    color: '#A09489',
+    fontWeight: '500',
   },
   exportModalActions: {
     gap: 10,
