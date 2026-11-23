@@ -4,17 +4,22 @@ import {
   View,
   Text,
   FlatList,
+  ScrollView,
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
   Modal,
   TextInput,
-  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableWithoutFeedback,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import { EmptyState } from '../../components/common';
+import ConfirmDialog from '../../components/ConfirmDialog';
 import deliveryService, { BackendDelivery } from '../../services/delivery.service';
 import locationTrackingService from '../../services/location.service';
 import offlineDeliveryService, { QueuedDeliveryAction, SyncStatus } from '../../services/offlineDelivery.service';
@@ -35,6 +40,24 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
   const [deliveredQuantities, setDeliveredQuantities] = useState<{ [productId: number]: string }>({});
   const [discrepancyNotes, setDiscrepancyNotes] = useState<string>('');
   const [actionInProgress, setActionInProgress] = useState<boolean>(false);
+
+  // Custom Reset Quantities Confirmation Dialog
+  const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
+
+  // Custom Info / Status Confirmation Dialog
+  const [customDialog, setCustomDialog] = useState<{
+    visible: boolean;
+    title: string;
+    description: string;
+    type?: 'danger' | 'warning' | 'info' | 'success';
+    confirmLabel?: string;
+    cancelLabel?: string;
+    onConfirm?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    description: '',
+  });
 
   const fetchDeliveries = useCallback(async () => {
     try {
@@ -103,7 +126,12 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
       }
 
       fetchDeliveries();
-      Alert.alert('Status Updated', `Delivery is now '${targetStatus.toUpperCase()}'.`);
+      setCustomDialog({
+        visible: true,
+        title: 'Status Updated',
+        description: `Delivery #${delivery.order || delivery.id} is now '${targetStatus.toUpperCase()}'.`,
+        type: 'success',
+      });
     } catch (err: any) {
       console.log(`Direct status transition failed (${err?.message}). Enqueuing offline action.`);
       // Enqueue offline action safely
@@ -125,12 +153,19 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
           prev.map(d => (d.id === delivery.id ? { ...d, status: targetStatus } : d))
         );
 
-        Alert.alert(
-          'Offline Mode: Action Saved',
-          `No network connection. '${targetStatus.toUpperCase()}' has been saved locally and will synchronize automatically when online.`
-        );
+        setCustomDialog({
+          visible: true,
+          title: 'Offline Mode: Action Saved',
+          description: `No network connection. '${targetStatus.toUpperCase()}' has been saved locally and will synchronize automatically when online.`,
+          type: 'info',
+        });
       } else {
-        Alert.alert('Transition Error', err?.message || 'Failed to update status.');
+        setCustomDialog({
+          visible: true,
+          title: 'Transition Error',
+          description: err?.message || 'Failed to update status.',
+          type: 'danger',
+        });
       }
     } finally {
       setActionInProgress(false);
@@ -183,7 +218,8 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
     });
   };
 
-  const handleResetQuantities = () => {
+  const executeResetQuantities = () => {
+    setShowResetConfirm(false);
     if (!selectedDelivery?.order_details?.items) return;
     const resetMap: { [productId: number]: string } = {};
     selectedDelivery.order_details.items.forEach(it => {
@@ -193,6 +229,21 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
     setDiscrepancyNotes('');
   };
 
+  const handleResetQuantities = () => {
+    const items = selectedDelivery?.order_details?.items || [];
+    const hasEdits = items.some(it => {
+      const raw = deliveredQuantities[it.product];
+      const parsed = parseQtyValue(raw, it.quantity);
+      return parsed !== it.quantity;
+    });
+
+    if (hasEdits) {
+      setShowResetConfirm(true);
+    } else {
+      executeResetQuantities();
+    }
+  };
+
   const handleConfirmDelivered = async () => {
     if (!selectedDelivery) return;
 
@@ -200,7 +251,12 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
     for (const it of items) {
       const raw = deliveredQuantities[it.product];
       if (raw !== undefined && raw.trim() === '') {
-        Alert.alert('Incomplete Quantities', `Please enter a valid delivered quantity for "${it.product_details?.name || 'Item'}".`);
+        setCustomDialog({
+          visible: true,
+          title: 'Incomplete Quantities',
+          description: `Please enter a valid delivered quantity for "${it.product_details?.name || 'Item'}".`,
+          type: 'warning',
+        });
         return;
       }
     }
@@ -228,9 +284,19 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
 
       setRecordModalVisible(false);
       fetchDeliveries();
-      Alert.alert('Delivery Completed', 'Actual delivered quantities recorded. Tracking stopped.');
+      setCustomDialog({
+        visible: true,
+        title: 'Delivery Completed',
+        description: 'Actual delivered quantities recorded and tracking stopped.',
+        type: 'success',
+      });
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to complete delivery.');
+      setCustomDialog({
+        visible: true,
+        title: 'Submission Error',
+        description: err?.message || 'Failed to complete delivery.',
+        type: 'danger',
+      });
     } finally {
       setActionInProgress(false);
     }
@@ -277,16 +343,16 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
                       pendingAction.syncStatus === 'SYNCING'
                         ? 'sync-outline'
                         : pendingAction.syncStatus === 'NEEDS_REVIEW'
-                        ? 'alert-circle-outline'
-                        : 'cloud-offline-outline'
+                          ? 'alert-circle-outline'
+                          : 'cloud-offline-outline'
                     }
                     size={11}
                     color={
                       pendingAction.syncStatus === 'SYNCING'
                         ? '#2563EB'
                         : pendingAction.syncStatus === 'NEEDS_REVIEW'
-                        ? '#D97706'
-                        : '#DC2626'
+                          ? '#D97706'
+                          : '#DC2626'
                     }
                   />
                   <Text
@@ -451,103 +517,152 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
         />
       )}
 
-      {/* Record Actual Delivered Quantities Modal */}
+      {/* Record Actual Delivered Quantities Modal (Keyboard-Aware) */}
       <Modal visible={recordModalVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Confirm Delivered Quantities</Text>
-              <TouchableOpacity onPress={() => setRecordModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#2A2421" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalSubtitle}>
-              Record the actual cups / flasks delivered for owner invoice verification.
-            </Text>
-
-            {selectedDelivery?.order_details?.items?.map(it => {
-              const orderedQty = it.quantity;
-              const rawVal = deliveredQuantities[it.product];
-              const deliveredQty = parseQtyValue(rawVal, orderedQty);
-              const diff = deliveredQty - orderedQty;
-              const displayVal = rawVal !== undefined ? rawVal : String(orderedQty);
-
-              return (
-                <View key={it.id} style={styles.qtyRow}>
-                  <View style={{ flex: 1, paddingRight: 8 }}>
-                    <Text style={styles.itemTitle}>{it.product_details?.name || 'Item'}</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                      <Text style={styles.itemSub}>Ordered: {orderedQty}</Text>
-                      {diff < 0 ? (
-                        <View style={styles.diffPillPending}>
-                          <Text style={styles.diffPillTextPending}>Pending: {Math.abs(diff)}</Text>
-                        </View>
-                      ) : diff > 0 ? (
-                        <View style={styles.diffPillExtra}>
-                          <Text style={styles.diffPillTextExtra}>Extra: +{diff}</Text>
-                        </View>
-                      ) : (
-                        <View style={styles.diffPillExact}>
-                          <Text style={styles.diffPillTextExact}>Exact Match</Text>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                  <View style={styles.stepper}>
-                    <TouchableOpacity style={styles.stepBtn} onPress={() => handleQtyAdjust(it.product, -1)}>
-                      <Text style={styles.stepBtnText}>−</Text>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.modalOverlay}>
+              <TouchableWithoutFeedback>
+                <View style={styles.modalSheet}>
+                  <View style={styles.modalHeader}>
+                    <Text style={styles.modalTitle}>Confirm Delivered Quantities</Text>
+                    <TouchableOpacity onPress={() => setRecordModalVisible(false)}>
+                      <Ionicons name="close" size={24} color="#2A2421" />
                     </TouchableOpacity>
-                    <TextInput
-                      style={styles.stepInput}
-                      value={displayVal}
-                      onChangeText={text => handleManualQtyChange(it.product, text)}
-                      onBlur={() => handleQtyBlur(it.product, orderedQty)}
-                      keyboardType="number-pad"
-                      maxLength={5}
-                      selectTextOnFocus
-                      editable={!actionInProgress}
-                    />
-                    <TouchableOpacity style={styles.stepBtn} onPress={() => handleQtyAdjust(it.product, 1)}>
-                      <Text style={styles.stepBtnText}>+</Text>
+                  </View>
+                  <Text style={styles.modalSubtitle}>
+                    Record the actual cups / flasks delivered for owner invoice verification.
+                  </Text>
+
+                  <ScrollView
+                    style={{ maxHeight: 300 }}
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {selectedDelivery?.order_details?.items?.map(it => {
+                      const orderedQty = it.quantity;
+                      const rawVal = deliveredQuantities[it.product];
+                      const deliveredQty = parseQtyValue(rawVal, orderedQty);
+                      const diff = deliveredQty - orderedQty;
+                      const displayVal = rawVal !== undefined ? rawVal : String(orderedQty);
+
+                      return (
+                        <View key={it.id} style={styles.qtyRow}>
+                          <View style={{ flex: 1, paddingRight: 8 }}>
+                            <Text style={styles.itemTitle}>{it.product_details?.name || 'Item'}</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                              <Text style={styles.itemSub}>Ordered: {orderedQty}</Text>
+                              {diff < 0 ? (
+                                <View style={styles.diffPillPending}>
+                                  <Text style={styles.diffPillTextPending}>Pending: {Math.abs(diff)}</Text>
+                                </View>
+                              ) : diff > 0 ? (
+                                <View style={styles.diffPillExtra}>
+                                  <Text style={styles.diffPillTextExtra}>Extra: +{diff}</Text>
+                                </View>
+                              ) : (
+                                <View style={styles.diffPillExact}>
+                                  <Text style={styles.diffPillTextExact}>Exact Match</Text>
+                                </View>
+                              )}
+                            </View>
+                          </View>
+                          <View style={styles.stepper}>
+                            <TouchableOpacity style={styles.stepBtn} onPress={() => handleQtyAdjust(it.product, -1)}>
+                              <Text style={styles.stepBtnText}>−</Text>
+                            </TouchableOpacity>
+                            <TextInput
+                              style={styles.stepInput}
+                              value={displayVal}
+                              onChangeText={text => handleManualQtyChange(it.product, text)}
+                              onBlur={() => handleQtyBlur(it.product, orderedQty)}
+                              keyboardType="number-pad"
+                              maxLength={5}
+                              selectTextOnFocus
+                              returnKeyType="done"
+                              onSubmitEditing={Keyboard.dismiss}
+                              editable={!actionInProgress}
+                            />
+                            <TouchableOpacity style={styles.stepBtn} onPress={() => handleQtyAdjust(it.product, 1)}>
+                              <Text style={styles.stepBtnText}>+</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+
+                  <TextInput
+                    style={styles.notesInput}
+                    placeholder="Discrepancy notes (e.g. 2 flasks spilled / client refused)"
+                    placeholderTextColor="#8E8278"
+                    value={discrepancyNotes}
+                    onChangeText={setDiscrepancyNotes}
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
+                  />
+
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
+                    <TouchableOpacity
+                      style={styles.resetBtn}
+                      onPress={handleResetQuantities}
+                      disabled={actionInProgress}
+                    >
+                      <Ionicons name="refresh-outline" size={16} color="#DC2626" style={{ marginRight: 4 }} />
+                      <Text style={styles.resetBtnText}>Reset</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.confirmDeliverBtn, { flex: 1, marginTop: 0 }]}
+                      onPress={handleConfirmDelivered}
+                      disabled={actionInProgress}
+                    >
+                      {actionInProgress ? (
+                        <ActivityIndicator color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.confirmDeliverBtnText}>Confirm Delivery</Text>
+                      )}
                     </TouchableOpacity>
                   </View>
                 </View>
-              );
-            })}
-
-            <TextInput
-              style={styles.notesInput}
-              placeholder="Discrepancy notes (e.g. 2 flasks spilled / client refused)"
-              placeholderTextColor="#8E8278"
-              value={discrepancyNotes}
-              onChangeText={setDiscrepancyNotes}
-            />
-
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
-              <TouchableOpacity
-                style={styles.resetBtn}
-                onPress={handleResetQuantities}
-                disabled={actionInProgress}
-              >
-                <Ionicons name="refresh-outline" size={16} color="#DC2626" style={{ marginRight: 4 }} />
-                <Text style={styles.resetBtnText}>Reset</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.confirmDeliverBtn, { flex: 1, marginTop: 0 }]}
-                onPress={handleConfirmDelivered}
-                disabled={actionInProgress}
-              >
-                {actionInProgress ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.confirmDeliverBtnText}>Confirm Delivery</Text>
-                )}
-              </TouchableOpacity>
+              </TouchableWithoutFeedback>
             </View>
-          </View>
-        </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </Modal>
+
+      {/* Shared Custom Reset Confirmation Center Popup */}
+      <ConfirmDialog
+        visible={showResetConfirm}
+        title="Reset Quantities?"
+        description="This will restore all delivered quantities to match the original ordered amounts."
+        confirmLabel="Reset"
+        cancelLabel="Cancel"
+        type="danger"
+        icon="refresh-outline"
+        onConfirm={executeResetQuantities}
+        onCancel={() => setShowResetConfirm(false)}
+      />
+
+      {/* Shared Custom Dialog for Feedback & Status Alerts */}
+      <ConfirmDialog
+        visible={customDialog.visible}
+        title={customDialog.title}
+        description={customDialog.description}
+        confirmLabel={customDialog.confirmLabel || 'OK'}
+        cancelLabel={customDialog.cancelLabel}
+        type={customDialog.type || 'info'}
+        onConfirm={() => {
+          if (customDialog.onConfirm) {
+            customDialog.onConfirm();
+          }
+          setCustomDialog(prev => ({ ...prev, visible: false }));
+        }}
+        onCancel={() => setCustomDialog(prev => ({ ...prev, visible: false }))}
+      />
     </SafeAreaView>
   );
 }

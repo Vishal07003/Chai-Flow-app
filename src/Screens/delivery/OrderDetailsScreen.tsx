@@ -8,12 +8,16 @@ import {
   Linking,
   ActivityIndicator,
   Modal,
-  Alert,
   TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableWithoutFeedback,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
+import ConfirmDialog from '../../components/ConfirmDialog';
 import deliveryService, { BackendDelivery } from '../../services/delivery.service';
 import locationTrackingService from '../../services/location.service';
 import offlineDeliveryService, { QueuedDeliveryAction, SyncStatus } from '../../services/offlineDelivery.service';
@@ -36,6 +40,21 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
   // Store values as string representation to support in-progress typing / empty inputs
   const [deliveredQuantities, setDeliveredQuantities] = useState<{ [productId: number]: string }>({});
   const [discrepancyNotes, setDiscrepancyNotes] = useState<string>('');
+
+  // Custom Reset Confirmation Modal State
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  // Custom Incomplete / Informational Dialog State
+  const [infoDialog, setInfoDialog] = useState<{
+    visible: boolean;
+    title: string;
+    description: string;
+    type?: 'warning' | 'danger' | 'info';
+  }>({
+    visible: false,
+    title: '',
+    description: '',
+  });
 
   const fetchDeliveryDetail = useCallback(async () => {
     if (!deliveryIdParam) {
@@ -110,21 +129,41 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
   const handleCall = () => {
     if (phone) {
       Linking.openURL(`tel:${phone}`).catch(() => {
-        Alert.alert('Error', 'Unable to initiate call.');
+        setInfoDialog({
+          visible: true,
+          title: 'Call Failed',
+          description: 'Unable to initiate call from this device.',
+          type: 'warning',
+        });
       });
     } else {
-      Alert.alert('No Phone', 'No contact phone number provided for this customer.');
+      setInfoDialog({
+        visible: true,
+        title: 'No Phone Provided',
+        description: 'No contact phone number is available for this customer.',
+        type: 'info',
+      });
     }
   };
 
   const handleNavigate = () => {
     if (!address) {
-      Alert.alert('No Address', 'No destination address available.');
+      setInfoDialog({
+        visible: true,
+        title: 'No Address Provided',
+        description: 'No destination delivery address is available.',
+        type: 'info',
+      });
       return;
     }
     const query = encodeURIComponent(address);
     Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`).catch(() => {
-      Alert.alert('Error', 'Unable to open maps application.');
+      setInfoDialog({
+        visible: true,
+        title: 'Map Error',
+        description: 'Unable to open maps application.',
+        type: 'warning',
+      });
     });
   };
 
@@ -188,28 +227,23 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
     });
   }, [items, deliveredQuantities]);
 
-  // Reset all edited quantities to original ordered quantities
-  const handleResetQuantities = () => {
-    const doReset = () => {
-      const resetMap: { [productId: number]: string } = {};
-      items.forEach(it => {
-        resetMap[it.product] = String(it.quantity);
-      });
-      setDeliveredQuantities(resetMap);
-      setDiscrepancyNotes('');
-    };
+  // Execute reset action
+  const executeResetQuantities = () => {
+    setShowResetConfirm(false);
+    const resetMap: { [productId: number]: string } = {};
+    items.forEach(it => {
+      resetMap[it.product] = String(it.quantity);
+    });
+    setDeliveredQuantities(resetMap);
+    setDiscrepancyNotes('');
+  };
 
+  // Trigger reset confirmation modal if any edits exist
+  const handleResetQuantities = () => {
     if (hasEdits) {
-      Alert.alert(
-        'Reset Quantities?',
-        'This will restore all delivered quantities to match the original ordered amounts.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Reset', style: 'destructive', onPress: doReset },
-        ]
-      );
+      setShowResetConfirm(true);
     } else {
-      doReset();
+      executeResetQuantities();
     }
   };
 
@@ -221,7 +255,12 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
     for (const it of items) {
       const raw = deliveredQuantities[it.product];
       if (raw !== undefined && raw.trim() === '') {
-        Alert.alert('Incomplete Quantities', `Please enter a valid delivered quantity for "${it.product_details?.name || 'Item'}".`);
+        setInfoDialog({
+          visible: true,
+          title: 'Incomplete Quantities',
+          description: `Please enter a valid delivered quantity for "${it.product_details?.name || 'Item'}".`,
+          type: 'warning',
+        });
         return;
       }
     }
@@ -286,10 +325,13 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
       setIsReconcileModalVisible(false);
       setToastMessage('Saved Offline: Will Sync Automatically');
 
-      Alert.alert(
-        'Offline: Delivery Recorded',
-        'No network connection. Your delivered quantities and completion record have been saved locally. The delivery shows "Pending Sync" and will confirm with the server when connectivity returns.'
-      );
+      setInfoDialog({
+        visible: true,
+        title: 'Offline: Delivery Recorded',
+        description:
+          'No network connection. Your delivered quantities and completion record have been saved locally. The delivery shows "Pending Sync" and will confirm with the server when connectivity returns.',
+        type: 'info',
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -579,7 +621,7 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
         </ScrollView>
       )}
 
-      {/* Quantity Reconciliation Bottom Sheet Modal */}
+      {/* Quantity Reconciliation Bottom Sheet Modal (Keyboard-Aware) */}
       <Modal
         visible={isReconcileModalVisible}
         transparent={true}
@@ -588,139 +630,180 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
           if (!isSubmitting) setIsReconcileModalVisible(false);
         }}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            {/* Modal Header */}
-            <View style={styles.modalHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>Confirm Delivered Quantities</Text>
-                <Text style={styles.modalSubtitle}>
-                  Adjust actual units handed over for customer & invoice verification.
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setIsReconcileModalVisible(false)}
-                disabled={isSubmitting}
-                style={styles.closeModalBtn}
-              >
-                <Ionicons name="close" size={24} color="#2A2421" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Stepper List for each Item with Editable Numeric Input */}
-            <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={false}>
-              {items.map(it => {
-                const orderedQty = it.quantity;
-                const rawVal = deliveredQuantities[it.product];
-                const deliveredQty = parseQtyValue(rawVal, orderedQty);
-                const diff = deliveredQty - orderedQty;
-                const displayVal = rawVal !== undefined ? rawVal : String(orderedQty);
-
-                return (
-                  <View key={it.id} style={styles.qtyRow}>
-                    <View style={{ flex: 1, paddingRight: 8 }}>
-                      <Text style={styles.itemTitle} numberOfLines={1}>
-                        {it.product_details?.name || 'Item'}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.modalOverlay}>
+              <TouchableWithoutFeedback>
+                <View style={styles.modalSheet}>
+                  {/* Modal Header */}
+                  <View style={styles.modalHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.modalTitle}>Confirm Delivered Quantities</Text>
+                      <Text style={styles.modalSubtitle}>
+                        Adjust actual units handed over for customer & invoice verification.
                       </Text>
-                      <View style={styles.qtyMetaRow}>
-                        <Text style={styles.itemSub}>Ordered: {orderedQty}</Text>
-                        {diff < 0 ? (
-                          <View style={styles.diffPillPending}>
-                            <Text style={styles.diffPillTextPending}>
-                              Pending: {Math.abs(diff)}
-                            </Text>
-                          </View>
-                        ) : diff > 0 ? (
-                          <View style={styles.diffPillExtra}>
-                            <Text style={styles.diffPillTextExtra}>
-                              Extra: +{diff}
-                            </Text>
-                          </View>
-                        ) : (
-                          <View style={styles.diffPillExact}>
-                            <Text style={styles.diffPillTextExact}>Exact Match</Text>
-                          </View>
-                        )}
-                      </View>
                     </View>
-
-                    {/* Stepper Controls with Centered Editable TextInput */}
-                    <View style={styles.stepper}>
-                      <TouchableOpacity
-                        style={styles.stepBtn}
-                        onPress={() => handleQtyAdjust(it.product, -1)}
-                        disabled={isSubmitting}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.stepBtnText}>−</Text>
-                      </TouchableOpacity>
-
-                      <TextInput
-                        style={styles.stepInput}
-                        value={displayVal}
-                        onChangeText={text => handleManualQtyChange(it.product, text)}
-                        onBlur={() => handleQtyBlur(it.product, orderedQty)}
-                        keyboardType="number-pad"
-                        maxLength={5}
-                        selectTextOnFocus
-                        editable={!isSubmitting}
-                      />
-
-                      <TouchableOpacity
-                        style={styles.stepBtn}
-                        onPress={() => handleQtyAdjust(it.product, 1)}
-                        disabled={isSubmitting}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.stepBtnText}>+</Text>
-                      </TouchableOpacity>
-                    </View>
+                    <TouchableOpacity
+                      onPress={() => setIsReconcileModalVisible(false)}
+                      disabled={isSubmitting}
+                      style={styles.closeModalBtn}
+                    >
+                      <Ionicons name="close" size={24} color="#2A2421" />
+                    </TouchableOpacity>
                   </View>
-                );
-              })}
-            </ScrollView>
 
-            {/* Discrepancy Notes Input */}
-            <TextInput
-              style={styles.notesInput}
-              placeholder="Discrepancy / delivery notes (optional)"
-              placeholderTextColor="#8E8278"
-              value={discrepancyNotes}
-              onChangeText={setDiscrepancyNotes}
-              editable={!isSubmitting}
-            />
+                  {/* Stepper List for each Item with Editable Numeric Input */}
+                  <ScrollView
+                    style={{ maxHeight: 320 }}
+                    contentContainerStyle={{ paddingBottom: 10 }}
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {items.map(it => {
+                      const orderedQty = it.quantity;
+                      const rawVal = deliveredQuantities[it.product];
+                      const deliveredQty = parseQtyValue(rawVal, orderedQty);
+                      const diff = deliveredQty - orderedQty;
+                      const displayVal = rawVal !== undefined ? rawVal : String(orderedQty);
 
-            {/* Action Row: Reset Button & Confirm Delivery Button */}
-            <View style={styles.modalActionRow}>
-              <TouchableOpacity
-                style={styles.resetBtn}
-                onPress={handleResetQuantities}
-                disabled={isSubmitting}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="refresh-outline" size={16} color="#DC2626" style={{ marginRight: 4 }} />
-                <Text style={styles.resetBtnText}>Reset</Text>
-              </TouchableOpacity>
+                      return (
+                        <View key={it.id} style={styles.qtyRow}>
+                          <View style={{ flex: 1, paddingRight: 8 }}>
+                            <Text style={styles.itemTitle} numberOfLines={1}>
+                              {it.product_details?.name || 'Item'}
+                            </Text>
+                            <View style={styles.qtyMetaRow}>
+                              <Text style={styles.itemSub}>Ordered: {orderedQty}</Text>
+                              {diff < 0 ? (
+                                <View style={styles.diffPillPending}>
+                                  <Text style={styles.diffPillTextPending}>
+                                    Pending: {Math.abs(diff)}
+                                  </Text>
+                                </View>
+                              ) : diff > 0 ? (
+                                <View style={styles.diffPillExtra}>
+                                  <Text style={styles.diffPillTextExtra}>
+                                    Extra: +{diff}
+                                  </Text>
+                                </View>
+                              ) : (
+                                <View style={styles.diffPillExact}>
+                                  <Text style={styles.diffPillTextExact}>Exact Match</Text>
+                                </View>
+                              )}
+                            </View>
+                          </View>
 
-              <TouchableOpacity
-                style={[styles.confirmDeliverBtn, isSubmitting && styles.deliverBtnDisabled]}
-                onPress={handleConfirmDelivery}
-                disabled={isSubmitting}
-                activeOpacity={0.85}
-              >
-                {isSubmitting ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
-                    <Text style={styles.confirmDeliverBtnText}>Submitting...</Text>
+                          {/* Stepper Controls with Centered Editable TextInput */}
+                          <View style={styles.stepper}>
+                            <TouchableOpacity
+                              style={styles.stepBtn}
+                              onPress={() => handleQtyAdjust(it.product, -1)}
+                              disabled={isSubmitting}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.stepBtnText}>−</Text>
+                            </TouchableOpacity>
+
+                            <TextInput
+                              style={styles.stepInput}
+                              value={displayVal}
+                              onChangeText={text => handleManualQtyChange(it.product, text)}
+                              onBlur={() => handleQtyBlur(it.product, orderedQty)}
+                              keyboardType="number-pad"
+                              maxLength={5}
+                              selectTextOnFocus
+                              returnKeyType="done"
+                              onSubmitEditing={Keyboard.dismiss}
+                              editable={!isSubmitting}
+                            />
+
+                            <TouchableOpacity
+                              style={styles.stepBtn}
+                              onPress={() => handleQtyAdjust(it.product, 1)}
+                              disabled={isSubmitting}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.stepBtnText}>+</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+
+                  {/* Discrepancy Notes Input */}
+                  <TextInput
+                    style={styles.notesInput}
+                    placeholder="Discrepancy / delivery notes (optional)"
+                    placeholderTextColor="#8E8278"
+                    value={discrepancyNotes}
+                    onChangeText={setDiscrepancyNotes}
+                    editable={!isSubmitting}
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
+                  />
+
+                  {/* Action Row: Reset Button & Confirm Delivery Button */}
+                  <View style={styles.modalActionRow}>
+                    <TouchableOpacity
+                      style={styles.resetBtn}
+                      onPress={handleResetQuantities}
+                      disabled={isSubmitting}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="refresh-outline" size={16} color="#DC2626" style={{ marginRight: 4 }} />
+                      <Text style={styles.resetBtnText}>Reset</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.confirmDeliverBtn, isSubmitting && styles.deliverBtnDisabled]}
+                      onPress={handleConfirmDelivery}
+                      disabled={isSubmitting}
+                      activeOpacity={0.85}
+                    >
+                      {isSubmitting ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                          <Text style={styles.confirmDeliverBtnText}>Submitting...</Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.confirmDeliverBtnText}>Confirm Delivery</Text>
+                      )}
+                    </TouchableOpacity>
                   </View>
-                ) : (
-                  <Text style={styles.confirmDeliverBtnText}>Confirm Delivery</Text>
-                )}
-              </TouchableOpacity>
+                </View>
+              </TouchableWithoutFeedback>
             </View>
-          </View>
-        </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </Modal>
+
+      {/* Shared Custom Reset Confirmation Center Popup */}
+      <ConfirmDialog
+        visible={showResetConfirm}
+        title="Reset Quantities?"
+        description="This will restore all delivered quantities to match the original ordered amounts."
+        confirmLabel="Reset"
+        cancelLabel="Cancel"
+        type="danger"
+        icon="refresh-outline"
+        onConfirm={executeResetQuantities}
+        onCancel={() => setShowResetConfirm(false)}
+      />
+
+      {/* Shared Custom Information / Incomplete Input Dialog */}
+      <ConfirmDialog
+        visible={infoDialog.visible}
+        title={infoDialog.title}
+        description={infoDialog.description}
+        confirmLabel="OK"
+        type={infoDialog.type || 'info'}
+        onConfirm={() => setInfoDialog(prev => ({ ...prev, visible: false }))}
+      />
     </SafeAreaView>
   );
 }
