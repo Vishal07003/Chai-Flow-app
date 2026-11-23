@@ -29,7 +29,7 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
   // Discrepancy Recording & Delivery Completion Modal
   const [selectedDelivery, setSelectedDelivery] = useState<BackendDelivery | null>(null);
   const [recordModalVisible, setRecordModalVisible] = useState<boolean>(false);
-  const [deliveredQuantities, setDeliveredQuantities] = useState<{ [productId: number]: number }>({});
+  const [deliveredQuantities, setDeliveredQuantities] = useState<{ [productId: number]: string }>({});
   const [discrepancyNotes, setDiscrepancyNotes] = useState<string>('');
   const [actionInProgress, setActionInProgress] = useState<boolean>(false);
 
@@ -80,12 +80,19 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
     }
   };
 
+  const parseQtyValue = (raw: string | undefined, defaultVal: number = 0): number => {
+    if (raw === undefined || raw === null || raw.trim() === '') return defaultVal;
+    const clean = raw.replace(/[^0-9]/g, '');
+    const num = parseInt(clean, 10);
+    return isNaN(num) ? defaultVal : Math.max(0, num);
+  };
+
   const openCompletionModal = (delivery: BackendDelivery) => {
     setSelectedDelivery(delivery);
-    const initialQty: { [productId: number]: number } = {};
+    const initialQty: { [productId: number]: string } = {};
     if (delivery.order_details?.items) {
       delivery.order_details.items.forEach(it => {
-        initialQty[it.product] = it.quantity;
+        initialQty[it.product] = String(it.quantity);
       });
     }
     setDeliveredQuantities(initialQty);
@@ -95,22 +102,64 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
 
   const handleQtyAdjust = (productId: number, delta: number) => {
     setDeliveredQuantities(prev => {
-      const current = prev[productId] || 0;
-      return { ...prev, [productId]: Math.max(0, current + delta) };
+      const current = parseQtyValue(prev[productId], 0);
+      const nextVal = Math.max(0, current + delta);
+      return { ...prev, [productId]: String(nextVal) };
     });
+  };
+
+  const handleManualQtyChange = (productId: number, text: string) => {
+    const sanitized = text.replace(/[^0-9]/g, '');
+    setDeliveredQuantities(prev => ({
+      ...prev,
+      [productId]: sanitized,
+    }));
+  };
+
+  const handleQtyBlur = (productId: number, originalQty: number) => {
+    setDeliveredQuantities(prev => {
+      const val = prev[productId];
+      if (val === undefined || val === '') {
+        return { ...prev, [productId]: String(originalQty) };
+      }
+      return prev;
+    });
+  };
+
+  const handleResetQuantities = () => {
+    if (!selectedDelivery?.order_details?.items) return;
+    const resetMap: { [productId: number]: string } = {};
+    selectedDelivery.order_details.items.forEach(it => {
+      resetMap[it.product] = String(it.quantity);
+    });
+    setDeliveredQuantities(resetMap);
+    setDiscrepancyNotes('');
   };
 
   const handleConfirmDelivered = async () => {
     if (!selectedDelivery) return;
 
+    const items = selectedDelivery.order_details?.items || [];
+    for (const it of items) {
+      const raw = deliveredQuantities[it.product];
+      if (raw !== undefined && raw.trim() === '') {
+        Alert.alert('Incomplete Quantities', `Please enter a valid delivered quantity for "${it.product_details?.name || 'Item'}".`);
+        return;
+      }
+    }
+
     try {
       setActionInProgress(true);
       // 1. Record actual delivered quantities
-      const itemsPayload = Object.entries(deliveredQuantities).map(([pid, qty]) => ({
-        product_id: Number(pid),
-        delivered_quantity: qty,
-        discrepancy_notes: discrepancyNotes.trim(),
-      }));
+      const itemsPayload = items.map(it => {
+        const raw = deliveredQuantities[it.product];
+        const deliveredQty = parseQtyValue(raw, it.quantity);
+        return {
+          product_id: it.product,
+          delivered_quantity: deliveredQty,
+          discrepancy_notes: discrepancyNotes.trim(),
+        };
+      });
 
       if (itemsPayload.length > 0) {
         await deliveryService.recordDeliveredQuantities(selectedDelivery.id, itemsPayload);
@@ -130,6 +179,10 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
     }
   };
 
+  const navigateToOrderDetails = (item: BackendDelivery) => {
+    navigation.navigate('OrderDetails', { delivery: item, deliveryId: item.id, order: item.order_details });
+  };
+
   const renderDeliveryCard = ({ item }: { item: BackendDelivery }) => {
     const isAssigned = item.status === 'assigned';
     const isAccepted = item.status === 'accepted';
@@ -139,7 +192,11 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
     const isFailed = item.status === 'failed';
 
     return (
-      <View style={styles.card}>
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={0.88}
+        onPress={() => navigateToOrderDetails(item)}
+      >
         <View style={styles.cardHeader}>
           <View>
             <Text style={styles.orderTitle}>Order #{item.order}</Text>
@@ -204,11 +261,11 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
           {isOnTheWay && (
             <TouchableOpacity
               style={[styles.actionBtn, { backgroundColor: '#059669' }]}
-              onPress={() => openCompletionModal(item)}
+              onPress={() => navigateToOrderDetails(item)}
               disabled={actionInProgress}
             >
-              <Ionicons name="checkmark-done-circle" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.actionBtnText}>Deliver (Record Quantities)</Text>
+              <Ionicons name="receipt-outline" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+              <Text style={styles.actionBtnText}>View Details / Deliver</Text>
             </TouchableOpacity>
           )}
 
@@ -219,7 +276,7 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
             </View>
           )}
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -284,18 +341,47 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
             </Text>
 
             {selectedDelivery?.order_details?.items?.map(it => {
-              const qty = deliveredQuantities[it.product] ?? it.quantity;
+              const orderedQty = it.quantity;
+              const rawVal = deliveredQuantities[it.product];
+              const deliveredQty = parseQtyValue(rawVal, orderedQty);
+              const diff = deliveredQty - orderedQty;
+              const displayVal = rawVal !== undefined ? rawVal : String(orderedQty);
+
               return (
                 <View key={it.id} style={styles.qtyRow}>
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
                     <Text style={styles.itemTitle}>{it.product_details?.name || 'Item'}</Text>
-                    <Text style={styles.itemSub}>Ordered: {it.quantity} units</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                      <Text style={styles.itemSub}>Ordered: {orderedQty}</Text>
+                      {diff < 0 ? (
+                        <View style={styles.diffPillPending}>
+                          <Text style={styles.diffPillTextPending}>Pending: {Math.abs(diff)}</Text>
+                        </View>
+                      ) : diff > 0 ? (
+                        <View style={styles.diffPillExtra}>
+                          <Text style={styles.diffPillTextExtra}>Extra: +{diff}</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.diffPillExact}>
+                          <Text style={styles.diffPillTextExact}>Exact Match</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
                   <View style={styles.stepper}>
                     <TouchableOpacity style={styles.stepBtn} onPress={() => handleQtyAdjust(it.product, -1)}>
-                      <Text style={styles.stepBtnText}>-</Text>
+                      <Text style={styles.stepBtnText}>−</Text>
                     </TouchableOpacity>
-                    <Text style={styles.stepVal}>{qty}</Text>
+                    <TextInput
+                      style={styles.stepInput}
+                      value={displayVal}
+                      onChangeText={text => handleManualQtyChange(it.product, text)}
+                      onBlur={() => handleQtyBlur(it.product, orderedQty)}
+                      keyboardType="number-pad"
+                      maxLength={5}
+                      selectTextOnFocus
+                      editable={!actionInProgress}
+                    />
                     <TouchableOpacity style={styles.stepBtn} onPress={() => handleQtyAdjust(it.product, 1)}>
                       <Text style={styles.stepBtnText}>+</Text>
                     </TouchableOpacity>
@@ -312,17 +398,28 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
               onChangeText={setDiscrepancyNotes}
             />
 
-            <TouchableOpacity
-              style={styles.confirmDeliverBtn}
-              onPress={handleConfirmDelivered}
-              disabled={actionInProgress}
-            >
-              {actionInProgress ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.confirmDeliverBtnText}>Confirm Delivery & Record Actuals</Text>
-              )}
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
+              <TouchableOpacity
+                style={styles.resetBtn}
+                onPress={handleResetQuantities}
+                disabled={actionInProgress}
+              >
+                <Ionicons name="refresh-outline" size={16} color="#DC2626" style={{ marginRight: 4 }} />
+                <Text style={styles.resetBtnText}>Reset</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.confirmDeliverBtn, { flex: 1, marginTop: 0 }]}
+                onPress={handleConfirmDelivered}
+                disabled={actionInProgress}
+              >
+                {actionInProgress ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.confirmDeliverBtnText}>Confirm Delivery</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -527,6 +624,70 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     minWidth: 18,
     textAlign: 'center',
+  },
+  stepInput: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#2A2421',
+    marginHorizontal: 6,
+    minWidth: 40,
+    height: 32,
+    textAlign: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    borderRadius: 8,
+    paddingVertical: 0,
+    paddingHorizontal: 4,
+  },
+  diffPillPending: {
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  diffPillTextPending: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  diffPillExtra: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  diffPillTextExtra: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  diffPillExact: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  diffPillTextExact: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  resetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  resetBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#DC2626',
   },
   notesInput: {
     backgroundColor: '#FAF8F5',

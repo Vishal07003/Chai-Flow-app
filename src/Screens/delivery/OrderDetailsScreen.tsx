@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   View,
@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Modal,
   Alert,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -26,7 +27,12 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
-  const [isConfirmModalVisible, setIsConfirmModalVisible] = useState(false);
+
+  // Quantity Reconciliation Bottom Sheet State
+  const [isReconcileModalVisible, setIsReconcileModalVisible] = useState(false);
+  // Store values as string representation to support in-progress typing / empty inputs
+  const [deliveredQuantities, setDeliveredQuantities] = useState<{ [productId: number]: string }>({});
+  const [discrepancyNotes, setDiscrepancyNotes] = useState<string>('');
 
   const fetchDeliveryDetail = useCallback(async () => {
     if (!deliveryIdParam) {
@@ -41,7 +47,6 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
       setDelivery(data);
     } catch (err: any) {
       console.log('Failed to fetch delivery details:', err);
-      // If direct single delivery fails or is offline, keep param if available
       if (!deliveryParam) {
         setError(err?.message || 'Unable to load delivery details.');
       }
@@ -66,6 +71,23 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
   const isDelivered = status === 'delivered';
   const isFailed = status === 'failed';
 
+  // Format order created date/time in Asia/Kolkata
+  const orderFormattedDate = useMemo(() => {
+    const rawDate = orderDetails?.created_at || delivery?.updated_at;
+    if (!rawDate) return null;
+    try {
+      const d = new Date(rawDate);
+      if (isNaN(d.getTime())) return null;
+      return d.toLocaleString('en-IN', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        timeZone: 'Asia/Kolkata',
+      });
+    } catch {
+      return null;
+    }
+  }, [orderDetails?.created_at, delivery?.updated_at]);
+
   const handleCall = () => {
     if (phone) {
       Linking.openURL(`tel:${phone}`).catch(() => {
@@ -87,21 +109,140 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
     });
   };
 
-  const handleMarkDelivered = async () => {
+  // Helper to parse input safely to non-negative integer
+  const parseQtyValue = (raw: string | undefined, defaultVal: number = 0): number => {
+    if (raw === undefined || raw === null || raw.trim() === '') return defaultVal;
+    const clean = raw.replace(/[^0-9]/g, '');
+    const num = parseInt(clean, 10);
+    return isNaN(num) ? defaultVal : Math.max(0, num);
+  };
+
+  // Initialize and open Quantity Reconciliation modal
+  const openReconcileModal = () => {
+    const initialMap: { [productId: number]: string } = {};
+    if (items && items.length > 0) {
+      items.forEach(it => {
+        initialMap[it.product] = String(it.quantity);
+      });
+    }
+    setDeliveredQuantities(initialMap);
+    setDiscrepancyNotes('');
+    setIsReconcileModalVisible(true);
+  };
+
+  // Adjust delivered quantity with +/-
+  const handleQtyAdjust = (productId: number, delta: number) => {
+    setDeliveredQuantities(prev => {
+      const current = parseQtyValue(prev[productId], 0);
+      const nextVal = Math.max(0, current + delta);
+      return { ...prev, [productId]: String(nextVal) };
+    });
+  };
+
+  // Direct manual quantity text change handler
+  const handleManualQtyChange = (productId: number, text: string) => {
+    // Only accept whole numeric digits or empty string (while user is backspacing)
+    const sanitized = text.replace(/[^0-9]/g, '');
+    setDeliveredQuantities(prev => ({
+      ...prev,
+      [productId]: sanitized,
+    }));
+  };
+
+  // On blur, if field is left empty, default back to original ordered quantity or 0
+  const handleQtyBlur = (productId: number, originalQty: number) => {
+    setDeliveredQuantities(prev => {
+      const val = prev[productId];
+      if (val === undefined || val === '') {
+        return { ...prev, [productId]: String(originalQty) };
+      }
+      return prev;
+    });
+  };
+
+  // Check whether any product quantity was modified from original
+  const hasEdits = useMemo(() => {
+    return items.some(it => {
+      const raw = deliveredQuantities[it.product];
+      const parsed = parseQtyValue(raw, it.quantity);
+      return parsed !== it.quantity;
+    });
+  }, [items, deliveredQuantities]);
+
+  // Reset all edited quantities to original ordered quantities
+  const handleResetQuantities = () => {
+    const doReset = () => {
+      const resetMap: { [productId: number]: string } = {};
+      items.forEach(it => {
+        resetMap[it.product] = String(it.quantity);
+      });
+      setDeliveredQuantities(resetMap);
+      setDiscrepancyNotes('');
+    };
+
+    if (hasEdits) {
+      Alert.alert(
+        'Reset Quantities?',
+        'This will restore all delivered quantities to match the original ordered amounts.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Reset', style: 'destructive', onPress: doReset },
+        ]
+      );
+    } else {
+      doReset();
+    }
+  };
+
+  // Submit actual delivered quantities and complete delivery
+  const handleConfirmDelivery = async () => {
     if (!delivery || isSubmitting || isDelivered) return;
+
+    // Validate that all quantities are valid numbers
+    for (const it of items) {
+      const raw = deliveredQuantities[it.product];
+      if (raw !== undefined && raw.trim() === '') {
+        Alert.alert('Incomplete Quantities', `Please enter a valid delivered quantity for "${it.product_details?.name || 'Item'}".`);
+        return;
+      }
+    }
+
     try {
       setIsSubmitting(true);
-      await deliveryService.updateStatus(delivery.id, 'delivered');
+
+      // 1. Build delivered items payload
+      const itemsPayload = items.map(it => {
+        const raw = deliveredQuantities[it.product];
+        const deliveredQty = parseQtyValue(raw, it.quantity);
+        return {
+          product_id: it.product,
+          delivered_quantity: deliveredQty,
+          discrepancy_notes: discrepancyNotes.trim(),
+        };
+      });
+
+      // Submit actual delivered quantities
+      if (itemsPayload.length > 0) {
+        await deliveryService.recordDeliveredQuantities(delivery.id, itemsPayload);
+      }
+
+      // 2. Mark delivery as DELIVERED in backend
+      await deliveryService.updateStatus(delivery.id, 'delivered', discrepancyNotes.trim());
+
+      // 3. Halt GPS tracking immediately
       await locationTrackingService.stopTracking();
 
-      setDelivery(prev => (prev ? { ...prev, status: 'delivered' } : prev));
-      setToastMessage('Order Delivered Successfully! 🎉');
+      setIsReconcileModalVisible(false);
+      setToastMessage('Delivery Completed Successfully! 🎉');
+
+      // Refresh delivery data
+      await fetchDeliveryDetail();
 
       setTimeout(() => {
         navigation.goBack();
-      }, 1500);
+      }, 1600);
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to update delivery status.');
+      Alert.alert('Error', err?.message || 'Failed to complete delivery.');
     } finally {
       setIsSubmitting(false);
     }
@@ -168,7 +309,7 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
                     isFailed && styles.failedBadgeText,
                   ]}
                 >
-                  {status.toUpperCase()}
+                  {status.toUpperCase().replace(/_/g, ' ')}
                 </Text>
               </View>
             </View>
@@ -178,6 +319,13 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
               <Text style={styles.contactPersonText}>
                 Contact: {orderDetails.customer_name}
               </Text>
+            ) : null}
+
+            {orderFormattedDate ? (
+              <View style={styles.dateRow}>
+                <Ionicons name="time-outline" size={14} color="#6B7280" />
+                <Text style={styles.dateText}>Order Placed: {orderFormattedDate}</Text>
+              </View>
             ) : null}
 
             <View style={styles.divider} />
@@ -253,7 +401,7 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
             ) : null}
           </View>
 
-          {/* Complete Delivery Action Button */}
+          {/* Complete Delivery / Record Quantities Action Button */}
           {!isDelivered && !isFailed && (
             <TouchableOpacity
               activeOpacity={0.85}
@@ -261,78 +409,172 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
                 styles.deliverBtn,
                 isSubmitting && styles.deliverBtnDisabled,
               ]}
-              onPress={() => setIsConfirmModalVisible(true)}
+              onPress={openReconcileModal}
               disabled={isSubmitting}
             >
-              {isSubmitting ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <ActivityIndicator
-                    size="small"
-                    color="#FFFFFF"
-                    style={{ marginRight: 8 }}
-                  />
-                  <Text style={styles.deliverBtnText}>Updating Status...</Text>
-                </View>
-              ) : (
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons
-                    name="checkmark-circle"
-                    size={20}
-                    color="#FFFFFF"
-                    style={{ marginRight: 8 }}
-                  />
-                  <Text style={styles.deliverBtnText}>Mark Order as Delivered</Text>
-                </View>
-              )}
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons
+                  name="checkmark-done-circle"
+                  size={20}
+                  color="#FFFFFF"
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={styles.deliverBtnText}>
+                  Record Quantities & Confirm Delivery
+                </Text>
+              </View>
             </TouchableOpacity>
+          )}
+
+          {isDelivered && (
+            <View style={styles.completedCard}>
+              <Ionicons name="checkmark-circle" size={24} color="#059669" style={{ marginRight: 8 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.completedCardTitle}>Order Delivered</Text>
+                <Text style={styles.completedCardSub}>Actual delivered quantities recorded.</Text>
+              </View>
+            </View>
           )}
         </ScrollView>
       )}
 
-      {/* Confirmation Dialog Modal */}
+      {/* Quantity Reconciliation Bottom Sheet Modal */}
       <Modal
-        visible={isConfirmModalVisible}
+        visible={isReconcileModalVisible}
         transparent={true}
-        animationType="fade"
-        onRequestClose={() => setIsConfirmModalVisible(false)}
+        animationType="slide"
+        onRequestClose={() => {
+          if (!isSubmitting) setIsReconcileModalVisible(false);
+        }}
       >
-        <View style={styles.confirmModalOverlay}>
-          <View style={styles.confirmModalBox}>
-            <View style={styles.confirmModalIconContainer}>
-              <Ionicons
-                name="checkmark-done-circle"
-                size={42}
-                color="#059669"
-              />
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Confirm Delivered Quantities</Text>
+                <Text style={styles.modalSubtitle}>
+                  Adjust actual units handed over for customer & invoice verification.
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsReconcileModalVisible(false)}
+                disabled={isSubmitting}
+                style={styles.closeModalBtn}
+              >
+                <Ionicons name="close" size={24} color="#2A2421" />
+              </TouchableOpacity>
             </View>
 
-            <Text style={styles.confirmModalTitle}>Confirm Delivery</Text>
-            <Text style={styles.confirmModalSub}>
-              Are you sure you want to mark this delivery for{' '}
-              <Text style={{ fontWeight: '800', color: '#111827' }}>
-                {customerName}
-              </Text>{' '}
-              as delivered?
-            </Text>
+            {/* Stepper List for each Item with Editable Numeric Input */}
+            <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={false}>
+              {items.map(it => {
+                const orderedQty = it.quantity;
+                const rawVal = deliveredQuantities[it.product];
+                const deliveredQty = parseQtyValue(rawVal, orderedQty);
+                const diff = deliveredQty - orderedQty;
+                const displayVal = rawVal !== undefined ? rawVal : String(orderedQty);
 
-            <View style={styles.confirmModalBtnRow}>
+                return (
+                  <View key={it.id} style={styles.qtyRow}>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text style={styles.itemTitle} numberOfLines={1}>
+                        {it.product_details?.name || 'Item'}
+                      </Text>
+                      <View style={styles.qtyMetaRow}>
+                        <Text style={styles.itemSub}>Ordered: {orderedQty}</Text>
+                        {diff < 0 ? (
+                          <View style={styles.diffPillPending}>
+                            <Text style={styles.diffPillTextPending}>
+                              Pending: {Math.abs(diff)}
+                            </Text>
+                          </View>
+                        ) : diff > 0 ? (
+                          <View style={styles.diffPillExtra}>
+                            <Text style={styles.diffPillTextExtra}>
+                              Extra: +{diff}
+                            </Text>
+                          </View>
+                        ) : (
+                          <View style={styles.diffPillExact}>
+                            <Text style={styles.diffPillTextExact}>Exact Match</Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+
+                    {/* Stepper Controls with Centered Editable TextInput */}
+                    <View style={styles.stepper}>
+                      <TouchableOpacity
+                        style={styles.stepBtn}
+                        onPress={() => handleQtyAdjust(it.product, -1)}
+                        disabled={isSubmitting}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.stepBtnText}>−</Text>
+                      </TouchableOpacity>
+
+                      <TextInput
+                        style={styles.stepInput}
+                        value={displayVal}
+                        onChangeText={text => handleManualQtyChange(it.product, text)}
+                        onBlur={() => handleQtyBlur(it.product, orderedQty)}
+                        keyboardType="number-pad"
+                        maxLength={5}
+                        selectTextOnFocus
+                        editable={!isSubmitting}
+                      />
+
+                      <TouchableOpacity
+                        style={styles.stepBtn}
+                        onPress={() => handleQtyAdjust(it.product, 1)}
+                        disabled={isSubmitting}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.stepBtnText}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+
+            {/* Discrepancy Notes Input */}
+            <TextInput
+              style={styles.notesInput}
+              placeholder="Discrepancy / delivery notes (optional)"
+              placeholderTextColor="#8E8278"
+              value={discrepancyNotes}
+              onChangeText={setDiscrepancyNotes}
+              editable={!isSubmitting}
+            />
+
+            {/* Action Row: Reset Button & Confirm Delivery Button */}
+            <View style={styles.modalActionRow}>
               <TouchableOpacity
-                activeOpacity={0.8}
-                style={styles.cancelModalBtn}
-                onPress={() => setIsConfirmModalVisible(false)}
+                style={styles.resetBtn}
+                onPress={handleResetQuantities}
+                disabled={isSubmitting}
+                activeOpacity={0.7}
               >
-                <Text style={styles.cancelModalBtnText}>Cancel</Text>
+                <Ionicons name="refresh-outline" size={16} color="#DC2626" style={{ marginRight: 4 }} />
+                <Text style={styles.resetBtnText}>Reset</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
+                style={[styles.confirmDeliverBtn, isSubmitting && styles.deliverBtnDisabled]}
+                onPress={handleConfirmDelivery}
+                disabled={isSubmitting}
                 activeOpacity={0.85}
-                style={styles.confirmModalBtn}
-                onPress={() => {
-                  setIsConfirmModalVisible(false);
-                  handleMarkDelivered();
-                }}
               >
-                <Text style={styles.confirmModalBtnText}>Confirm</Text>
+                {isSubmitting ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                    <Text style={styles.confirmDeliverBtnText}>Submitting...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.confirmDeliverBtnText}>Confirm Delivery</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -448,25 +690,35 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6B7280',
     fontWeight: '500',
-    marginBottom: 6,
+  },
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
+  dateText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '500',
   },
   divider: {
     height: 1,
     backgroundColor: '#F3F4F6',
-    marginVertical: 12,
+    marginVertical: 14,
   },
   sectionLabel: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#6B7280',
+    fontWeight: '800',
+    color: '#9CA3AF',
     letterSpacing: 0.8,
-    marginBottom: 6,
+    marginBottom: 8,
   },
   addressText: {
     fontSize: 14,
     color: '#374151',
     lineHeight: 20,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   actionRow: {
     flexDirection: 'row',
@@ -478,8 +730,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#ECFDF5',
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 11,
+    borderRadius: 12,
     gap: 6,
   },
   navBtn: {
@@ -498,19 +750,19 @@ const styles = StyleSheet.create({
   },
   itemName: {
     fontSize: 14,
-    color: '#374151',
+    color: '#1F2937',
+    fontWeight: '600',
     flex: 1,
   },
   itemQty: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#111827',
+    color: '#059669',
   },
   emptyItemsText: {
     fontSize: 13,
     color: '#9CA3AF',
     fontStyle: 'italic',
-    paddingVertical: 6,
   },
   notesText: {
     fontSize: 13,
@@ -519,34 +771,59 @@ const styles = StyleSheet.create({
   },
   deliverBtn: {
     backgroundColor: '#059669',
-    paddingVertical: 14,
     borderRadius: 14,
+    paddingVertical: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 8,
+    marginTop: 6,
+    elevation: 3,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
   },
   deliverBtnDisabled: {
-    backgroundColor: '#9CA3AF',
+    opacity: 0.6,
   },
   deliverBtnText: {
+    fontSize: 15,
+    fontWeight: '800',
     color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+  completedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    marginTop: 8,
+  },
+  completedCardTitle: {
     fontSize: 15,
     fontWeight: '700',
+    color: '#065F46',
+  },
+  completedCardSub: {
+    fontSize: 12,
+    color: '#047857',
+    marginTop: 2,
   },
   topToastContainer: {
     position: 'absolute',
     top: 50,
-    left: 20,
-    right: 20,
-    zIndex: 999,
+    left: 16,
+    right: 16,
     backgroundColor: '#059669',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
     borderRadius: 12,
+    padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
+    zIndex: 999,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 6,
@@ -557,69 +834,178 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     flex: 1,
   },
-  confirmModalOverlay: {
+  modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
+    justifyContent: 'flex-end',
   },
-  confirmModalBox: {
+  modalSheet: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 24,
-    width: '100%',
-    alignItems: 'center',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    maxHeight: '85%',
   },
-  confirmModalIconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#ECFDF5',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
   },
-  confirmModalTitle: {
+  modalTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: '#111827',
-    marginBottom: 8,
   },
-  confirmModalSub: {
-    fontSize: 14,
+  modalSubtitle: {
+    fontSize: 12,
     color: '#6B7280',
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 20,
+    marginTop: 2,
   },
-  confirmModalBtnRow: {
+  closeModalBtn: {
+    padding: 4,
+  },
+  qtyRow: {
     flexDirection: 'row',
-    gap: 12,
-    width: '100%',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
   },
-  cancelModalBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
+  itemTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  qtyMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 3,
+  },
+  itemSub: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  diffPillPending: {
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  diffPillTextPending: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  diffPillExtra: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  diffPillTextExtra: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  diffPillExact: {
     backgroundColor: '#F3F4F6',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  diffPillTextExact: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  stepper: {
+    flexDirection: 'row',
     alignItems: 'center',
   },
-  cancelModalBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#4B5563',
+  stepBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  confirmModalBtn: {
-    flex: 1,
-    paddingVertical: 12,
+  stepBtnText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  stepVal: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#111827',
+    marginHorizontal: 10,
+    minWidth: 22,
+    textAlign: 'center',
+  },
+  stepInput: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#111827',
+    marginHorizontal: 6,
+    minWidth: 42,
+    height: 34,
+    textAlign: 'center',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingVertical: 0,
+    paddingHorizontal: 4,
+  },
+  notesInput: {
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 44,
+    fontSize: 13,
+    color: '#111827',
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  modalActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  resetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 13,
+    paddingHorizontal: 16,
     borderRadius: 12,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  resetBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  confirmDeliverBtn: {
+    flex: 1,
     backgroundColor: '#059669',
+    height: 46,
+    borderRadius: 12,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  confirmModalBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
+  confirmDeliverBtnText: {
     color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
   },
 });
