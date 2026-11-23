@@ -16,6 +16,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import deliveryService, { BackendDelivery } from '../../services/delivery.service';
 import locationTrackingService from '../../services/location.service';
+import offlineDeliveryService, { QueuedDeliveryAction, SyncStatus } from '../../services/offlineDelivery.service';
 
 export default function OrderDetailsScreen({ route, navigation }: any) {
   const deliveryParam: BackendDelivery | undefined = route.params?.delivery;
@@ -27,6 +28,8 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [pendingAction, setPendingAction] = useState<QueuedDeliveryAction | undefined>(undefined);
 
   // Quantity Reconciliation Bottom Sheet State
   const [isReconcileModalVisible, setIsReconcileModalVisible] = useState(false);
@@ -60,6 +63,22 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
       fetchDeliveryDetail();
     }
   }, [deliveryIdParam, fetchDeliveryDetail]);
+
+  // Sync state observer for this specific delivery
+  useEffect(() => {
+    const checkSync = async () => {
+      if (!deliveryIdParam) return;
+      const res = await offlineDeliveryService.getDeliverySyncStatus(deliveryIdParam);
+      setSyncStatus(res.syncStatus);
+      setPendingAction(res.latestAction);
+    };
+
+    checkSync();
+    const unsubscribe = offlineDeliveryService.subscribe(() => {
+      checkSync();
+    });
+    return unsubscribe;
+  }, [deliveryIdParam]);
 
   const orderDetails = delivery?.order_details;
   const customerName =
@@ -242,7 +261,35 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
         navigation.goBack();
       }, 1600);
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to complete delivery.');
+      console.log(`Direct delivery completion failed (${err?.message}). Enqueuing offline action.`);
+
+      // Build payload for offline queue
+      const itemsPayload = items.map(it => {
+        const raw = deliveredQuantities[it.product];
+        const deliveredQty = parseQtyValue(raw, it.quantity);
+        return {
+          product_id: it.product,
+          delivered_quantity: deliveredQty,
+          discrepancy_notes: discrepancyNotes.trim(),
+        };
+      });
+
+      await offlineDeliveryService.enqueueAction(delivery.id, 'SUBMIT_QUANTITIES', {
+        items: itemsPayload,
+        notes: discrepancyNotes.trim(),
+        status: 'delivered',
+      });
+
+      // Stop location tracking
+      await locationTrackingService.stopTracking();
+
+      setIsReconcileModalVisible(false);
+      setToastMessage('Saved Offline: Will Sync Automatically');
+
+      Alert.alert(
+        'Offline: Delivery Recorded',
+        'No network connection. Your delivered quantities and completion record have been saved locally. The delivery shows "Pending Sync" and will confirm with the server when connectivity returns.'
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -292,9 +339,50 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
           {/* Card: Customer & Destination Information */}
           <View style={styles.card}>
             <View style={styles.badgeRow}>
-              <Text style={styles.seqText}>
-                ORDER #{orderDetails?.id || delivery?.order || delivery?.id}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={styles.seqText}>
+                  ORDER #{orderDetails?.id || delivery?.order || delivery?.id}
+                </Text>
+                {syncStatus && (
+                  <View
+                    style={[
+                      styles.syncPill,
+                      syncStatus === 'SYNCING' && styles.syncingPill,
+                      syncStatus === 'NEEDS_REVIEW' && styles.needsReviewPill,
+                      syncStatus === 'SYNC_FAILED' && styles.syncFailedPill,
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        syncStatus === 'SYNCING'
+                          ? 'sync-outline'
+                          : syncStatus === 'NEEDS_REVIEW'
+                          ? 'alert-circle-outline'
+                          : 'cloud-offline-outline'
+                      }
+                      size={11}
+                      color={
+                        syncStatus === 'SYNCING'
+                          ? '#2563EB'
+                          : syncStatus === 'NEEDS_REVIEW'
+                          ? '#D97706'
+                          : '#DC2626'
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.syncPillText,
+                        syncStatus === 'SYNCING' && { color: '#2563EB' },
+                        syncStatus === 'NEEDS_REVIEW' && { color: '#D97706' },
+                        syncStatus === 'SYNC_FAILED' && { color: '#DC2626' },
+                      ]}
+                    >
+                      {syncStatus.replace(/_/g, ' ')}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
               <View
                 style={[
                   styles.statusBadge,
@@ -400,6 +488,59 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
               </>
             ) : null}
           </View>
+
+          {/* Offline Pending Review Box */}
+          {pendingAction && (
+            <View
+              style={[
+                styles.syncAlertBox,
+                syncStatus === 'NEEDS_REVIEW' && styles.syncAlertNeedsReview,
+                syncStatus === 'SYNC_FAILED' && styles.syncAlertFailed,
+              ]}
+            >
+              <Ionicons
+                name={
+                  syncStatus === 'SYNCING'
+                    ? 'sync-outline'
+                    : syncStatus === 'NEEDS_REVIEW'
+                    ? 'alert-circle'
+                    : 'cloud-offline'
+                }
+                size={20}
+                color={
+                  syncStatus === 'SYNCING'
+                    ? '#2563EB'
+                    : syncStatus === 'NEEDS_REVIEW'
+                    ? '#D97706'
+                    : '#DC2626'
+                }
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.syncAlertTitle}>
+                  {syncStatus === 'PENDING_SYNC'
+                    ? 'Action Saved Offline'
+                    : syncStatus === 'SYNCING'
+                    ? 'Synchronizing with server...'
+                    : syncStatus === 'NEEDS_REVIEW'
+                    ? 'Sync Needs Review'
+                    : 'Sync Failed'}
+                </Text>
+                <Text style={styles.syncAlertDesc}>
+                  {pendingAction.errorMessage ||
+                    'This action is queued locally and will be submitted automatically when your device connects to the internet.'}
+                </Text>
+              </View>
+
+              {(syncStatus === 'NEEDS_REVIEW' || syncStatus === 'SYNC_FAILED') && (
+                <TouchableOpacity
+                  style={styles.retrySyncBtn}
+                  onPress={() => offlineDeliveryService.retryAction(pendingAction.actionId)}
+                >
+                  <Text style={styles.retrySyncBtnText}>Retry</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
 
           {/* Complete Delivery / Record Quantities Action Button */}
           {!isDelivered && !isFailed && (
@@ -1007,5 +1148,70 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 14,
+  },
+  syncPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  syncingPill: {
+    backgroundColor: '#EFF6FF',
+  },
+  needsReviewPill: {
+    backgroundColor: '#FEF3C7',
+  },
+  syncFailedPill: {
+    backgroundColor: '#FEF2F2',
+  },
+  syncPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  syncAlertBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FEF3C7',
+    borderRadius: 14,
+    padding: 14,
+    gap: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  syncAlertNeedsReview: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FCD34D',
+  },
+  syncAlertFailed: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FCA5A5',
+  },
+  syncAlertTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  syncAlertDesc: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  retrySyncBtn: {
+    backgroundColor: '#D97706',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    alignSelf: 'center',
+  },
+  retrySyncBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

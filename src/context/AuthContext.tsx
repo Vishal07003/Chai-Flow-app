@@ -1,6 +1,7 @@
 import React, { createContext, useContext } from 'react';
 import { useApp } from './AppContext';
 import { UserRole, UserProfile } from '../types/auth';
+import offlineDeliveryService from '../services/offlineDelivery.service';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -21,6 +22,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     logout,
   } = useApp();
 
+  const handleLogout = () => {
+    // Quarantine/clear pending offline actions to preserve session isolation
+    offlineDeliveryService.clearQueueOnLogout().catch(err => {
+      console.log('Error clearing offline queue during logout:', err);
+    });
+    logout();
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -33,7 +42,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           name: userProfile.fullName,
           role: (userRole === 'ADMIN' ? 'OWNER' : 'DELIVERY_PARTNER') as string,
         },
-        logout,
+        logout: handleLogout,
       }}
     >
       {children}
