@@ -86,39 +86,65 @@ class LocationForegroundService : Service(), LocationListener {
 
         when (intent.action) {
             ACTION_START -> {
-                deliveryId = intent.getStringExtra(EXTRA_DELIVERY_ID)
+                val newDeliveryId = intent.getStringExtra(EXTRA_DELIVERY_ID)
                 authToken = intent.getStringExtra(EXTRA_AUTH_TOKEN)
                 baseUrl = intent.getStringExtra(EXTRA_BASE_URL)
 
-                currentDeliveryId = deliveryId
+                // If starting for a different delivery ID or restarting, stop old location updates first
+                if (isRunning && currentDeliveryId != null && currentDeliveryId != newDeliveryId) {
+                    Log.i(TAG, "Switching tracking from delivery #$currentDeliveryId to #$newDeliveryId")
+                    stopLocationUpdates()
+                }
+
+                deliveryId = newDeliveryId
+                currentDeliveryId = newDeliveryId
                 isRunning = true
 
                 val notification = buildForegroundNotification()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    startForeground(
-                        NOTIFICATION_ID,
-                        notification,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                    )
-                } else {
-                    startForeground(NOTIFICATION_ID, notification)
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        startForeground(
+                            NOTIFICATION_ID,
+                            notification,
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                        )
+                    } else {
+                        startForeground(NOTIFICATION_ID, notification)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error starting foreground notification: ${e.message}")
                 }
 
                 startLocationUpdates()
             }
             ACTION_STOP -> {
-                stopLocationUpdates()
-                stopForeground(true)
-                stopSelf()
-                isRunning = false
-                currentDeliveryId = null
+                tearDownService()
             }
             else -> {
-                stopSelf()
+                tearDownService()
             }
         }
 
         return START_STICKY
+    }
+
+    private fun tearDownService() {
+        stopLocationUpdates()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            notificationManager?.cancel(NOTIFICATION_ID)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error dismissing foreground notification: ${e.message}")
+        }
+        stopSelf()
+        isRunning = false
+        currentDeliveryId = null
     }
 
     private fun createNotificationChannel() {
@@ -130,7 +156,8 @@ class LocationForegroundService : Service(), LocationListener {
                 description = channelDesc
                 setShowBadge(false)
             }
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val manager = getSystemService(Context.LOCATION_SERVICE) as? NotificationManager
+                ?: getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
         }
     }
@@ -270,11 +297,11 @@ class LocationForegroundService : Service(), LocationListener {
                     val jsonResp = JSONObject(resp)
                     if (jsonResp.has("active_tracking") && !jsonResp.getBoolean("active_tracking")) {
                         Log.i(TAG, "Server signaled tracking terminated. Stopping service.")
-                        stopForeground(true)
-                        stopSelf()
-                        isRunning = false
-                        currentDeliveryId = null
+                        tearDownService()
                     }
+                } else if (responseCode == 403 || responseCode == 404) {
+                    Log.w(TAG, "Delivery completed, not found, or unauthorized. Stopping service.")
+                    tearDownService()
                 } else {
                     Log.w(TAG, "Location ping failed with HTTP $responseCode")
                 }

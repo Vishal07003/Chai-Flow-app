@@ -7,9 +7,10 @@ import { API_BASE_URL } from '../constants/api.config';
 const { LocationModule } = NativeModules;
 
 const LOCATION_BUFFER_KEY = '@chaiflow_buffered_location_pings';
+const MAX_BUFFERED_PINGS = 100; // Cap buffer size to prevent storage bloat
 
-// State holder for active foreground tracking interval (fallback or monitor)
-let activeTrackingInterval: any = null;
+// State holder for active foreground tracking interval (fallback for non-native environments)
+let fallbackTrackingInterval: any = null;
 let activeTrackingDeliveryId: number | string | null = null;
 
 export interface TrackingState {
@@ -81,14 +82,28 @@ export const locationTrackingService = {
 
   /**
    * Save location ping to local storage buffer (offline resilience)
+   * Caps maximum buffer size to MAX_BUFFERED_PINGS (100) and discards oldest on overflow
    */
   async bufferLocation(deliveryId: number | string, ping: LocationPingPayload): Promise<void> {
     try {
       const stored = await AsyncStorage.getItem(LOCATION_BUFFER_KEY);
-      const queue: Array<{ deliveryId: number | string; ping: LocationPingPayload }> = stored
+      let queue: Array<{ deliveryId: number | string; ping: LocationPingPayload }> = stored
         ? JSON.parse(stored)
         : [];
+
+      // Avoid exact duplicate timestamp for the same delivery
+      const isDuplicate = queue.some(
+        item => String(item.deliveryId) === String(deliveryId) && item.ping.recorded_at === ping.recorded_at
+      );
+      if (isDuplicate) return;
+
       queue.push({ deliveryId, ping });
+
+      // Enforce buffer size limit
+      if (queue.length > MAX_BUFFERED_PINGS) {
+        queue = queue.slice(queue.length - MAX_BUFFERED_PINGS);
+      }
+
       await AsyncStorage.setItem(LOCATION_BUFFER_KEY, JSON.stringify(queue));
     } catch (e) {
       console.log('Failed to buffer location locally:', e);
@@ -96,36 +111,64 @@ export const locationTrackingService = {
   },
 
   /**
-   * Synchronize all buffered location updates when network is reachable
+   * Synchronize buffered location updates for a specific active delivery
+   * Failed uploads remain in queue; successful uploads are removed; orders preserved chronologically.
    */
-  async flushBufferedPings(): Promise<number> {
+  async flushBufferedPings(deliveryId?: number | string): Promise<number> {
     try {
       const stored = await AsyncStorage.getItem(LOCATION_BUFFER_KEY);
       if (!stored) return 0;
 
-      const queue: Array<{ deliveryId: number | string; ping: LocationPingPayload }> =
-        JSON.parse(stored);
+      let queue: Array<{ deliveryId: number | string; ping: LocationPingPayload }> = JSON.parse(stored);
       if (queue.length === 0) return 0;
 
+      // Filter specifically for the target delivery if specified, or all
+      const targetDeliveryIdStr = deliveryId ? String(deliveryId) : null;
+      const pingsToFlush = targetDeliveryIdStr
+        ? queue.filter(item => String(item.deliveryId) === targetDeliveryIdStr)
+        : queue;
+
+      if (pingsToFlush.length === 0) return 0;
+
       // Group pings by deliveryId
-      const grouped: { [deliveryId: string]: LocationPingPayload[] } = {};
-      queue.forEach(item => {
+      const grouped: { [dId: string]: LocationPingPayload[] } = {};
+      pingsToFlush.forEach(item => {
         const dId = String(item.deliveryId);
         if (!grouped[dId]) grouped[dId] = [];
         grouped[dId].push(item.ping);
       });
 
+      const successfullyUploadedDeliveryIds: string[] = [];
       let totalFlushed = 0;
+
       for (const [dId, pings] of Object.entries(grouped)) {
         try {
-          await deliveryService.sendLocationPings(dId, pings);
-          totalFlushed += pings.length;
+          // Sort chronologically ascending
+          const sortedPings = [...pings].sort((a, b) => {
+            const timeA = a.recorded_at ? new Date(a.recorded_at).getTime() : 0;
+            const timeB = b.recorded_at ? new Date(b.recorded_at).getTime() : 0;
+            return timeA - timeB;
+          });
+
+          await deliveryService.sendLocationPings(dId, sortedPings);
+          successfullyUploadedDeliveryIds.push(dId);
+          totalFlushed += sortedPings.length;
         } catch (deliverySyncErr) {
-          console.log(`Failed to flush pings for delivery #${dId}:`, deliverySyncErr);
+          console.log(`Failed to flush pings for delivery #${dId}, retaining in buffer:`, deliverySyncErr);
         }
       }
 
-      await AsyncStorage.removeItem(LOCATION_BUFFER_KEY);
+      // Retain only items whose deliveryId did not succeed
+      const remainingQueue = queue.filter(
+        item => !successfullyUploadedDeliveryIds.includes(String(item.deliveryId))
+      );
+
+      if (remainingQueue.length > 0) {
+        await AsyncStorage.setItem(LOCATION_BUFFER_KEY, JSON.stringify(remainingQueue));
+      } else {
+        await AsyncStorage.removeItem(LOCATION_BUFFER_KEY);
+      }
+
       return totalFlushed;
     } catch (e) {
       console.log('Error flushing buffered pings:', e);
@@ -134,14 +177,11 @@ export const locationTrackingService = {
   },
 
   /**
-   * Active delivery position update: attempts direct API transmission; buffers on failure
+   * Direct position update helper (used by fallback or manual call)
    */
   async pingLocation(deliveryId: number | string, ping: LocationPingPayload): Promise<boolean> {
     try {
-      // First attempt to flush any prior buffered offline items
-      await this.flushBufferedPings();
-
-      // Direct transmission
+      await this.flushBufferedPings(deliveryId);
       const res = await deliveryService.sendLocationPings(deliveryId, ping);
       return res.success;
     } catch (networkErr) {
@@ -179,7 +219,9 @@ export const locationTrackingService = {
   },
 
   /**
-   * Start tracking interval and native foreground service when delivery enters 'picked_up' or 'on_the_way'
+   * Start tracking interval and native foreground service when delivery enters 'picked_up' or 'on_the_way'.
+   * On Android, Native LocationForegroundService is the sole, authoritative upload mechanism
+   * to guarantee background/locked-screen tracking without duplicate requests.
    */
   async startTrackingForDelivery(
     deliveryId: number | string,
@@ -196,7 +238,12 @@ export const locationTrackingService = {
 
     activeTrackingDeliveryId = deliveryId;
 
-    // Start Android Foreground Service for true background / locked screen tracking
+    // Flush any pending buffered pings for this delivery upon starting
+    this.flushBufferedPings(deliveryId).catch(err =>
+      console.log('Error flushing buffered pings on start:', err)
+    );
+
+    // On Android: Delegate authoritative tracking to the native Foreground Service
     if (Platform.OS === 'android' && LocationModule?.startBackgroundTracking) {
       try {
         const token = await apiClient.getAccessToken();
@@ -206,14 +253,15 @@ export const locationTrackingService = {
             token,
             API_BASE_URL
           );
-          console.log(`Native Android background location tracking started for delivery #${deliveryId}`);
+          console.log(`Native Android background location tracking active for delivery #${deliveryId}`);
+          return true;
         }
       } catch (nativeErr) {
-        console.log('Failed to start native background location service:', nativeErr);
+        console.log('Failed to start native background location service, falling back to JS interval:', nativeErr);
       }
     }
 
-    // Send initial ping
+    // Fallback: If native module is unavailable (e.g. iOS or emulator fallback)
     try {
       const coords = getCurrentCoords
         ? await getCurrentCoords()
@@ -226,11 +274,10 @@ export const locationTrackingService = {
         });
       }
     } catch (err) {
-      console.log('Error recording initial GPS ping:', err);
+      console.log('Error recording initial GPS ping in fallback:', err);
     }
 
-    // JS Polling interval (15-20s) as active fallback and in-app sync
-    activeTrackingInterval = setInterval(async () => {
+    fallbackTrackingInterval = setInterval(async () => {
       if (!activeTrackingDeliveryId) {
         this.stopTracking();
         return;
@@ -248,7 +295,7 @@ export const locationTrackingService = {
           });
         }
       } catch (err) {
-        console.log('Error in location ping cycle:', err);
+        console.log('Error in fallback location ping cycle:', err);
       }
     }, 20000);
 
@@ -259,9 +306,9 @@ export const locationTrackingService = {
    * Stop tracking after Delivered, Failed or Cancelled
    */
   async stopTracking(): Promise<void> {
-    if (activeTrackingInterval) {
-      clearInterval(activeTrackingInterval);
-      activeTrackingInterval = null;
+    if (fallbackTrackingInterval) {
+      clearInterval(fallbackTrackingInterval);
+      fallbackTrackingInterval = null;
     }
     activeTrackingDeliveryId = null;
 
