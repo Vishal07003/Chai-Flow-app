@@ -32,7 +32,8 @@ export default function TrackingScreen() {
       setActiveDeliveries(inProgress);
 
       const activeTrackedId = locationTrackingService.getActiveTrackingDeliveryId();
-      setIsTrackingActive(!!activeTrackedId);
+      const status = await locationTrackingService.getTrackingStatus();
+      setIsTrackingActive(!!activeTrackedId || status.isActive);
     } catch (err) {
       console.log('Error fetching active tracking deliveries:', err);
     } finally {

@@ -15,6 +15,7 @@ class MainApplication : Application(), ReactApplication {
       packageList =
         PackageList(this).packages.apply {
           add(NativePdfPackage())
+          add(LocationPackage())
         },
     )
   }

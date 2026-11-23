@@ -64,11 +64,11 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
       setActionInProgress(true);
       await deliveryService.updateStatus(delivery.id, targetStatus);
 
-      // Start/Stop location tracking depending on state
-      if (targetStatus === 'on_the_way') {
+      // Start/Stop location tracking depending on state: active during picked_up or on_the_way
+      if (targetStatus === 'picked_up' || targetStatus === 'on_the_way') {
         await locationTrackingService.startTrackingForDelivery(delivery.id);
       } else if (targetStatus === 'delivered' || targetStatus === 'failed') {
-        locationTrackingService.stopTracking();
+        await locationTrackingService.stopTracking();
       }
 
       fetchDeliveries();
@@ -118,7 +118,7 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
 
       // 2. Mark delivery as DELIVERED
       await deliveryService.updateStatus(selectedDelivery.id, 'delivered', discrepancyNotes.trim());
-      locationTrackingService.stopTracking();
+      await locationTrackingService.stopTracking();
 
       setRecordModalVisible(false);
       fetchDeliveries();

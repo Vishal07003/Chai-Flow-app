@@ -92,7 +92,7 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
     try {
       setIsSubmitting(true);
       await deliveryService.updateStatus(delivery.id, 'delivered');
-      locationTrackingService.stopTracking();
+      await locationTrackingService.stopTracking();
 
       setDelivery(prev => (prev ? { ...prev, status: 'delivered' } : prev));
       setToastMessage('Order Delivered Successfully! 🎉');

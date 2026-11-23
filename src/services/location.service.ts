@@ -1,12 +1,24 @@
-import { Platform, PermissionsAndroid } from 'react-native';
+import { Platform, PermissionsAndroid, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import deliveryService, { LocationPingPayload } from '../services/delivery.service';
+import apiClient from './api';
+import { API_BASE_URL } from '../constants/api.config';
+
+const { LocationModule } = NativeModules;
 
 const LOCATION_BUFFER_KEY = '@chaiflow_buffered_location_pings';
 
-// State holder for active foreground tracking interval
+// State holder for active foreground tracking interval (fallback or monitor)
 let activeTrackingInterval: any = null;
 let activeTrackingDeliveryId: number | string | null = null;
+
+export interface TrackingState {
+  isActive: boolean;
+  deliveryId: string | null;
+  latitude?: number;
+  longitude?: number;
+  recordedAt?: string;
+}
 
 export const locationTrackingService = {
   /**
@@ -16,18 +28,51 @@ export const locationTrackingService = {
     if (Platform.OS !== 'android') return true;
 
     try {
-      const fineLocationGranted = await PermissionsAndroid.request(
+      const permissionsToRequest = [
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        {
-          title: 'Chai Flow Location Permission',
-          message: 'Chai Flow needs access to your GPS to track your active delivery runs.',
-          buttonNeutral: 'Ask Later',
-          buttonNegative: 'Deny',
-          buttonPositive: 'Allow',
-        }
-      );
+        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+      ];
 
-      return fineLocationGranted === PermissionsAndroid.RESULTS.GRANTED;
+      // Request notification permission on Android 13+ (API 33+)
+      if (Platform.Version >= 33 && PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS) {
+        permissionsToRequest.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+      }
+
+      const results = await PermissionsAndroid.requestMultiple(permissionsToRequest);
+
+      const fineGranted =
+        results[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] ===
+        PermissionsAndroid.RESULTS.GRANTED;
+      const coarseGranted =
+        results[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION] ===
+        PermissionsAndroid.RESULTS.GRANTED;
+
+      const hasForegroundLocation = fineGranted || coarseGranted;
+
+      // Request background location permission on Android 10+ (API 29+) if foreground granted
+      if (
+        hasForegroundLocation &&
+        Platform.Version >= 29 &&
+        PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION
+      ) {
+        try {
+          await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
+            {
+              title: 'Background Location Permission',
+              message:
+                'Chai Flow tracks active deliveries continuously even when the app is backgrounded or screen locked.',
+              buttonNeutral: 'Later',
+              buttonNegative: 'Deny',
+              buttonPositive: 'Allow',
+            }
+          );
+        } catch (bgErr) {
+          console.log('Background permission request skipped/failed:', bgErr);
+        }
+      }
+
+      return hasForegroundLocation;
     } catch (err) {
       console.log('Error requesting location permissions:', err);
       return false;
@@ -40,7 +85,9 @@ export const locationTrackingService = {
   async bufferLocation(deliveryId: number | string, ping: LocationPingPayload): Promise<void> {
     try {
       const stored = await AsyncStorage.getItem(LOCATION_BUFFER_KEY);
-      const queue: Array<{ deliveryId: number | string; ping: LocationPingPayload }> = stored ? JSON.parse(stored) : [];
+      const queue: Array<{ deliveryId: number | string; ping: LocationPingPayload }> = stored
+        ? JSON.parse(stored)
+        : [];
       queue.push({ deliveryId, ping });
       await AsyncStorage.setItem(LOCATION_BUFFER_KEY, JSON.stringify(queue));
     } catch (e) {
@@ -56,7 +103,8 @@ export const locationTrackingService = {
       const stored = await AsyncStorage.getItem(LOCATION_BUFFER_KEY);
       if (!stored) return 0;
 
-      const queue: Array<{ deliveryId: number | string; ping: LocationPingPayload }> = JSON.parse(stored);
+      const queue: Array<{ deliveryId: number | string; ping: LocationPingPayload }> =
+        JSON.parse(stored);
       if (queue.length === 0) return 0;
 
       // Group pings by deliveryId
@@ -104,7 +152,34 @@ export const locationTrackingService = {
   },
 
   /**
-   * Start tracking interval when delivery enters 'on_the_way'
+   * Get current device GPS position
+   */
+  async getCurrentPosition(): Promise<{
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+    speed?: number;
+  } | null> {
+    if (Platform.OS === 'android' && LocationModule?.getCurrentPosition) {
+      try {
+        const pos = await LocationModule.getCurrentPosition();
+        if (pos) {
+          return {
+            latitude: pos.latitude,
+            longitude: pos.longitude,
+            accuracy: pos.accuracy,
+            speed: pos.speed,
+          };
+        }
+      } catch (err) {
+        console.log('LocationModule getCurrentPosition failed:', err);
+      }
+    }
+    return null;
+  },
+
+  /**
+   * Start tracking interval and native foreground service when delivery enters 'picked_up' or 'on_the_way'
    */
   async startTrackingForDelivery(
     deliveryId: number | string,
@@ -116,45 +191,64 @@ export const locationTrackingService = {
       return false;
     }
 
-    // Stop any existing tracking loop
-    this.stopTracking();
+    // Stop any existing tracking loop first
+    await this.stopTracking();
 
     activeTrackingDeliveryId = deliveryId;
 
-    // Send initial ping if coordinate getter supplied
-    if (getCurrentCoords) {
+    // Start Android Foreground Service for true background / locked screen tracking
+    if (Platform.OS === 'android' && LocationModule?.startBackgroundTracking) {
       try {
-        const coords = await getCurrentCoords();
-        if (coords) {
-          await this.pingLocation(deliveryId, {
-            ...coords,
-            recorded_at: new Date().toISOString(),
-          });
+        const token = await apiClient.getAccessToken();
+        if (token) {
+          await LocationModule.startBackgroundTracking(
+            String(deliveryId),
+            token,
+            API_BASE_URL
+          );
+          console.log(`Native Android background location tracking started for delivery #${deliveryId}`);
         }
-      } catch (err) {
-        console.log('Error recording initial GPS ping:', err);
+      } catch (nativeErr) {
+        console.log('Failed to start native background location service:', nativeErr);
       }
     }
 
-    // Poll location every 20 seconds (battery and bandwidth efficient)
+    // Send initial ping
+    try {
+      const coords = getCurrentCoords
+        ? await getCurrentCoords()
+        : await this.getCurrentPosition();
+
+      if (coords) {
+        await this.pingLocation(deliveryId, {
+          ...coords,
+          recorded_at: new Date().toISOString(),
+        });
+      }
+    } catch (err) {
+      console.log('Error recording initial GPS ping:', err);
+    }
+
+    // JS Polling interval (15-20s) as active fallback and in-app sync
     activeTrackingInterval = setInterval(async () => {
       if (!activeTrackingDeliveryId) {
         this.stopTracking();
         return;
       }
 
-      if (getCurrentCoords) {
-        try {
-          const coords = await getCurrentCoords();
-          if (coords) {
-            await this.pingLocation(activeTrackingDeliveryId, {
-              ...coords,
-              recorded_at: new Date().toISOString(),
-            });
-          }
-        } catch (err) {
-          console.log('Error in location ping cycle:', err);
+      try {
+        const coords = getCurrentCoords
+          ? await getCurrentCoords()
+          : await this.getCurrentPosition();
+
+        if (coords) {
+          await this.pingLocation(activeTrackingDeliveryId, {
+            ...coords,
+            recorded_at: new Date().toISOString(),
+          });
         }
+      } catch (err) {
+        console.log('Error in location ping cycle:', err);
       }
     }, 20000);
 
@@ -164,12 +258,48 @@ export const locationTrackingService = {
   /**
    * Stop tracking after Delivered, Failed or Cancelled
    */
-  stopTracking(): void {
+  async stopTracking(): Promise<void> {
     if (activeTrackingInterval) {
       clearInterval(activeTrackingInterval);
       activeTrackingInterval = null;
     }
     activeTrackingDeliveryId = null;
+
+    if (Platform.OS === 'android' && LocationModule?.stopBackgroundTracking) {
+      try {
+        await LocationModule.stopBackgroundTracking();
+        console.log('Native Android background location tracking stopped');
+      } catch (err) {
+        console.log('Error stopping native background location service:', err);
+      }
+    }
+  },
+
+  /**
+   * Check if tracking is active
+   */
+  async getTrackingStatus(): Promise<TrackingState> {
+    if (Platform.OS === 'android' && LocationModule?.isTrackingActive) {
+      try {
+        const status = await LocationModule.isTrackingActive();
+        if (status && status.isActive) {
+          return {
+            isActive: true,
+            deliveryId: status.deliveryId,
+            latitude: status.latitude,
+            longitude: status.longitude,
+            recordedAt: status.recordedAt,
+          };
+        }
+      } catch (err) {
+        console.log('Error reading native tracking status:', err);
+      }
+    }
+
+    return {
+      isActive: !!activeTrackingDeliveryId,
+      deliveryId: activeTrackingDeliveryId ? String(activeTrackingDeliveryId) : null,
+    };
   },
 
   getActiveTrackingDeliveryId(): number | string | null {
