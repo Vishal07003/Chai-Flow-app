@@ -15,12 +15,14 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import Header from '../../components/common/Header';
 import { useApp } from '../../context/AppContext';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 
 export default function ProfileScreen() {
-  const { userProfile, updateUserProfile } = useApp();
+  const { userProfile, updateUserProfile, logout } = useApp();
 
   const [isEditing, setIsEditing] = useState(false);
   const [avatarModalVisible, setAvatarModalVisible] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Form Fields State
@@ -329,6 +331,18 @@ export default function ProfileScreen() {
               <Text style={styles.cardValue}>{userProfile.address}</Text>
             )}
           </View>
+
+          {/* Logout Button */}
+          {!isEditing && (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={styles.logoutBtn}
+              onPress={() => setShowLogoutConfirm(true)}
+            >
+              <Ionicons name="log-out-outline" size={18} color="#DC2626" style={{ marginRight: 8 }} />
+              <Text style={styles.logoutBtnText}>Log Out</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </KeyboardAwareScrollView>
 
@@ -401,6 +415,22 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+
+      {/* Logout Confirmation Dialog */}
+      <ConfirmDialog
+        visible={showLogoutConfirm}
+        title="Log out of Chai Flow?"
+        description="Are you sure you want to log out? You will need to log in again to access your account."
+        confirmLabel="Log Out"
+        cancelLabel="Cancel"
+        type="danger"
+        icon="log-out-outline"
+        onConfirm={async () => {
+          setShowLogoutConfirm(false);
+          await logout();
+        }}
+        onCancel={() => setShowLogoutConfirm(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -685,5 +715,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#8A7E75',
+  },
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    paddingVertical: 14,
+    borderRadius: 14,
+    marginTop: 6,
+    marginBottom: 20,
+  },
+  logoutBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#DC2626',
   },
 });

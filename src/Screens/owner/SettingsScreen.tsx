@@ -17,11 +17,13 @@ import Header from '../../components/common/Header';
 import { TimePickerModal } from '../../components/common';
 import { useApp } from '../../context/AppContext';
 import { AppToast } from '../../utils/toast';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import orderService, { GlobalRecurringNotificationSetting } from '../../services/order.service';
 
 export default function SettingsScreen() {
   const navigation = useNavigation<any>();
-  const { userProfile, userRole } = useApp();
+  const { userProfile, userRole, logout } = useApp();
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const isDelivery = userRole === 'DELIVERY_PARTNER';
   const primaryColor = isDelivery ? '#059669' : '#8C331A';
@@ -431,6 +433,27 @@ export default function SettingsScreen() {
           </View>
           <Ionicons name="chevron-forward" size={18} color={textSecondary} />
         </TouchableOpacity>
+
+        {/* Logout Row */}
+        <TouchableOpacity
+          activeOpacity={0.7}
+          style={[styles.settingCard, { backgroundColor: cardBg, marginTop: 8 }]}
+          onPress={() => setShowLogoutConfirm(true)}
+        >
+          <View style={styles.leftRow}>
+            <View style={[styles.iconCircle, { backgroundColor: '#FEF2F2' }]}>
+              <Ionicons
+                name="log-out-outline"
+                size={20}
+                color="#DC2626"
+              />
+            </View>
+            <Text style={[styles.settingTitle, { color: '#DC2626', fontWeight: '700' }]}>
+              Log out
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="#DC2626" />
+        </TouchableOpacity>
       </ScrollView>
 
       {/* Language Selector Modal */}
@@ -623,6 +646,22 @@ export default function SettingsScreen() {
           else if (timePickerTarget === 'owner') setOwnerNotifTime(selectedTime);
           else if (timePickerTarget === 'partner') setPartnerNotifTime(selectedTime);
         }}
+      />
+
+      {/* Logout Confirmation Dialog */}
+      <ConfirmDialog
+        visible={showLogoutConfirm}
+        title="Log out of Chai Flow?"
+        description="Are you sure you want to log out? You will need to log in again to access your account."
+        confirmLabel="Log Out"
+        cancelLabel="Cancel"
+        type="danger"
+        icon="log-out-outline"
+        onConfirm={async () => {
+          setShowLogoutConfirm(false);
+          await logout();
+        }}
+        onCancel={() => setShowLogoutConfirm(false)}
       />
     </SafeAreaView>
   );
