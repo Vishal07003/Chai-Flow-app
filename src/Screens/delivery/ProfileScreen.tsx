@@ -18,6 +18,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import { useApp } from '../../context/AppContext';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
 
 export default function ProfileScreen({ navigation: _navigation }: any) {
@@ -28,6 +29,7 @@ export default function ProfileScreen({ navigation: _navigation }: any) {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState(false);
   const [avatarModalVisible, setAvatarModalVisible] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Form Fields
@@ -110,10 +112,7 @@ export default function ProfileScreen({ navigation: _navigation }: any) {
   };
 
   const handleLogout = () => {
-    Alert.alert('Confirm Logout', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Log Out', style: 'destructive', onPress: () => logout() },
-    ]);
+    setShowLogoutConfirm(true);
   };
 
   const pickImage = async () => {
@@ -459,6 +458,22 @@ export default function ProfileScreen({ navigation: _navigation }: any) {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+
+      {/* Logout Confirmation Dialog */}
+      <ConfirmDialog
+        visible={showLogoutConfirm}
+        title="Confirm Logout"
+        description="Are you sure you want to logout from your account?"
+        confirmLabel="Logout"
+        cancelLabel="Cancel"
+        type="danger"
+        icon="log-out-outline"
+        onConfirm={async () => {
+          setShowLogoutConfirm(false);
+          await logout();
+        }}
+        onCancel={() => setShowLogoutConfirm(false)}
+      />
     </SafeAreaView>
   );
 }

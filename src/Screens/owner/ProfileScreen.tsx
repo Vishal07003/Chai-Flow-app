@@ -419,9 +419,9 @@ export default function ProfileScreen() {
       {/* Logout Confirmation Dialog */}
       <ConfirmDialog
         visible={showLogoutConfirm}
-        title="Log out of Chai Flow?"
-        description="Are you sure you want to log out? You will need to log in again to access your account."
-        confirmLabel="Log Out"
+        title="Confirm Logout"
+        description="Are you sure you want to logout from your account?"
+        confirmLabel="Logout"
         cancelLabel="Cancel"
         type="danger"
         icon="log-out-outline"

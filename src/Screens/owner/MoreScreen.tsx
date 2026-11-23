@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -10,6 +10,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../components/common';
+import { useApp } from '../../context/AppContext';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 
 interface ToolItem {
   id: string;
@@ -26,6 +28,8 @@ interface ToolSection {
 
 export default function MoreScreen() {
   const navigation = useNavigation<any>();
+  const { logout } = useApp();
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const sections: ToolSection[] = [
     {
@@ -132,7 +136,41 @@ export default function MoreScreen() {
             </View>
           </View>
         ))}
+
+        {/* Separated Logout Action at Bottom */}
+        <View style={styles.logoutSection}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            style={styles.logoutBtn}
+            onPress={() => setShowLogoutConfirm(true)}
+          >
+            <View style={styles.logoutIconCircle}>
+              <Ionicons name="log-out-outline" size={20} color="#DC2626" />
+            </View>
+            <View style={styles.logoutTextContainer}>
+              <Text style={styles.logoutTitle}>Logout</Text>
+              <Text style={styles.logoutSubtitle}>Sign out from your owner account</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#DC2626" />
+          </TouchableOpacity>
+        </View>
       </ScrollView>
+
+      {/* Logout Confirmation Dialog */}
+      <ConfirmDialog
+        visible={showLogoutConfirm}
+        title="Confirm Logout"
+        description="Are you sure you want to logout from your account?"
+        confirmLabel="Logout"
+        cancelLabel="Cancel"
+        type="danger"
+        icon="log-out-outline"
+        onConfirm={async () => {
+          setShowLogoutConfirm(false);
+          await logout();
+        }}
+        onCancel={() => setShowLogoutConfirm(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -202,5 +240,46 @@ const styles = StyleSheet.create({
   itemSubtitle: {
     fontSize: 11,
     color: '#8A7E75',
+  },
+  logoutSection: {
+    marginTop: 8,
+    marginBottom: 20,
+  },
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+  },
+  logoutIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#FEF2F2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  logoutTextContainer: {
+    flex: 1,
+  },
+  logoutTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#DC2626',
+    marginBottom: 2,
+  },
+  logoutSubtitle: {
+    fontSize: 11,
+    color: '#9CA3AF',
   },
 });
