@@ -88,9 +88,8 @@ export default function OrderCard({ order, onPress, onStatusChange }: OrderCardP
       </View>
 
       <View style={styles.footerRow}>
-        <View>
-          <Text style={styles.amountLabel}>Collect Payment ({order.paymentMode})</Text>
-          <Text style={styles.amountValue}>₹{order.amount.toLocaleString('en-IN')}</Text>
+        <View style={styles.statusIndicatorWrapper}>
+          <Text style={styles.operationalTag}>Delivery Stop #{order.sequence || 1}</Text>
         </View>
 
         <View style={styles.actionsGroup}>
@@ -214,6 +213,17 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
     paddingTop: 10,
+  },
+  statusIndicatorWrapper: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  operationalTag: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4B5563',
   },
   amountLabel: {
     fontSize: 11,
