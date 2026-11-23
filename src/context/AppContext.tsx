@@ -411,11 +411,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const logout = async () => {
-    // Deactivate device token before clearing auth session
-    await notificationService.deactivateDeviceToken();
-    await authService.logout();
-    setIsDrawerOpen(false);
-    setIsAuthenticated(false);
+    try {
+      // Deactivate device token before clearing auth session
+      await notificationService.deactivateDeviceToken().catch(() => {});
+      await authService.logout().catch(() => {});
+    } catch (e) {
+      console.log('Error during logout services cleanup:', e);
+    } finally {
+      setIsDrawerOpen(false);
+      setIsAuthenticated(false);
+      setUserMobile('');
+
+      // Also ensure persisted app data is updated so a restart doesn't revive isAuthenticated
+      try {
+        const stored = await AsyncStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          parsed.isAuthenticated = false;
+          parsed.userMobile = '';
+          await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+        }
+      } catch (err) {
+        console.log('Error updating persisted logout state:', err);
+      }
+    }
   };
 
   // Centralized Function to re-sync all live data from Django Backend

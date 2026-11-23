@@ -485,6 +485,19 @@ export default function ProfileDrawer(props?: DrawerContentComponentProps) {
           </SafeAreaView>
         </View>
       </Modal>
+
+      {/* Logout Confirmation Dialog */}
+      <ConfirmDialog
+        visible={showLogoutConfirm}
+        title="Log out of Chai Flow?"
+        description="Are you sure you want to log out? You will need to log in again to access your account."
+        confirmLabel="Log Out"
+        cancelLabel="Cancel"
+        type="danger"
+        icon="log-out-outline"
+        onConfirm={handleExecuteLogout}
+        onCancel={() => setShowLogoutConfirm(false)}
+      />
     </>
   );
 }
