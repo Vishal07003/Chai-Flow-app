@@ -23,6 +23,7 @@ import orderService from '../../services/order.service';
 import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
 import draftService, { DraftInvoice } from '../../services/draft.service';
 import { CustomDialog, ConfirmDialog, DeliveryPartnerDropdown } from '../../components/common';
+import CalendarPickerModal from '../../components/common/CalendarPickerModal';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 
 const TEA_IMAGES: { [key: string]: string } = {
@@ -60,11 +61,20 @@ export default function QuickBillingScreen({ route, navigation }: any) {
   const initialCustomerId = route?.params?.customerId;
   const prefilledItems = route?.params?.prefilledItems;
   const routeDraftId = route?.params?.draftId;
+  const isFromTab = Boolean(route?.params?.fromTab);
+
+  // Show Back Button if:
+  // 1. In Order Mode (e.g. Orders -> New Order)
+  // 2. Editing an existing draft (draftId present)
+  // 3. Came with an explicit non-tab flag (fromOrders, customer prefill, prefilled items)
+  // When opened directly from the Billing bottom tab, showBackButton is false.
+  const showBackButton = isOrderMode || Boolean(routeDraftId) || Boolean(route?.params?.fromOrders) || (Boolean(routeCustomer || initialCustomerId || prefilledItems) && !isFromTab);
 
   // Draft Edit State
   const [editingDraft, setEditingDraft] = useState<DraftInvoice | null>(null);
   const [loadingDraftDetail, setLoadingDraftDetail] = useState<boolean>(false);
   const [dueDate, setDueDate] = useState<string>('');
+  const [showDatePicker, setShowDatePicker] = useState<boolean>(false);
   const [draftNotes, setDraftNotes] = useState<string>('');
   const [customUnitPrices, setCustomUnitPrices] = useState<{ [productId: string]: string }>({});
 
@@ -666,6 +676,15 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     }
   };
 
+  // Validate date in YYYY-MM-DD format
+  const isValidDateFormat = (dStr: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dStr)) return false;
+    const [y, m, d] = dStr.split('-').map(Number);
+    if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+    const dt = new Date(y, m - 1, d);
+    return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+  };
+
   // Execute Draft Creation / Update in Django Backend (Draft Billing Mode)
   const executeSaveDraft = async () => {
     closeDialog();
@@ -681,7 +700,16 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         unit_price: item.price,
       }));
 
-      const cleanDueDate = dueDate.trim() || null;
+      const trimmedDueDate = dueDate.trim();
+      if (trimmedDueDate && !isValidDateFormat(trimmedDueDate)) {
+        Toast.show({
+          type: 'error',
+          text1: 'Invalid Due Date',
+          text2: 'Please enter a valid date in YYYY-MM-DD format (e.g. 2026-12-01).',
+        });
+        return;
+      }
+      const cleanDueDate = trimmedDueDate || null;
       const cleanNotes = draftNotes.trim();
 
       if (editingDraft) {
@@ -803,6 +831,15 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     }
 
     // Quick Billing Mode -> Save as Draft (New or Edit)
+    const trimmedDueDate = dueDate.trim();
+    if (trimmedDueDate && !isValidDateFormat(trimmedDueDate)) {
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid Due Date',
+        text2: 'Please enter a valid date in YYYY-MM-DD format (e.g. 2026-12-01).',
+      });
+      return;
+    }
     if (selectedPartnerId) {
       const effectiveAddress = deliveryAddress.trim() || selectedCustomer?.address?.trim();
       if (!selectedCustomer && !deliveryAddress.trim()) {
@@ -846,13 +883,15 @@ export default function QuickBillingScreen({ route, navigation }: any) {
       {/* HEADER */}
       <View style={styles.topHeaderBar}>
         <View style={styles.headerTitleGroup}>
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={() => navigation.goBack()}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="arrow-back" size={22} color="#111827" />
-          </TouchableOpacity>
+          {showBackButton && (
+            <TouchableOpacity
+              style={styles.backBtn}
+              onPress={() => navigation.goBack()}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="arrow-back" size={22} color="#111827" />
+            </TouchableOpacity>
+          )}
 
           <View style={styles.teaLogoIconContainer}>
             <Ionicons name={isOrderMode ? "cart" : editingDraft ? "document-text" : "cafe"} size={16} color="#8C331A" />
@@ -1347,12 +1386,17 @@ export default function QuickBillingScreen({ route, navigation }: any) {
               {/* Payment Due Date */}
               <Text style={styles.orderFieldLabel}>PAYMENT DUE DATE (OPTIONAL - YYYY-MM-DD)</Text>
               <View style={styles.draftInputBox}>
-                <Ionicons
-                  name="calendar-outline"
-                  size={18}
-                  color="#8C331A"
-                  style={{ marginRight: 8 }}
-                />
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => setShowDatePicker(true)}
+                  style={styles.calendarIconBtn}
+                >
+                  <Ionicons
+                    name="calendar-outline"
+                    size={20}
+                    color="#8C331A"
+                  />
+                </TouchableOpacity>
                 <TextInput
                   style={styles.draftInputField}
                   placeholder="YYYY-MM-DD (e.g. 2026-12-01)"
@@ -1360,6 +1404,15 @@ export default function QuickBillingScreen({ route, navigation }: any) {
                   value={dueDate}
                   onChangeText={setDueDate}
                 />
+                {dueDate.length > 0 && (
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => setDueDate('')}
+                    style={{ padding: 4 }}
+                  >
+                    <Ionicons name="close-circle" size={18} color="#9CA3AF" />
+                  </TouchableOpacity>
+                )}
               </View>
 
               {/* Draft Notes */}
@@ -1507,6 +1560,18 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         type={dialogConfig.type}
         buttons={dialogConfig.buttons}
         onClose={closeDialog}
+      />
+
+      {/* PAYMENT DUE DATE CALENDAR PICKER */}
+      <CalendarPickerModal
+        visible={showDatePicker}
+        title="Select Payment Due Date"
+        initialDate={dueDate.trim() || undefined}
+        onClose={() => setShowDatePicker(false)}
+        onSelectDate={(dateString: string) => {
+          setDueDate(dateString);
+          setShowDatePicker(false);
+        }}
       />
     </SafeAreaView>
   );
@@ -2535,6 +2600,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#111827',
     paddingVertical: 4,
+  },
+  calendarIconBtn: {
+    paddingRight: 8,
+    paddingVertical: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   centerLoadingBox: {
     flex: 1,

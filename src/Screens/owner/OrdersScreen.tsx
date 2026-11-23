@@ -353,6 +353,7 @@ export default function OrdersScreen({ navigation }: any) {
   const handleEditDraft = (draft: DraftInvoice) => {
     navigation.navigate('QuickBilling', {
       draftId: draft.id,
+      fromOrders: true,
     });
   };
 
@@ -419,9 +420,9 @@ export default function OrdersScreen({ navigation }: any) {
     if (sectionMode === 'recurring') {
       handleOpenNewRecurring();
     } else if (sectionMode === 'drafts') {
-      navigation.navigate('QuickBilling');
+      navigation.navigate('QuickBilling', { fromOrders: true });
     } else {
-      navigation.navigate('CreateOrder', { mode: 'order' });
+      navigation.navigate('CreateOrder', { mode: 'order', fromOrders: true });
     }
   };
 

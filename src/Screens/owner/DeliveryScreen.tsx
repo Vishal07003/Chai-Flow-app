@@ -173,7 +173,11 @@ export default function DeliveryScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* 1. Main Application Header - Renamed to Delivery Partners */}
-      <Header title="Delivery Partners" />
+      <Header
+        title="Delivery Partners"
+        showBack={true}
+        showNotification={false}
+      />
 
       {toastMessage !== '' && (
         <View style={styles.toast}>
@@ -204,10 +208,10 @@ export default function DeliveryScreen() {
               f === 'All'
                 ? counts.total
                 : f === 'Available'
-                ? counts.available
-                : f === 'Busy'
-                ? counts.busy
-                : counts.offline;
+                  ? counts.available
+                  : f === 'Busy'
+                    ? counts.busy
+                    : counts.offline;
 
             return (
               <TouchableOpacity

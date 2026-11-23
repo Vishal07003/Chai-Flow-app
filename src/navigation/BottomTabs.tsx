@@ -138,6 +138,7 @@ export default function BottomTabs() {
           <Tab.Screen
             name="Billing"
             component={QuickBillingScreen}
+            initialParams={{ fromTab: true }}
             options={{ tabBarLabel: 'BILLING' }}
           />
           <Tab.Screen

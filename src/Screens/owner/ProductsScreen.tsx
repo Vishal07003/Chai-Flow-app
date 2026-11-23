@@ -60,7 +60,11 @@ export default function ProductsScreen({ navigation, route }: any) {
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* Fixed Top Header */}
-      <Header title="Products" />
+      <Header
+        title="Products"
+        showBack={true}
+        showNotification={false}
+      />
 
       {/* Sticky Search & Category Bar */}
       <View style={styles.stickySearchContainer}>
