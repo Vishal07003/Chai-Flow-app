@@ -12,13 +12,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Header from '../components/common/Header';
 import { useApp, NotificationItem } from '../context/AppContext';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { AppToast } from '../utils/toast';
 
 interface SwipeableNotificationCardProps {
   item: NotificationItem;
   isSelectionMode: boolean;
   isSelected: boolean;
   onToggleSelect: (id: string) => void;
-  onDelete: (id: string) => void;
+  onRequestDelete: (id: string) => void;
+  isSwipeOpen: boolean;
+  onSwipeOpen: (id: string) => void;
+  onSwipeClose: () => void;
 }
 
 function SwipeableNotificationCard({
@@ -26,9 +31,32 @@ function SwipeableNotificationCard({
   isSelectionMode,
   isSelected,
   onToggleSelect,
-  onDelete,
+  onRequestDelete,
+  isSwipeOpen,
+  onSwipeOpen,
+  onSwipeClose,
 }: SwipeableNotificationCardProps) {
   const pan = useRef(new Animated.ValueXY()).current;
+  const DELETE_WIDTH = -90;
+
+  // React to external close (e.g. user swiped another card or cancelled)
+  useEffect(() => {
+    if (!isSwipeOpen) {
+      Animated.spring(pan.x, {
+        toValue: 0,
+        friction: 7,
+        tension: 40,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.spring(pan.x, {
+        toValue: DELETE_WIDTH,
+        friction: 7,
+        tension: 40,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [isSwipeOpen]);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -36,23 +64,32 @@ function SwipeableNotificationCard({
         return Math.abs(gestureState.dx) > 15 && Math.abs(gestureState.dy) < 15;
       },
       onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dx < 0) {
-          pan.x.setValue(gestureState.dx);
+        if (isSelectionMode) return;
+        const currentBase = isSwipeOpen ? DELETE_WIDTH : 0;
+        const targetX = currentBase + gestureState.dx;
+        // Don't swipe right past 0 or left beyond -140
+        if (targetX <= 0 && targetX >= -140) {
+          pan.x.setValue(targetX);
         }
       },
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dx < -100) {
-          Animated.timing(pan.x, {
-            toValue: -500,
-            duration: 200,
-            useNativeDriver: true,
-          }).start(() => onDelete(item.id));
-        } else {
+        if (isSelectionMode) return;
+        if (gestureState.dx < -35 || (isSwipeOpen && gestureState.dx <= 0)) {
+          // Open swipe delete action
           Animated.spring(pan.x, {
-            toValue: 0,
-            friction: 6,
+            toValue: DELETE_WIDTH,
+            friction: 7,
             useNativeDriver: true,
           }).start();
+          onSwipeOpen(item.id);
+        } else {
+          // Snap back to closed position
+          Animated.spring(pan.x, {
+            toValue: 0,
+            friction: 7,
+            useNativeDriver: true,
+          }).start();
+          onSwipeClose();
         }
       },
     }),
@@ -82,12 +119,16 @@ function SwipeableNotificationCard({
 
   return (
     <View style={styles.cardWrapper}>
-      {/* Background Action for Swipe */}
+      {/* Revealed Swipe Action Button */}
       <View style={styles.swipeDeleteBack}>
-        <View style={styles.swipeDeleteContent}>
-          <Ionicons name="trash" size={22} color="#FFFFFF" />
-          <Text style={styles.swipeDeleteText}>Swipe to Delete</Text>
-        </View>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          style={styles.swipeDeleteContent}
+          onPress={() => onRequestDelete(item.id)}
+        >
+          <Ionicons name="trash-outline" size={22} color="#FFFFFF" />
+          <Text style={styles.swipeDeleteText}>Delete</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Foreground Animated Card */}
@@ -102,6 +143,10 @@ function SwipeableNotificationCard({
         <TouchableOpacity
           activeOpacity={0.9}
           onPress={() => {
+            if (isSwipeOpen) {
+              onSwipeClose();
+              return;
+            }
             if (isSelectionMode) {
               onToggleSelect(item.id);
             }
@@ -141,8 +186,9 @@ function SwipeableNotificationCard({
           {!isSelectionMode && (
             <TouchableOpacity
               activeOpacity={0.7}
-              onPress={() => onDelete(item.id)}
+              onPress={() => onRequestDelete(item.id)}
               style={styles.singleDeleteBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Ionicons name="trash-outline" size={18} color="#9CA3AF" />
             </TouchableOpacity>
@@ -165,7 +211,12 @@ export default function NotificationsScreen() {
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [toastMessage, setToastMessage] = useState('');
+  const [openCardId, setOpenCardId] = useState<string | null>(null);
+
+  // Confirmation Dialog State
+  const [confirmDialogVisible, setConfirmDialogVisible] = useState(false);
+  const [targetDeleteId, setTargetDeleteId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Mark all as read when opening screen
   useEffect(() => {
@@ -188,35 +239,53 @@ export default function NotificationsScreen() {
     }
   };
 
+  const onRequestDelete = (id: string) => {
+    setTargetDeleteId(id);
+    setConfirmDialogVisible(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!targetDeleteId) return;
+    try {
+      setIsDeleting(true);
+      await deleteNotification(targetDeleteId);
+      AppToast.success('Notification Deleted', 'The notification has been removed.');
+      setConfirmDialogVisible(false);
+      setTargetDeleteId(null);
+      setOpenCardId(null);
+    } catch (err: any) {
+      console.log('Error deleting notification:', err);
+      AppToast.error('Delete Failed', 'Could not delete notification. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleCancelDelete = () => {
+    setConfirmDialogVisible(false);
+    setTargetDeleteId(null);
+    setOpenCardId(null);
+  };
+
   const handleDeleteSelected = () => {
     if (selectedIds.length === 0) return;
     deleteSelectedNotifications(selectedIds);
-    setToastMessage(`Deleted ${selectedIds.length} notification(s)`);
+    AppToast.success('Notifications Deleted', `Deleted ${selectedIds.length} notification(s).`);
     setSelectedIds([]);
     setIsSelectionMode(false);
-    setTimeout(() => setToastMessage(''), 2500);
   };
 
   const handleClearAll = () => {
     clearAllNotifications();
     setSelectedIds([]);
     setIsSelectionMode(false);
-    setToastMessage('All notifications cleared');
-    setTimeout(() => setToastMessage(''), 2500);
+    AppToast.info('Notifications Cleared', 'All notifications have been cleared.');
   };
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header with Back Button */}
       <Header title="Notifications" showBack={true} />
-
-      {/* Toast Alert */}
-      {toastMessage !== '' && (
-        <View style={styles.toast}>
-          <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />
-          <Text style={styles.toastText}>{toastMessage}</Text>
-        </View>
-      )}
 
       {/* Top Action Controls Bar */}
       <View style={styles.controlsBar}>
@@ -238,6 +307,7 @@ export default function NotificationsScreen() {
               onPress={() => {
                 setIsSelectionMode(!isSelectionMode);
                 setSelectedIds([]);
+                setOpenCardId(null);
               }}
             >
               <Ionicons
@@ -271,21 +341,22 @@ export default function NotificationsScreen() {
         </View>
       </View>
 
-      {/* Selection Action Header Bar */}
+      {/* Multi-Select Action Bar */}
       {isSelectionMode && (
         <View style={styles.selectionBar}>
           <TouchableOpacity
             activeOpacity={0.8}
-            onPress={handleSelectAll}
             style={styles.selectAllBtn}
+            onPress={handleSelectAll}
           >
             <Ionicons
               name={
-                selectedIds.length === notifications.length
+                selectedIds.length === notifications.length &&
+                notifications.length > 0
                   ? 'checkbox'
                   : 'square-outline'
               }
-              size={18}
+              size={20}
               color="#8C331A"
             />
             <Text style={styles.selectAllText}>
@@ -297,42 +368,43 @@ export default function NotificationsScreen() {
 
           <TouchableOpacity
             activeOpacity={0.8}
-            onPress={handleDeleteSelected}
             style={[
               styles.deleteSelectedBtn,
               selectedIds.length === 0 && styles.deleteSelectedDisabled,
             ]}
+            onPress={handleDeleteSelected}
             disabled={selectedIds.length === 0}
           >
-            <Ionicons name="trash" size={15} color="#FFFFFF" />
+            <Ionicons name="trash" size={16} color="#FFFFFF" />
             <Text style={styles.deleteSelectedText}>
-              Delete Selected ({selectedIds.length})
+              Delete ({selectedIds.length})
             </Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Swipe Hint */}
+      {/* Swipe Hint Banner */}
       {notifications.length > 0 && !isSelectionMode && (
         <View style={styles.swipeHintBar}>
           <Ionicons name="swap-horizontal" size={14} color="#8A7E75" />
           <Text style={styles.swipeHintText}>
-            Tip: Swipe left on any card to quickly delete it
+            Swipe left on any notification to reveal Delete
           </Text>
         </View>
       )}
 
-      {/* Main Notifications List */}
+      {/* Notifications List */}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {notifications.length === 0 ? (
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIconBg}>
               <Ionicons
                 name="notifications-off-outline"
-                size={42}
+                size={40}
                 color="#8C331A"
               />
             </View>
@@ -350,15 +422,28 @@ export default function NotificationsScreen() {
               isSelectionMode={isSelectionMode}
               isSelected={selectedIds.includes(item.id)}
               onToggleSelect={handleToggleSelect}
-              onDelete={id => {
-                deleteNotification(id);
-                setToastMessage('Notification removed');
-                setTimeout(() => setToastMessage(''), 2000);
-              }}
+              onRequestDelete={onRequestDelete}
+              isSwipeOpen={openCardId === item.id}
+              onSwipeOpen={id => setOpenCardId(id)}
+              onSwipeClose={() => setOpenCardId(null)}
             />
           ))
         )}
       </ScrollView>
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        visible={confirmDialogVisible}
+        title="Delete Notification?"
+        description="Are you sure you want to delete this notification?"
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        type="danger"
+        icon="trash-outline"
+        loading={isDeleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={handleCancelDelete}
+      />
     </SafeAreaView>
   );
 }
@@ -367,25 +452,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FAF8F5',
-  },
-  toast: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
-    right: 20,
-    backgroundColor: '#2C201A',
-    borderRadius: 14,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    zIndex: 999,
-    elevation: 6,
-  },
-  toastText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
-    marginLeft: 8,
   },
   controlsBar: {
     flexDirection: 'row',
@@ -551,18 +617,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#E11D48',
     justifyContent: 'center',
     alignItems: 'flex-end',
-    paddingRight: 20,
     borderRadius: 16,
   },
   swipeDeleteContent: {
-    flexDirection: 'row',
+    width: 90,
+    height: '100%',
+    justifyContent: 'center',
     alignItems: 'center',
+    flexDirection: 'column',
   },
   swipeDeleteText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
-    marginLeft: 6,
+    marginTop: 3,
   },
   card: {
     backgroundColor: '#FFFFFF',

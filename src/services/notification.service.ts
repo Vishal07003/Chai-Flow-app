@@ -148,6 +148,29 @@ class NotificationService {
         },
       };
     }
+    if (notifType === 'daily_business_reminder') {
+      // Navigation routing based on primary category or screen parameter
+      // Options: Pending Payments -> 'PendingPayments', Partial Payments -> 'Invoices', Draft Bills -> 'QuickBilling' (with draft bills modal)
+      const targetScreen = data.screen || 'PendingPayments';
+      const category = data.category;
+
+      if (category === 'draft_bills' || targetScreen === 'QuickBilling') {
+        return {
+          screen: 'QuickBilling',
+          params: { openDraftsModal: true },
+        };
+      }
+      if (category === 'partial_payments' || targetScreen === 'Invoices') {
+        return {
+          screen: 'Invoices',
+          params: { filter: 'partially_paid' },
+        };
+      }
+      return {
+        screen: 'PendingPayments',
+        params: { filter: 'unpaid' },
+      };
+    }
     return null;
   }
 
@@ -257,7 +280,18 @@ class NotificationService {
   }
 
   async deleteNotification(id: string): Promise<{ success: boolean }> {
-    return apiClient.delete(`/notifications/${id}`, { success: true });
+    // If id is numeric (backend NotificationLog id), call authenticated backend endpoint
+    if (/^\d+$/.test(id)) {
+      try {
+        await apiClient.delete(`/notifications/history/${id}/`);
+        return { success: true };
+      } catch (err) {
+        console.log('Failed to delete notification from backend:', err);
+        throw err;
+      }
+    }
+    // For local mock ids (e.g. notif-1234, n-1234), fallback to client-level deletion
+    return apiClient.delete(`/notifications/${id}`, { success: true }).catch(() => ({ success: true }));
   }
 
   async clearAll(): Promise<{ success: boolean }> {

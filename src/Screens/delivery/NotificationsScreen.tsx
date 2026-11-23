@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -12,17 +12,45 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import { useApp, NotificationItem } from '../../context/AppContext';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { AppToast } from '../../utils/toast';
 
 interface SwipeableDeliveryNotificationProps {
   item: NotificationItem;
-  onDelete: (id: string) => void;
+  onRequestDelete: (id: string) => void;
+  isSwipeOpen: boolean;
+  onSwipeOpen: (id: string) => void;
+  onSwipeClose: () => void;
 }
 
 function SwipeableDeliveryNotification({
   item,
-  onDelete,
+  onRequestDelete,
+  isSwipeOpen,
+  onSwipeOpen,
+  onSwipeClose,
 }: SwipeableDeliveryNotificationProps) {
   const pan = useRef(new Animated.ValueXY()).current;
+  const DELETE_WIDTH = -90;
+
+  // React to external close
+  useEffect(() => {
+    if (!isSwipeOpen) {
+      Animated.spring(pan.x, {
+        toValue: 0,
+        friction: 7,
+        tension: 40,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.spring(pan.x, {
+        toValue: DELETE_WIDTH,
+        friction: 7,
+        tension: 40,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [isSwipeOpen]);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -30,23 +58,27 @@ function SwipeableDeliveryNotification({
         return Math.abs(gestureState.dx) > 15 && Math.abs(gestureState.dy) < 15;
       },
       onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dx < 0) {
-          pan.x.setValue(gestureState.dx);
+        const currentBase = isSwipeOpen ? DELETE_WIDTH : 0;
+        const targetX = currentBase + gestureState.dx;
+        if (targetX <= 0 && targetX >= -140) {
+          pan.x.setValue(targetX);
         }
       },
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dx < -100) {
-          Animated.timing(pan.x, {
-            toValue: -500,
-            duration: 200,
+        if (gestureState.dx < -35 || (isSwipeOpen && gestureState.dx <= 0)) {
+          Animated.spring(pan.x, {
+            toValue: DELETE_WIDTH,
+            friction: 7,
             useNativeDriver: true,
-          }).start(() => onDelete(item.id));
+          }).start();
+          onSwipeOpen(item.id);
         } else {
           Animated.spring(pan.x, {
             toValue: 0,
-            friction: 6,
+            friction: 7,
             useNativeDriver: true,
           }).start();
+          onSwipeClose();
         }
       },
     }),
@@ -56,10 +88,14 @@ function SwipeableDeliveryNotification({
     <View style={styles.cardWrapper}>
       {/* Swipe delete background */}
       <View style={styles.swipeDeleteBack}>
-        <View style={styles.swipeDeleteContent}>
-          <Ionicons name="trash" size={20} color="#FFFFFF" />
+        <TouchableOpacity
+          activeOpacity={0.8}
+          style={styles.swipeDeleteContent}
+          onPress={() => onRequestDelete(item.id)}
+        >
+          <Ionicons name="trash-outline" size={22} color="#FFFFFF" />
           <Text style={styles.swipeDeleteText}>Delete</Text>
-        </View>
+        </TouchableOpacity>
       </View>
 
       {/* Foreground card */}
@@ -71,25 +107,35 @@ function SwipeableDeliveryNotification({
         ]}
         {...panResponder.panHandlers}
       >
-        <View style={styles.iconCircle}>
-          <Ionicons name="notifications" size={20} color="#059669" />
-        </View>
-
-        <View style={styles.contentWrapper}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>{item.title}</Text>
-            <Text style={styles.timeText}>{item.time}</Text>
-          </View>
-          <Text style={styles.cardMessage}>{item.message}</Text>
-        </View>
-
         <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => onDelete(item.id)}
-          style={styles.deleteBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          activeOpacity={0.9}
+          style={styles.cardInnerTouch}
+          onPress={() => {
+            if (isSwipeOpen) {
+              onSwipeClose();
+            }
+          }}
         >
-          <Ionicons name="trash-outline" size={18} color="#9CA3AF" />
+          <View style={styles.iconCircle}>
+            <Ionicons name="notifications" size={20} color="#059669" />
+          </View>
+
+          <View style={styles.contentWrapper}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>{item.title}</Text>
+              <Text style={styles.timeText}>{item.time}</Text>
+            </View>
+            <Text style={styles.cardMessage}>{item.message}</Text>
+          </View>
+
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => onRequestDelete(item.id)}
+            style={styles.deleteBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="trash-outline" size={18} color="#9CA3AF" />
+          </TouchableOpacity>
         </TouchableOpacity>
       </Animated.View>
     </View>
@@ -104,31 +150,49 @@ export default function NotificationsScreen() {
     clearAllNotifications,
   } = useApp();
 
-  const [toastMessage, setToastMessage] = useState('');
+  const [openCardId, setOpenCardId] = useState<string | null>(null);
 
-  const handleDeleteOne = (id: string) => {
-    deleteNotification(id);
-    setToastMessage('Notification deleted');
-    setTimeout(() => setToastMessage(''), 2000);
+  // Confirmation Dialog State
+  const [confirmDialogVisible, setConfirmDialogVisible] = useState(false);
+  const [targetDeleteId, setTargetDeleteId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const onRequestDelete = (id: string) => {
+    setTargetDeleteId(id);
+    setConfirmDialogVisible(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!targetDeleteId) return;
+    try {
+      setIsDeleting(true);
+      await deleteNotification(targetDeleteId);
+      AppToast.success('Notification Deleted', 'The notification has been removed.');
+      setConfirmDialogVisible(false);
+      setTargetDeleteId(null);
+      setOpenCardId(null);
+    } catch (err: any) {
+      console.log('Error deleting delivery notification:', err);
+      AppToast.error('Delete Failed', 'Could not delete notification. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleCancelDelete = () => {
+    setConfirmDialogVisible(false);
+    setTargetDeleteId(null);
+    setOpenCardId(null);
   };
 
   const handleClearAll = () => {
     clearAllNotifications();
-    setToastMessage('All notifications cleared');
-    setTimeout(() => setToastMessage(''), 2000);
+    AppToast.info('Notifications Cleared', 'All notifications have been cleared.');
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <DeliveryHeader title="Partner Notifications" showBack={true} />
-
-      {/* Toast Alert */}
-      {toastMessage !== '' && (
-        <View style={styles.toast}>
-          <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />
-          <Text style={styles.toastText}>{toastMessage}</Text>
-        </View>
-      )}
 
       {/* Action Bar */}
       <View style={styles.topRow}>
@@ -159,6 +223,7 @@ export default function NotificationsScreen() {
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {notifications.length === 0 ? (
           <View style={styles.emptyContainer}>
@@ -180,11 +245,28 @@ export default function NotificationsScreen() {
             <SwipeableDeliveryNotification
               key={item.id}
               item={item}
-              onDelete={handleDeleteOne}
+              onRequestDelete={onRequestDelete}
+              isSwipeOpen={openCardId === item.id}
+              onSwipeOpen={id => setOpenCardId(id)}
+              onSwipeClose={() => setOpenCardId(null)}
             />
           ))
         )}
       </ScrollView>
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        visible={confirmDialogVisible}
+        title="Delete Notification?"
+        description="Are you sure you want to delete this notification?"
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        type="danger"
+        icon="trash-outline"
+        loading={isDeleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={handleCancelDelete}
+      />
     </SafeAreaView>
   );
 }
@@ -193,25 +275,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FAF8F5',
-  },
-  toast: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
-    right: 20,
-    backgroundColor: '#059669',
-    borderRadius: 14,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    zIndex: 999,
-    elevation: 6,
-  },
-  toastText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
-    marginLeft: 8,
   },
   topRow: {
     flexDirection: 'row',
@@ -274,25 +337,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#EF4444',
     justifyContent: 'center',
     alignItems: 'flex-end',
-    paddingRight: 20,
     borderRadius: 16,
   },
   swipeDeleteContent: {
-    flexDirection: 'row',
+    width: 90,
+    height: '100%',
+    justifyContent: 'center',
     alignItems: 'center',
+    flexDirection: 'column',
   },
   swipeDeleteText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
-    marginLeft: 6,
+    marginTop: 3,
   },
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#EFECE8',
     elevation: 2,
@@ -300,6 +362,11 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,
     shadowRadius: 4,
+  },
+  cardInnerTouch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
   },
   unreadCard: {
     backgroundColor: '#F0FDF4',

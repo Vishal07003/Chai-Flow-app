@@ -36,9 +36,6 @@ export default function ProfileScreen({ navigation: _navigation }: any) {
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [emergencyPhone, setEmergencyPhone] = useState('');
-  const [vehicle, setVehicle] = useState('');
-  const [plateNumber, setPlateNumber] = useState('');
-  const [licenseNumber, setLicenseNumber] = useState('');
   const [location, setLocation] = useState('');
 
   const fetchProfile = useCallback(async () => {
@@ -51,18 +48,12 @@ export default function ProfileScreen({ navigation: _navigation }: any) {
         setFullName(myProfile.name || userProfile.fullName || '');
         setPhone(myProfile.phone || userProfile.phone || '');
         setEmergencyPhone(myProfile.emergency_phone || '');
-        setVehicle(myProfile.vehicle_type ? `${myProfile.vehicle_type} ${myProfile.vehicle_model || ''}`.trim() : '');
-        setPlateNumber(myProfile.number_plate || '');
-        setLicenseNumber(myProfile.license_number || '');
         setLocation(myProfile.location || '');
       } else {
         // Fallback to authenticated user info
         setFullName(userProfile.fullName || '');
         setPhone(userProfile.phone || '');
         setEmergencyPhone('');
-        setVehicle('');
-        setPlateNumber('');
-        setLicenseNumber('');
         setLocation('');
       }
     } catch (err) {
@@ -157,8 +148,6 @@ export default function ProfileScreen({ navigation: _navigation }: any) {
 
   const displayName = fullName || partnerProfile?.name || userProfile.fullName || 'Delivery Partner';
   const displayPhone = phone || partnerProfile?.phone || userProfile.phone || 'No phone set';
-  const displayVehicle = vehicle || (partnerProfile?.vehicle_type ? `${partnerProfile.vehicle_type} ${partnerProfile.vehicle_model || ''}`.trim() : 'Vehicle not registered');
-  const displayPlate = plateNumber || partnerProfile?.number_plate || 'Not registered';
   const displayStatus = partnerProfile?.status || 'READY';
   const isActive = partnerProfile?.is_active ?? true;
 
@@ -222,19 +211,6 @@ export default function ProfileScreen({ navigation: _navigation }: any) {
                   {isActive ? `Active • ${displayStatus}` : 'Account Deactivated'}
                 </Text>
               </View>
-              {displayVehicle !== 'Vehicle not registered' ? (
-                <View style={styles.vehicleBadgeRow}>
-                  <Ionicons
-                    name="bicycle"
-                    size={14}
-                    color="#D1FAE5"
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text style={styles.vehicleBadgeText} numberOfLines={1}>
-                    {displayVehicle}
-                  </Text>
-                </View>
-              ) : null}
             </View>
           </View>
 
@@ -319,35 +295,6 @@ export default function ProfileScreen({ navigation: _navigation }: any) {
                 </Text>
               )}
             </View>
-
-            {/* Vehicle Model (Read-Only) */}
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>ASSIGNED VEHICLE</Text>
-              <Text style={styles.valueText}>{displayVehicle}</Text>
-            </View>
-
-            {/* Number Plate (Read-Only) */}
-            <View style={styles.fieldGroup}>
-              <View style={styles.labelWithBadge}>
-                <Text style={styles.label}>NUMBER PLATE</Text>
-                <View style={styles.ownerOnlyBadge}>
-                  <Ionicons name="lock-closed" size={10} color="#059669" style={{ marginRight: 3 }} />
-                  <Text style={styles.ownerOnlyBadgeText}>Owner Verified</Text>
-                </View>
-              </View>
-              <View style={styles.plateChip}>
-                <Ionicons name="car-sport" size={15} color="#047857" style={{ marginRight: 6 }} />
-                <Text style={styles.plateChipText}>{displayPlate}</Text>
-              </View>
-            </View>
-
-            {/* Driving License */}
-            {licenseNumber ? (
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>DRIVING LICENSE</Text>
-                <Text style={styles.valueText}>{licenseNumber}</Text>
-              </View>
-            ) : null}
 
             {/* Hub / Base Location */}
             <View style={styles.fieldGroup}>
@@ -581,21 +528,6 @@ const styles = StyleSheet.create({
     color: '#D1FAE5',
     fontWeight: '600',
   },
-  vehicleBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-    alignSelf: 'flex-start',
-    marginTop: 8,
-  },
-  vehicleBadgeText: {
-    fontSize: 11,
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
   sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -649,25 +581,6 @@ const styles = StyleSheet.create({
     marginBottom: 5,
     letterSpacing: 0.6,
   },
-  labelWithBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 5,
-  },
-  ownerOnlyBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginLeft: 8,
-  },
-  ownerOnlyBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#059669',
-  },
   valueText: {
     fontSize: 14,
     fontWeight: '600',
@@ -686,23 +599,6 @@ const styles = StyleSheet.create({
   multilineInput: {
     minHeight: 54,
     textAlignVertical: 'top',
-  },
-  plateChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  plateChipText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#065F46',
-    letterSpacing: 1,
   },
   saveBtn: {
     backgroundColor: '#059669',
