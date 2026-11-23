@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -8,56 +8,103 @@ import {
   Linking,
   ActivityIndicator,
   Modal,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
-import { useApp } from '../../context/AppContext';
+import deliveryService, { BackendDelivery } from '../../services/delivery.service';
+import locationTrackingService from '../../services/location.service';
 
 export default function OrderDetailsScreen({ route, navigation }: any) {
-  const { addCupRecord, updateOrderDeliveryStatus, markInvoiceAsPaid } =
-    useApp();
-  const order = route.params?.order || {
-    id: 'd1',
-    sequence: 1,
-    customerName: 'Commercial Street Store',
-    phone: '9876543210',
-    address: 'Shop 12, Commercial Street, Sector 4',
-    items: '45x Masala Chai Cups',
-    amount: 900,
-    paymentMode: 'COD',
-    status: 'EN_ROUTE',
-    timeSlot: '07:00 AM - 08:30 AM',
-  };
+  const deliveryParam: BackendDelivery | undefined = route.params?.delivery;
+  const deliveryIdParam: number | string | undefined =
+    route.params?.deliveryId || deliveryParam?.id || route.params?.order?.id;
 
+  const [delivery, setDelivery] = useState<BackendDelivery | null>(deliveryParam || null);
+  const [loading, setLoading] = useState<boolean>(!deliveryParam && !!deliveryIdParam);
+  const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [isConfirmModalVisible, setIsConfirmModalVisible] = useState(false);
 
+  const fetchDeliveryDetail = useCallback(async () => {
+    if (!deliveryIdParam) {
+      setError('No delivery ID provided.');
+      setLoading(false);
+      return;
+    }
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await deliveryService.getDeliveryById(deliveryIdParam);
+      setDelivery(data);
+    } catch (err: any) {
+      console.log('Failed to fetch delivery details:', err);
+      // If direct single delivery fails or is offline, keep param if available
+      if (!deliveryParam) {
+        setError(err?.message || 'Unable to load delivery details.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [deliveryIdParam, deliveryParam]);
+
+  useEffect(() => {
+    if (deliveryIdParam) {
+      fetchDeliveryDetail();
+    }
+  }, [deliveryIdParam, fetchDeliveryDetail]);
+
+  const orderDetails = delivery?.order_details;
+  const customerName =
+    orderDetails?.company_name || orderDetails?.customer_name || 'Counter Order';
+  const phone = orderDetails?.customer_phone || '';
+  const address = orderDetails?.delivery_address || 'Shop delivery';
+  const items = orderDetails?.items || [];
+  const status = delivery?.status || 'assigned';
+  const isDelivered = status === 'delivered';
+  const isFailed = status === 'failed';
+
   const handleCall = () => {
-    Linking.openURL(`tel:${order.phone}`).catch(() => {});
+    if (phone) {
+      Linking.openURL(`tel:${phone}`).catch(() => {
+        Alert.alert('Error', 'Unable to initiate call.');
+      });
+    } else {
+      Alert.alert('No Phone', 'No contact phone number provided for this customer.');
+    }
   };
 
   const handleNavigate = () => {
-    const query = encodeURIComponent(order.address);
-    Linking.openURL(
-      `https://www.google.com/maps/search/?api=1&query=${query}`,
-    ).catch(() => {});
+    if (!address) {
+      Alert.alert('No Address', 'No destination address available.');
+      return;
+    }
+    const query = encodeURIComponent(address);
+    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`).catch(() => {
+      Alert.alert('Error', 'Unable to open maps application.');
+    });
   };
 
-  const handleMarkDelivered = () => {
-    if (isSubmitting || order.status === 'DELIVERED') return;
-    setIsSubmitting(true);
+  const handleMarkDelivered = async () => {
+    if (!delivery || isSubmitting || isDelivered) return;
+    try {
+      setIsSubmitting(true);
+      await deliveryService.updateStatus(delivery.id, 'delivered');
+      locationTrackingService.stopTracking();
 
-    updateOrderDeliveryStatus(order.id, 'Delivered');
-    markInvoiceAsPaid(order.id);
-    addCupRecord(order.customerName, 45, 'Masala Chai');
+      setDelivery(prev => (prev ? { ...prev, status: 'delivered' } : prev));
+      setToastMessage('Order Delivered Successfully! 🎉');
 
-    setToastMessage('Order Delivered & Payment Recorded Successfully! 🎉');
-
-    setTimeout(() => {
-      navigation.goBack();
-    }, 1800);
+      setTimeout(() => {
+        navigation.goBack();
+      }, 1500);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to update delivery status.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -75,110 +122,172 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
         </View>
       ) : null}
 
-      <DeliveryHeader title="Order Details" showBack={true} />
+      <DeliveryHeader title="Delivery Details" showBack={true} />
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.card}>
-          <View style={styles.badgeRow}>
-            <Text style={styles.seqText}>STOP #{order.sequence || 1}</Text>
-            <View style={styles.statusBadge}>
-              <Text style={styles.statusBadgeText}>{order.status}</Text>
-            </View>
-          </View>
-
-          <Text style={styles.customerName}>{order.customerName}</Text>
-          <Text style={styles.timeSlot}>Scheduled Shift: {order.timeSlot}</Text>
-
-          <View style={styles.divider} />
-
-          <Text style={styles.sectionLabel}>DELIVERY LOCATION</Text>
-          <Text style={styles.addressText}>{order.address}</Text>
-
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={styles.actionBtn}
-              onPress={handleCall}
-            >
-              <Ionicons name="call" size={18} color="#059669" />
-              <Text style={styles.actionBtnText}>Call Customer</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={[styles.actionBtn, styles.navBtn]}
-              onPress={handleNavigate}
-            >
-              <Ionicons name="navigate" size={18} color="#3B82F6" />
-              <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>
-                Open Maps
-              </Text>
-            </TouchableOpacity>
-          </View>
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color="#059669" />
+          <Text style={styles.loadingText}>Loading delivery details...</Text>
         </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionLabel}>ORDER SUMMARY</Text>
-          <View style={styles.itemRow}>
-            <Text style={styles.itemName}>{order.items}</Text>
-            <Text style={styles.itemPrice}>₹{order.amount}</Text>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>
-              Collect Payment ({order.paymentMode})
-            </Text>
-            <Text style={styles.totalVal}>₹{order.amount}</Text>
-          </View>
+      ) : error && !delivery ? (
+        <View style={styles.centerContainer}>
+          <Ionicons name="alert-circle-outline" size={48} color="#EF4444" />
+          <Text style={styles.errorTitle}>Delivery Not Found</Text>
+          <Text style={styles.errorSub}>{error}</Text>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={fetchDeliveryDetail}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="refresh" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+            <Text style={styles.retryBtnText}>Retry</Text>
+          </TouchableOpacity>
         </View>
-
-        <TouchableOpacity
-          activeOpacity={0.85}
-          style={[
-            styles.deliverBtn,
-            (isSubmitting || order.status === 'DELIVERED') &&
-              styles.deliverBtnDisabled,
-          ]}
-          onPress={() => setIsConfirmModalVisible(true)}
-          disabled={isSubmitting || order.status === 'DELIVERED'}
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
         >
-          {isSubmitting ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <ActivityIndicator
-                size="small"
-                color="#FFFFFF"
-                style={{ marginRight: 8 }}
-              />
-              <Text style={styles.deliverBtnText}>Delivering Order...</Text>
+          {/* Card: Customer & Destination Information */}
+          <View style={styles.card}>
+            <View style={styles.badgeRow}>
+              <Text style={styles.seqText}>
+                ORDER #{orderDetails?.id || delivery?.order || delivery?.id}
+              </Text>
+              <View
+                style={[
+                  styles.statusBadge,
+                  isDelivered && styles.deliveredBadge,
+                  isFailed && styles.failedBadge,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.statusBadgeText,
+                    isDelivered && styles.deliveredBadgeText,
+                    isFailed && styles.failedBadgeText,
+                  ]}
+                >
+                  {status.toUpperCase()}
+                </Text>
+              </View>
             </View>
-          ) : order.status === 'DELIVERED' ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons
-                name="checkmark-done"
-                size={20}
-                color="#FFFFFF"
-                style={{ marginRight: 8 }}
-              />
-              <Text style={styles.deliverBtnText}>Order Delivered</Text>
+
+            <Text style={styles.customerName}>{customerName}</Text>
+            {orderDetails?.company_name && orderDetails?.customer_name ? (
+              <Text style={styles.contactPersonText}>
+                Contact: {orderDetails.customer_name}
+              </Text>
+            ) : null}
+
+            <View style={styles.divider} />
+
+            <Text style={styles.sectionLabel}>DELIVERY LOCATION</Text>
+            <Text style={styles.addressText}>{address}</Text>
+
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={styles.actionBtn}
+                onPress={handleCall}
+              >
+                <Ionicons name="call" size={18} color="#059669" />
+                <Text style={styles.actionBtnText}>
+                  {phone ? `Call (${phone})` : 'Call Customer'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={[styles.actionBtn, styles.navBtn]}
+                onPress={handleNavigate}
+              >
+                <Ionicons name="navigate" size={18} color="#3B82F6" />
+                <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>
+                  Open Maps
+                </Text>
+              </TouchableOpacity>
             </View>
-          ) : (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons
-                name="checkmark-circle"
-                size={20}
-                color="#FFFFFF"
-                style={{ marginRight: 8 }}
-              />
-              <Text style={styles.deliverBtnText}>Confirm Order Delivery</Text>
-            </View>
+          </View>
+
+          {/* Card: Operational Items & Quantities */}
+          <View style={styles.card}>
+            <Text style={styles.sectionLabel}>ORDER ITEMS & QUANTITIES</Text>
+            {items && items.length > 0 ? (
+              items.map(item => (
+                <View key={item.id} style={styles.itemRow}>
+                  <Text style={styles.itemName} numberOfLines={1}>
+                    {item.product_details?.name || 'Item'}
+                  </Text>
+                  <Text style={styles.itemQty}>{item.quantity} pcs</Text>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.emptyItemsText}>No items specified</Text>
+            )}
+
+            {/* Delivered Quantities if available */}
+            {delivery?.delivered_items && delivery.delivered_items.length > 0 ? (
+              <>
+                <View style={styles.divider} />
+                <Text style={styles.sectionLabel}>RECONCILED DELIVERED ITEMS</Text>
+                {delivery.delivered_items.map(di => (
+                  <View key={di.id} style={styles.itemRow}>
+                    <Text style={styles.itemName} numberOfLines={1}>
+                      {di.product_name}
+                    </Text>
+                    <Text style={styles.itemQty}>
+                      {di.delivered_quantity} / {di.ordered_quantity} pcs
+                    </Text>
+                  </View>
+                ))}
+              </>
+            ) : null}
+
+            {orderDetails?.notes ? (
+              <>
+                <View style={styles.divider} />
+                <Text style={styles.sectionLabel}>DELIVERY NOTES</Text>
+                <Text style={styles.notesText}>{orderDetails.notes}</Text>
+              </>
+            ) : null}
+          </View>
+
+          {/* Complete Delivery Action Button */}
+          {!isDelivered && !isFailed && (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={[
+                styles.deliverBtn,
+                isSubmitting && styles.deliverBtnDisabled,
+              ]}
+              onPress={() => setIsConfirmModalVisible(true)}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <ActivityIndicator
+                    size="small"
+                    color="#FFFFFF"
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text style={styles.deliverBtnText}>Updating Status...</Text>
+                </View>
+              ) : (
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons
+                    name="checkmark-circle"
+                    size={20}
+                    color="#FFFFFF"
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text style={styles.deliverBtnText}>Mark Order as Delivered</Text>
+                </View>
+              )}
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
-      </ScrollView>
+        </ScrollView>
+      )}
 
       {/* Confirmation Dialog Modal */}
       <Modal
@@ -197,17 +306,13 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
               />
             </View>
 
-            <Text style={styles.confirmModalTitle}>Confirm Order Delivery</Text>
+            <Text style={styles.confirmModalTitle}>Confirm Delivery</Text>
             <Text style={styles.confirmModalSub}>
-              Are you sure you want to mark this order for{' '}
+              Are you sure you want to mark this delivery for{' '}
               <Text style={{ fontWeight: '800', color: '#111827' }}>
-                {order.customerName}
+                {customerName}
               </Text>{' '}
-              as delivered and collect{' '}
-              <Text style={{ fontWeight: '800', color: '#059669' }}>
-                ₹{order.amount}
-              </Text>
-              ?
+              as delivered?
             </Text>
 
             <View style={styles.confirmModalBtnRow}>
@@ -247,11 +352,54 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 30,
   },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+  errorTitle: {
+    marginTop: 12,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  errorSub: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#059669',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 18,
+    borderRadius: 18,
+    padding: 16,
     marginBottom: 14,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
     borderWidth: 1,
     borderColor: '#EFECE8',
   },
@@ -259,43 +407,58 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   seqText: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
     color: '#059669',
+    letterSpacing: 0.5,
   },
   statusBadge: {
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#FEF3C7',
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: 8,
+  },
+  deliveredBadge: {
+    backgroundColor: '#ECFDF5',
+  },
+  failedBadge: {
+    backgroundColor: '#FEF2F2',
   },
   statusBadgeText: {
-    color: '#059669',
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '800',
+    color: '#D97706',
+  },
+  deliveredBadgeText: {
+    color: '#059669',
+  },
+  failedBadgeText: {
+    color: '#DC2626',
   },
   customerName: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '800',
     color: '#111827',
+    marginBottom: 2,
   },
-  timeSlot: {
+  contactPersonText: {
     fontSize: 13,
     color: '#6B7280',
-    marginTop: 4,
+    fontWeight: '500',
+    marginBottom: 6,
   },
   divider: {
     height: 1,
     backgroundColor: '#F3F4F6',
-    marginVertical: 14,
+    marginVertical: 12,
   },
   sectionLabel: {
     fontSize: 11,
-    fontWeight: '800',
-    color: '#9CA3AF',
+    fontWeight: '700',
+    color: '#6B7280',
     letterSpacing: 0.8,
     marginBottom: 6,
   },
@@ -303,121 +466,110 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#374151',
     lineHeight: 20,
+    marginBottom: 12,
   },
   actionRow: {
     flexDirection: 'row',
-    marginTop: 14,
+    gap: 10,
   },
   actionBtn: {
     flex: 1,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#ECFDF5',
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 8,
+    justifyContent: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingVertical: 10,
+    borderRadius: 10,
+    gap: 6,
   },
   navBtn: {
     backgroundColor: '#EFF6FF',
-    marginRight: 0,
   },
   actionBtnText: {
     fontSize: 13,
     fontWeight: '700',
     color: '#059669',
-    marginLeft: 6,
   },
   itemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginVertical: 8,
+    alignItems: 'center',
+    paddingVertical: 6,
   },
   itemName: {
     fontSize: 14,
     color: '#374151',
-    fontWeight: '600',
+    flex: 1,
   },
-  itemPrice: {
+  itemQty: {
     fontSize: 14,
     fontWeight: '700',
     color: '#111827',
   },
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  totalLabel: {
+  emptyItemsText: {
     fontSize: 13,
-    fontWeight: '700',
-    color: '#4B5563',
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+    paddingVertical: 6,
   },
-  totalVal: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#059669',
+  notesText: {
+    fontSize: 13,
+    color: '#4B5563',
+    lineHeight: 18,
   },
   deliverBtn: {
     backgroundColor: '#059669',
-    borderRadius: 18,
-    height: 52,
-    flexDirection: 'row',
-    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 14,
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 8,
   },
   deliverBtnDisabled: {
     backgroundColor: '#9CA3AF',
-    opacity: 0.85,
   },
   deliverBtnText: {
     color: '#FFFFFF',
-    fontWeight: '800',
     fontSize: 15,
+    fontWeight: '700',
   },
   topToastContainer: {
     position: 'absolute',
-    top: 10,
-    left: 16,
-    right: 16,
+    top: 50,
+    left: 20,
+    right: 20,
     zIndex: 999,
     backgroundColor: '#059669',
-    borderRadius: 16,
-    paddingVertical: 14,
     paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 8,
+    shadowRadius: 8,
+    elevation: 6,
   },
   topToastText: {
     color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '700',
     flex: 1,
   },
   confirmModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
   confirmModalBox: {
-    width: '100%',
     backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    borderRadius: 20,
     padding: 24,
+    width: '100%',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 10,
   },
   confirmModalIconContainer: {
     width: 64,
@@ -433,27 +585,25 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#111827',
     marginBottom: 8,
-    textAlign: 'center',
   },
   confirmModalSub: {
     fontSize: 14,
-    color: '#4B5563',
+    color: '#6B7280',
     textAlign: 'center',
     lineHeight: 20,
-    marginBottom: 24,
+    marginBottom: 20,
   },
   confirmModalBtnRow: {
     flexDirection: 'row',
+    gap: 12,
     width: '100%',
   },
   cancelModalBtn: {
     flex: 1,
-    height: 48,
-    borderRadius: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
     backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
   },
   cancelModalBtnText: {
     fontSize: 14,
@@ -462,15 +612,14 @@ const styles = StyleSheet.create({
   },
   confirmModalBtn: {
     flex: 1,
-    height: 48,
-    borderRadius: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
     backgroundColor: '#059669',
-    justifyContent: 'center',
     alignItems: 'center',
   },
   confirmModalBtnText: {
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '700',
     color: '#FFFFFF',
   },
 });

@@ -15,7 +15,7 @@ export default function StatusCard({
   onToggleDuty,
   completedStops,
   totalStops,
-  distanceKm = '18.4 km',
+  distanceKm,
 }: StatusCardProps) {
   const isOnline = dutyStatus !== 'OFF_DUTY';
 
@@ -85,9 +85,9 @@ export default function StatusCard({
 
       <View style={styles.statsRow}>
         <View style={styles.statItem}>
-          <Ionicons name="speedometer-outline" size={18} color="#059669" />
-          <Text style={styles.statNumber}>{distanceKm}</Text>
-          <Text style={styles.statSub}>Distance</Text>
+          <Ionicons name="bicycle-outline" size={18} color="#059669" />
+          <Text style={styles.statNumber}>{totalStops}</Text>
+          <Text style={styles.statSub}>Total Stops</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
@@ -98,7 +98,7 @@ export default function StatusCard({
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
           <Ionicons name="time-outline" size={18} color="#F59E0B" />
-          <Text style={styles.statNumber}>{totalStops - completedStops}</Text>
+          <Text style={styles.statNumber}>{Math.max(0, totalStops - completedStops)}</Text>
           <Text style={styles.statSub}>Remaining</Text>
         </View>
       </View>

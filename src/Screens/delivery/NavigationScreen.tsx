@@ -1,16 +1,43 @@
-import React from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Linking } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, TouchableOpacity, Linking, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import MapCard from '../../components/delivery/MapCard';
+import deliveryService, { BackendDelivery } from '../../services/delivery.service';
 
-export default function NavigationScreen({ navigation }: any) {
-  const activeAddress = 'Shop 12, Commercial Street, Sector 4';
+export default function NavigationScreen({ route, navigation }: any) {
+  const addressParam = route.params?.address;
+  const [destinationAddress, setDestinationAddress] = useState<string>(addressParam || '');
+
+  useEffect(() => {
+    if (!addressParam) {
+      deliveryService.getDeliveries().then(data => {
+        if (Array.isArray(data)) {
+          const nextRun = data.find(
+            d => d.status !== 'delivered' && d.status !== 'failed'
+          );
+          if (nextRun?.order_details?.delivery_address) {
+            setDestinationAddress(nextRun.order_details.delivery_address);
+          }
+        }
+      }).catch(err => {
+        console.log('Failed to fetch next destination for navigation:', err);
+      });
+    }
+  }, [addressParam]);
 
   const handleOpenGoogleMaps = () => {
-    const query = encodeURIComponent(activeAddress);
-    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`).catch(() => {});
+    if (!destinationAddress) return;
+    const query = encodeURIComponent(destinationAddress);
+    const url = Platform.select({
+      ios: `maps:0,0?q=${query}`,
+      android: `geo:0,0?q=${query}`,
+    }) || `https://www.google.com/maps/search/?api=1&query=${query}`;
+
+    Linking.openURL(url).catch(() => {
+      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`);
+    });
   };
 
   return (
@@ -19,22 +46,24 @@ export default function NavigationScreen({ navigation }: any) {
 
       <View style={styles.content}>
         <MapCard
-          destinationAddress={activeAddress}
-          distanceKm="1.8 km"
-          etaMinutes="5 mins"
+          destinationAddress={destinationAddress || 'No active route'}
           onPressStartNav={handleOpenGoogleMaps}
         />
 
         <View style={styles.instructionCard}>
-          <Ionicons name="compass" size={28} color="#059669" />
+          <Ionicons name="navigate-circle-outline" size={28} color="#059669" />
           <View style={styles.instructionTextWrapper}>
-            <Text style={styles.instructionTitle}>Turn Right in 200m</Text>
-            <Text style={styles.instructionSub}>Onto Commercial Street Road</Text>
+            <Text style={styles.instructionTitle}>External Turn-by-Turn GPS</Text>
+            <Text style={styles.instructionSub}>
+              {destinationAddress
+                ? 'Tap "Start GPS Navigation" above to open Google Maps.'
+                : 'No active delivery destination currently assigned.'}
+            </Text>
           </View>
         </View>
 
         <TouchableOpacity activeOpacity={0.8} style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.backBtnText}>Return to Route List</Text>
+          <Text style={styles.backBtnText}>Return to Delivery List</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -61,30 +90,32 @@ const styles = StyleSheet.create({
     borderColor: '#EFECE8',
   },
   instructionTextWrapper: {
-    marginLeft: 14,
+    marginLeft: 12,
+    flex: 1,
   },
   instructionTitle: {
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '700',
     color: '#111827',
   },
   instructionSub: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#6B7280',
     marginTop: 2,
+    lineHeight: 16,
   },
   backBtn: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F3F4F6',
     borderRadius: 14,
-    height: 48,
-    justifyContent: 'center',
+    paddingVertical: 14,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
+    justifyContent: 'center',
+    marginTop: 'auto',
+    marginBottom: 10,
   },
   backBtnText: {
-    color: '#374151',
-    fontWeight: '700',
     fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
   },
 });

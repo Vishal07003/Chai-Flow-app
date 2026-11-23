@@ -10,17 +10,21 @@ interface MapCardProps {
 }
 
 export default function MapCard({
-  destinationAddress = 'Flat 402, Green Valley Apartments, Sector 14',
-  distanceKm = '2.4 km',
-  etaMinutes = '8 mins',
+  destinationAddress,
+  distanceKm,
+  etaMinutes,
   onPressStartNav,
 }: MapCardProps) {
+  const displayAddress = destinationAddress || 'No active route';
+  const hasRoute = !!destinationAddress && destinationAddress !== 'No active route';
+
   const handleOpenGoogleMaps = () => {
     if (onPressStartNav) {
       onPressStartNav();
       return;
     }
-    const query = encodeURIComponent(destinationAddress);
+    if (!hasRoute) return;
+    const query = encodeURIComponent(displayAddress);
     Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`).catch(() => {});
   };
 
@@ -28,19 +32,33 @@ export default function MapCard({
     <View style={styles.card}>
       <View style={styles.mapPreview}>
         <Ionicons name="map" size={32} color="#059669" />
-        <View style={styles.mapBadge}>
-          <Ionicons name="navigate-circle" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
-          <Text style={styles.mapBadgeText}>{distanceKm} • {etaMinutes}</Text>
-        </View>
+        {distanceKm ? (
+          <View style={styles.mapBadge}>
+            <Ionicons name="navigate-circle" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+            <Text style={styles.mapBadgeText}>
+              {distanceKm}
+              {etaMinutes ? ` • ${etaMinutes}` : ''}
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.contentBox}>
         <Text style={styles.label}>NEXT DESTINATION</Text>
-        <Text style={styles.addressText} numberOfLines={2}>{destinationAddress}</Text>
+        <Text style={styles.addressText} numberOfLines={2}>
+          {displayAddress}
+        </Text>
 
-        <TouchableOpacity activeOpacity={0.85} style={styles.navBtn} onPress={handleOpenGoogleMaps}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={[styles.navBtn, !hasRoute && styles.navBtnDisabled]}
+          onPress={handleOpenGoogleMaps}
+          disabled={!hasRoute}
+        >
           <Ionicons name="navigate" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-          <Text style={styles.navBtnText}>Start GPS Navigation</Text>
+          <Text style={styles.navBtnText}>
+            {hasRoute ? 'Start GPS Navigation' : 'No Active Navigation'}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -106,6 +124,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  navBtnDisabled: {
+    backgroundColor: '#9CA3AF',
   },
   navBtnText: {
     color: '#FFFFFF',

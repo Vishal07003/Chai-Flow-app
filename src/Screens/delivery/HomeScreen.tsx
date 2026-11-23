@@ -179,7 +179,14 @@ export default function HomeScreen({ navigation }: any) {
 
         <MapCard
           destinationAddress={nextDestinationAddress}
-          onPressStartNav={() => navigation.navigate('Navigation')}
+          onPressStartNav={() =>
+            navigation.navigate('Navigation', {
+              address:
+                nextDestinationAddress !== 'No active route'
+                  ? nextDestinationAddress
+                  : undefined,
+            })
+          }
         />
 
         <View style={styles.sectionHeader}>
