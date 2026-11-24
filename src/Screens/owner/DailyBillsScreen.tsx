@@ -67,7 +67,7 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
   }>({
     visible: false,
     title: '',
-    onConfirm: () => {},
+    onConfirm: () => { },
   });
 
   // Fetch Daily Orders and Invoices
@@ -116,9 +116,9 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
   // 1. Ready to Bill: Delivered / Owner-approved, but NO invoice issued yet
   const readyToBillOrders = useMemo(() => {
     return dateOrders.filter(o => {
-      const isDelivered = o.status === 'delivered' || o.delivery_status === 'delivered';
+      const isOwnerDelivered = o.status === 'delivered';
       const hasInvoice = Boolean(o.has_invoice || o.invoice_number);
-      return isDelivered && !hasInvoice;
+      return isOwnerDelivered && !hasInvoice;
     });
   }, [dateOrders]);
 
@@ -130,12 +130,15 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
     return contextInvoices.filter(i => isDateMatching(i.createdAt || i.date));
   }, [invoices, contextInvoices, selectedDate]);
 
-  // 3. Pending Approval: In-progress / Pending / Out for delivery (Not yet delivered/approved)
+  // 3. Pending Approval: STRICTLY orders with submitted delivery actuals awaiting Owner review/approval
+  // (In-progress deliveries without submitted delivery quantities remain in Orders)
   const pendingApprovalOrders = useMemo(() => {
     return dateOrders.filter(o => {
-      const isDelivered = o.status === 'delivered' || o.delivery_status === 'delivered';
-      const isCancelled = o.status === 'cancelled';
-      return !isDelivered && !isCancelled;
+      const isDelivered = o.status === 'delivered';
+      const hasInvoice = Boolean(o.has_invoice || o.invoice_number);
+      // Delivery partner submitted actuals (delivery_status === 'delivered') but Owner hasn't marked order status as 'delivered' or billed it
+      const hasSubmittedActuals = o.delivery_status === 'delivered' && !isDelivered;
+      return hasSubmittedActuals && !hasInvoice;
     });
   }, [dateOrders]);
 
@@ -386,8 +389,8 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
                 activeTab === 'READY_TO_BILL'
                   ? 'checkmark-done-circle-outline'
                   : activeTab === 'GENERATED_BILLS'
-                  ? 'receipt-outline'
-                  : 'time-outline'
+                    ? 'receipt-outline'
+                    : 'time-outline'
               }
               size={42}
               color={colors.gray300}
@@ -397,15 +400,15 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
               {activeTab === 'READY_TO_BILL'
                 ? 'No Orders Ready to Bill'
                 : activeTab === 'GENERATED_BILLS'
-                ? 'No Generated Bills Yet'
-                : 'No Orders Pending Approval'}
+                  ? 'No Generated Bills Yet'
+                  : 'No Orders Pending Approval'}
             </Text>
             <Text style={styles.emptySub}>
               {activeTab === 'READY_TO_BILL'
                 ? 'Orders delivered by partners will appear here for one-click invoice generation.'
                 : activeTab === 'GENERATED_BILLS'
-                ? 'Issued invoices for this date will be listed here with receipts and PDF access.'
-                : 'All orders for this date are approved or delivered.'}
+                  ? 'Issued invoices for this date will be listed here with receipts and PDF access.'
+                  : 'All orders for this date are approved or delivered.'}
             </Text>
           </View>
         ) : (
@@ -528,9 +531,14 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
                     <Text style={styles.billAmountValue}>₹{parseFloat(order.total_amount || '0').toLocaleString('en-IN')}</Text>
                   </View>
 
-                  <View style={styles.awaitingApprovalTag}>
-                    <Text style={styles.awaitingApprovalText}>Awaiting Delivery Actuals</Text>
-                  </View>
+                  <TouchableOpacity
+                    style={styles.billNowBtn}
+                    onPress={() => navigation?.navigate('OrderDetails', { orderId: order.id, order })}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="checkmark-done-circle-outline" size={15} color={colors.white} style={{ marginRight: 4 }} />
+                    <Text style={styles.billNowBtnText}>Review & Approve</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             );
@@ -922,6 +930,21 @@ const styles = StyleSheet.create({
     ...shadows.sm,
   },
   generateInvoiceBtnText: {
+    ...typography.badge,
+    fontSize: 11,
+    color: colors.white,
+    fontWeight: '700',
+  },
+  billNowBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    ...shadows.sm,
+  },
+  billNowBtnText: {
     ...typography.badge,
     fontSize: 11,
     color: colors.white,

@@ -16,7 +16,6 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import billingService, { BackendInvoice, BillingCustomer } from '../../services/billing.service';
 import orderService, {
   BackendOrder,
-  BackendRecurringOrder,
 } from '../../services/order.service';
 import { useApp } from '../../context/AppContext';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
@@ -56,11 +55,9 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
   const [ledgerLoading, setLedgerLoading] = useState<boolean>(false);
   const [invoices, setInvoices] = useState<BackendInvoice[]>([]);
 
-  // Recent Orders & Recurring Templates
+  // Recent Orders
   const [recentOrders, setRecentOrders] = useState<BackendOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
-  const [recurringTemplates, setRecurringTemplates] = useState<BackendRecurringOrder[]>([]);
-  const [recurringLoading, setRecurringLoading] = useState<boolean>(false);
 
   // Modals & Action States
   const [editCustomerModalVisible, setEditCustomerModalVisible] = useState<boolean>(false);
@@ -142,37 +139,18 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     }
   }, [customerId]);
 
-  // 4. Fetch Recurring Templates
-  const fetchRecurringTemplates = useCallback(async () => {
-    if (!customerId) return;
-    try {
-      setRecurringLoading(true);
-      const allRecurring = await orderService.getRecurringOrders().catch(() => []);
-      const matched = (allRecurring || []).filter(
-        r => r.customer === customerId || r.customer_profile === customerId || r.company === customerId
-      );
-      setRecurringTemplates(matched);
-    } catch (_err) {
-      // Handled silently
-    } finally {
-      setRecurringLoading(false);
-    }
-  }, [customerId]);
-
   // Initial and Focus-based Loading
   useEffect(() => {
     const unsubscribe = navigation.addListener?.('focus', () => {
       fetchCustomerData();
       fetchLedgerAndInvoices();
       fetchOrders();
-      fetchRecurringTemplates();
     });
     fetchCustomerData();
     fetchLedgerAndInvoices();
     fetchOrders();
-    fetchRecurringTemplates();
     return unsubscribe;
-  }, [navigation, fetchCustomerData, fetchLedgerAndInvoices, fetchOrders, fetchRecurringTemplates]);
+  }, [navigation, fetchCustomerData, fetchLedgerAndInvoices, fetchOrders]);
 
   // Pull to refresh
   const onRefresh = useCallback(() => {
@@ -181,9 +159,8 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
       fetchCustomerData(),
       fetchLedgerAndInvoices(),
       fetchOrders(),
-      fetchRecurringTemplates(),
     ]).finally(() => setRefreshing(false));
-  }, [fetchCustomerData, fetchLedgerAndInvoices, fetchOrders, fetchRecurringTemplates]);
+  }, [fetchCustomerData, fetchLedgerAndInvoices, fetchOrders]);
 
   // Edit Customer
   const handleEditCustomerSubmit = async (formData: AddCustomerFormData) => {
@@ -286,53 +263,6 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     navigation.navigate('QuickBilling', {
       customer: customer || initialCustomer,
       prefilledItems,
-    });
-  };
-
-  // Recurring Order Handlers
-  const handleOpenCreateRecurring = () => {
-    navigation.navigate('RecurringOrder', {
-      customer: customer || initialCustomer,
-      customerId,
-    });
-  };
-
-  const handleOpenEditRecurring = (template: BackendRecurringOrder) => {
-    navigation.navigate('RecurringOrder', {
-      template,
-      customer: customer || initialCustomer,
-      customerId,
-    });
-  };
-
-  const handleTogglePauseRecurring = (template: BackendRecurringOrder) => {
-    const willPause = !template.is_paused;
-    setConfirmDialogConfig({
-      visible: true,
-      title: willPause ? 'Pause Recurring Template?' : 'Resume Recurring Template?',
-      description: willPause
-        ? `Are you sure you want to pause auto-generating daily orders for ${template.customer_name || displayName}?`
-        : `Resume daily order generation for ${template.customer_name || displayName}?`,
-      confirmLabel: willPause ? 'Pause Template' : 'Resume Template',
-      cancelLabel: 'Cancel',
-      type: willPause ? 'warning' : 'info',
-      icon: willPause ? 'pause-circle-outline' : 'play-circle-outline',
-      onConfirm: async () => {
-        try {
-          if (template.is_paused) {
-            await orderService.resumeRecurringOrder(template.id);
-            AppToast.success('Schedule Resumed', 'Recurring order template is now active.');
-          } else {
-            await orderService.pauseRecurringOrder(template.id);
-            AppToast.info('Schedule Paused', 'Recurring order template has been paused.');
-          }
-          fetchRecurringTemplates();
-        } catch (err: any) {
-          AppToast.error('Error', err?.message || 'Failed to update recurring status.');
-        } finally {
-          setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
-        }
-      },
     });
   };
 
@@ -497,97 +427,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
           </TouchableOpacity>
         </View>
 
-        {/* 5. RECURRING ORDER TEMPLATES */}
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={styles.sectionHeaderLeft}>
-              <Ionicons name="calendar-outline" size={18} color={colors.primary} style={{ marginRight: 6 }} />
-              <Text style={styles.sectionTitle}>RECURRING ORDERS</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.addTemplatePill}
-              onPress={handleOpenCreateRecurring}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="add" size={15} color={colors.primary} />
-              <Text style={styles.addTemplatePillText}>Add Template</Text>
-            </TouchableOpacity>
-          </View>
-
-          {recurringLoading ? (
-            <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 16 }} />
-          ) : recurringTemplates.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Ionicons name="calendar-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
-              <Text style={styles.emptyCardTitle}>No Recurring Templates</Text>
-              <Text style={styles.emptyCardSub}>Save daily or weekday orders to automate deliveries.</Text>
-            </View>
-          ) : (
-            recurringTemplates.map(template => {
-              const freqLabel = template.frequency === 'weekdays' ? 'Weekdays (Mon-Fri)' : 'Everyday (Daily)';
-              const partner = template.delivery_partner_name ? `Assigned: ${template.delivery_partner_name}` : 'No driver assigned';
-              return (
-                <View key={template.id} style={[styles.templateCard, template.is_paused && styles.templateCardPaused]}>
-                  <View style={styles.templateHeader}>
-                    <View style={styles.templateHeaderTitleGroup}>
-                      <Text style={styles.templateFreqTitle}>{freqLabel}</Text>
-                      <View style={[styles.statusTag, template.is_paused ? styles.statusTagPaused : styles.statusTagActive]}>
-                        <Text style={[styles.statusTagText, template.is_paused ? styles.statusTagTextPaused : styles.statusTagTextActive]}>
-                          {template.is_paused ? 'PAUSED' : 'ACTIVE'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <TouchableOpacity
-                      style={styles.templateEditBtn}
-                      onPress={() => handleOpenEditRecurring(template)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.templateEditText}>Edit</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <Text style={styles.templatePartnerText} numberOfLines={1}>{partner}</Text>
-
-                  {/* Items list */}
-                  <View style={styles.templateItemsRow}>
-                    {(template.items || []).map((it, idx) => (
-                      <View key={it.id || idx} style={styles.templateItemChip}>
-                        <Text style={styles.templateItemChipText}>
-                          {it.quantity}x {it.product_name}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-
-                  {/* Pause / Resume action bar */}
-                  <View style={styles.templateFooter}>
-                    <Text style={styles.templateDeliveryAddress} numberOfLines={1}>
-                      {template.delivery_address || displayAddress}
-                    </Text>
-                    <TouchableOpacity
-                      style={[styles.pauseBtn, template.is_paused && styles.resumeBtn]}
-                      onPress={() => handleTogglePauseRecurring(template)}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons
-                        name={template.is_paused ? 'play-circle-outline' : 'pause-circle-outline'}
-                        size={15}
-                        color={template.is_paused ? colors.success : colors.warning}
-                        style={{ marginRight: 4 }}
-                      />
-                      <Text style={[styles.pauseBtnText, template.is_paused && { color: colors.success }]}>
-                        {template.is_paused ? 'Resume' : 'Pause'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            })
-          )}
-        </View>
-
-        {/* 6. RECENT ORDERS */}
+        {/* 5. RECENT ORDERS */}
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeaderRow}>
             <View style={styles.sectionHeaderLeft}>
