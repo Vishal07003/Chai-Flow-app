@@ -28,6 +28,7 @@ import draftService, { DraftInvoice, DraftStatus } from '../../services/draft.se
 import { useApp } from '../../context/AppContext';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import AppToast from '../../utils/toast';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 const todayFilterTabs = [
   { key: 'ALL', label: 'All' },
@@ -1604,49 +1605,48 @@ export default function OrdersScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAF8F5',
+    backgroundColor: colors.surface,
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginVertical: 8,
-    borderRadius: 12,
-    paddingHorizontal: 12,
+    backgroundColor: colors.surfaceContainer,
+    marginHorizontal: spacing.LG,
+    marginVertical: spacing.SM,
+    borderRadius: radius.LG,
+    paddingHorizontal: spacing.MD,
     height: 42,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: colors.border,
   },
   searchInput: {
     flex: 1,
-    fontSize: 12,
-    color: '#2A2421',
+    ...typography.caption,
+    color: colors.textPrimary,
   },
   tabContainer: {
-    paddingHorizontal: 16,
-    marginBottom: 8,
+    paddingHorizontal: spacing.LG,
+    marginBottom: spacing.SM,
   },
   tabChip: {
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.MD,
     paddingVertical: 6,
-    borderRadius: 18,
-    backgroundColor: '#FFFFFF',
+    borderRadius: radius.FULL,
+    backgroundColor: colors.surfaceContainer,
     marginRight: 6,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: colors.border,
   },
   tabChipActive: {
-    backgroundColor: '#8C331A',
-    borderColor: '#8C331A',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   tabText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#8E8278',
+    ...typography.badge,
+    color: colors.textMuted,
   },
   tabTextActive: {
-    color: '#FFFFFF',
+    color: colors.white,
   },
   historyFiltersRow: {
     marginBottom: 8,

@@ -25,6 +25,7 @@ import draftService, { DraftInvoice } from '../../services/draft.service';
 import { CustomDialog, ConfirmDialog, DeliveryPartnerDropdown } from '../../components/common';
 import CalendarPickerModal from '../../components/common/CalendarPickerModal';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 const TEA_IMAGES: { [key: string]: string } = {
   'Masala Chai':
