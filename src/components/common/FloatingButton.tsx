@@ -1,6 +1,7 @@
 import React from 'react';
 import { TouchableOpacity, StyleSheet, ViewStyle } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { colors, shadows } from '../../theme';
 
 interface FloatingButtonProps {
   onPress: () => void;
@@ -20,7 +21,7 @@ export default function FloatingButton({
       onPress={onPress}
       accessibilityLabel="Add New"
     >
-      <Ionicons name={iconName} size={28} color="#FFFFFF" />
+      <Ionicons name={iconName} size={28} color={colors.onPrimary} />
     </TouchableOpacity>
   );
 }
@@ -33,14 +34,10 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#8C331A',
+    backgroundColor: colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 6,
-    shadowColor: '#8C331A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
+    ...shadows.lg,
     zIndex: 99,
   },
 });

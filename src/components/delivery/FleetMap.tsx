@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { DeliveryPartnerProfile } from '../../services/delivery.service';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 interface FleetMapProps {
   partners?: DeliveryPartnerProfile[] | any[];

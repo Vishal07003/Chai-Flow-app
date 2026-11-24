@@ -2,6 +2,7 @@ import React from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { DeliveryBoyItem } from '../../context/AppContext';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export type DeliveryBoy = DeliveryBoyItem;
 

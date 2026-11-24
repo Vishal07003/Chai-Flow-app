@@ -15,6 +15,7 @@ import {
   BackHandler,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export interface CollectPaymentFormData {
   amount: number;

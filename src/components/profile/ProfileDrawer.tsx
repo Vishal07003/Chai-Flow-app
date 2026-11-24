@@ -19,6 +19,7 @@ import { useNavigation } from '@react-navigation/native';
 import { DrawerContentComponentProps } from '@react-navigation/drawer';
 import { useApp } from '../../context/AppContext';
 import ConfirmDialog from '../ConfirmDialog';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function ProfileDrawer(props?: DrawerContentComponentProps) {
   const insets = useSafeAreaInsets();

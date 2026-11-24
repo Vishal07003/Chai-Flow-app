@@ -18,6 +18,7 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { DeliveryBoyItem, useApp } from '../../context/AppContext';
 import ConfirmDialog from '../ConfirmDialog';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 interface DeliveryBoyDetailModalProps {
   visible: boolean;

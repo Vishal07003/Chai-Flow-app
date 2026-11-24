@@ -3,6 +3,7 @@ import { StyleSheet, View, Text, TouchableOpacity, Image } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation, DrawerActions } from '@react-navigation/native';
 import { useApp } from '../../context/AppContext';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 interface DeliveryHeaderProps {
   title?: string;

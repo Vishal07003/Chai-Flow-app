@@ -3,6 +3,7 @@ import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useApp, ProductItem } from '../../context/AppContext';
 import ConfirmDialog from '../ConfirmDialog';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export type Product = ProductItem;
 
