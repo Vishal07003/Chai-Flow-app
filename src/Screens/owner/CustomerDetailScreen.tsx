@@ -6,10 +6,10 @@ import {
   TouchableOpacity,
   ScrollView,
   Modal,
-  TextInput,
   ActivityIndicator,
   Linking,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -27,7 +27,8 @@ import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function CustomerDetailScreen({ route, navigation }: any) {
   const { refreshBackendData } = useApp();
-  // Support either customer object, customerId, or companyId passed in route params
+
+  // Support route params: customer, customerId, companyId, company
   const initialCustomer = route.params?.customer || null;
   const rawId = route.params?.customerId || initialCustomer?.id || route.params?.companyId || route.params?.company?.id;
   const customerId = rawId ? Number(rawId) : null;
@@ -53,33 +54,23 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
   // Financial Ledger & Invoices
   const [ledgerStatement, setLedgerStatement] = useState<any | null>(null);
   const [ledgerLoading, setLedgerLoading] = useState<boolean>(false);
-  const [selectedMonth] = useState<number>(new Date().getMonth() + 1);
-  const [selectedYear] = useState<number>(new Date().getFullYear());
-
   const [invoices, setInvoices] = useState<BackendInvoice[]>([]);
 
-  // Orders & Recurring Orders
+  // Recent Orders & Recurring Templates
   const [recentOrders, setRecentOrders] = useState<BackendOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
-
   const [recurringTemplates, setRecurringTemplates] = useState<BackendRecurringOrder[]>([]);
   const [recurringLoading, setRecurringLoading] = useState<boolean>(false);
 
-  // Modals State
+  // Modals & Action States
   const [editCustomerModalVisible, setEditCustomerModalVisible] = useState<boolean>(false);
   const [collectModalVisible, setCollectModalVisible] = useState<boolean>(false);
   const [collectAmount, setCollectAmount] = useState<string>('');
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'online' | 'upi' | 'bank_transfer'>('cash');
-  const [paymentNotes, setPaymentNotes] = useState<string>('');
   const [submittingPayment, setSubmittingPayment] = useState<boolean>(false);
-
-  // Repeat Order Selection Modal State
   const [repeatOrderModalVisible, setRepeatOrderModalVisible] = useState<boolean>(false);
-
-  // Full Ledger Timeline Modal
   const [ledgerModalVisible, setLedgerModalVisible] = useState<boolean>(false);
 
-  // Custom Confirm Dialog State
+  // Centralized Confirmation Dialog State
   const [confirmDialogConfig, setConfirmDialogConfig] = useState<{
     visible: boolean;
     title: string;
@@ -88,17 +79,20 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     cancelLabel?: string;
     type?: 'danger' | 'warning' | 'info' | 'success';
     icon?: string;
-    onConfirm: () => void;
+    onConfirm: () => void | Promise<void>;
   }>({
     visible: false,
     title: '',
     onConfirm: () => {},
   });
 
-  // 1. Fetch Customer Profile & Summary
+  // 1. Fetch Customer Detail & Summary
   const fetchCustomerData = useCallback(async () => {
     if (!customerId) {
-      setLoading(false);
+      if (initialCustomer) {
+        setCustomer(initialCustomer);
+        setLoading(false);
+      }
       return;
     }
     try {
@@ -106,33 +100,13 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
         billingService.getCustomerById(customerId).catch(() => null),
         billingService.getCustomerSummary(customerId).catch(() => null),
       ]);
-
-      if (cust) {
-        setCustomer(cust);
-      } else if (initialCustomer) {
-        setCustomer({
-          id: customerId,
-          name: initialCustomer.name || 'Customer',
-          phone: initialCustomer.phone || '',
-          address: initialCustomer.address || '',
-          created_at: new Date().toISOString(),
-          total_bills: 0,
-          total_billed_amount: '0.00',
-          total_pending_amount: String(initialCustomer.amount || '0'),
-        });
-      }
-
-      if (summary) {
-        setCustomerSummary(summary);
-        setCollectAmount(summary.total_pending || '0');
-      } else if (cust) {
-        setCollectAmount(cust.total_pending_amount || '0');
-      }
-    } catch (err) {
-      console.log('Error fetching customer profile:', err);
+      if (cust) setCustomer(cust);
+      else if (initialCustomer) setCustomer(initialCustomer);
+      if (summary) setCustomerSummary(summary);
+    } catch (_err) {
+      if (initialCustomer) setCustomer(initialCustomer);
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, [customerId, initialCustomer]);
 
@@ -142,48 +116,52 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     try {
       setLedgerLoading(true);
       const [stmt, invList] = await Promise.all([
-        billingService.getCustomerLedger(customerId, selectedYear, selectedMonth).catch(() => null),
+        billingService.getCustomerLedger(customerId).catch(() => null),
         billingService.getCustomerInvoices(customerId).catch(() => []),
       ]);
       setLedgerStatement(stmt);
       setInvoices(invList || []);
-    } catch (err) {
-      console.log('Error loading customer ledger & invoices:', err);
+    } catch (_err) {
+      // Handled silently
     } finally {
       setLedgerLoading(false);
     }
-  }, [customerId, selectedYear, selectedMonth]);
+  }, [customerId]);
 
-  // 3. Fetch Customer Orders
+  // 3. Fetch Recent Orders
   const fetchOrders = useCallback(async () => {
     if (!customerId) return;
     try {
       setOrdersLoading(true);
-      const orders = await orderService.getOrders({ customer: customerId });
-      setRecentOrders(orders || []);
-    } catch (err) {
-      console.log('Error fetching customer orders:', err);
+      const orderList = await orderService.getOrders({ customer: customerId }).catch(() => []);
+      setRecentOrders(orderList || []);
+    } catch (_err) {
+      // Handled silently
     } finally {
       setOrdersLoading(false);
     }
   }, [customerId]);
 
-  // 4. Fetch Customer Recurring Templates
+  // 4. Fetch Recurring Templates
   const fetchRecurringTemplates = useCallback(async () => {
     if (!customerId) return;
     try {
       setRecurringLoading(true);
-      const templates = await orderService.getRecurringOrders({ customer: customerId });
-      setRecurringTemplates(templates || []);
-    } catch (err) {
-      console.log('Error fetching recurring templates:', err);
+      const allRecurring = await orderService.getRecurringOrders().catch(() => []);
+      const matched = (allRecurring || []).filter(
+        r => r.customer === customerId || r.customer_profile === customerId || r.company === customerId
+      );
+      setRecurringTemplates(matched);
+    } catch (_err) {
+      // Handled silently
     } finally {
       setRecurringLoading(false);
     }
   }, [customerId]);
 
+  // Initial and Focus-based Loading
   useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
+    const unsubscribe = navigation.addListener?.('focus', () => {
       fetchCustomerData();
       fetchLedgerAndInvoices();
       fetchOrders();
@@ -196,15 +174,16 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     return unsubscribe;
   }, [navigation, fetchCustomerData, fetchLedgerAndInvoices, fetchOrders, fetchRecurringTemplates]);
 
+  // Pull to refresh
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchCustomerData();
-    fetchLedgerAndInvoices();
-    fetchOrders();
-    fetchRecurringTemplates();
+    Promise.all([
+      fetchCustomerData(),
+      fetchLedgerAndInvoices(),
+      fetchOrders(),
+      fetchRecurringTemplates(),
+    ]).finally(() => setRefreshing(false));
   }, [fetchCustomerData, fetchLedgerAndInvoices, fetchOrders, fetchRecurringTemplates]);
-
-  // --- Actions ---
 
   // Edit Customer
   const handleEditCustomerSubmit = async (formData: AddCustomerFormData) => {
@@ -217,31 +196,30 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
       });
       setCustomer(updated);
       setEditCustomerModalVisible(false);
-      AppToast.success('Profile Updated', 'Customer details have been saved.');
+      refreshBackendData();
+      AppToast.success('Profile Updated', 'Customer details saved successfully.');
     } catch (err: any) {
       AppToast.error('Update Failed', err?.message || 'Failed to update customer.');
     }
   };
 
-  // Collect Payment with FIFO Allocation
+  // Collect Payment with FIFO Allocation (Strictly Cash Only)
   const handleConfirmCollectPayment = async (data: CollectPaymentFormData) => {
     if (!customerId) return;
-
     try {
       setSubmittingPayment(true);
       const res = await billingService.collectCustomerPayment(customerId, {
         amount: data.amount,
-        method: data.paymentMethod,
-        notes: data.notes || `Payment collection for ${customer?.name || 'Customer'}`,
+        method: 'cash',
+        notes: data.notes || `Cash payment collection for ${customer?.name || 'Customer'}`,
       });
-
       setCollectModalVisible(false);
       fetchCustomerData();
       fetchLedgerAndInvoices();
       refreshBackendData();
       AppToast.success(
         'Payment Recorded Successfully',
-        `₹${res.amount_allocated} allocated via FIFO.${parseFloat(String(res.unallocated_credit)) > 0 ? ` Advance Credit: ₹${res.unallocated_credit}` : ''}`
+        `₹${res.amount_allocated} cash allocated via FIFO.${parseFloat(String(res.unallocated_credit)) > 0 ? ` Advance Credit: ₹${res.unallocated_credit}` : ''}`
       );
     } catch (err: any) {
       AppToast.error('Failed to Collect Payment', err?.message || 'Please check connection.');
@@ -251,7 +229,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     }
   };
 
-  // Quick Action 1: New Order -> Navigate directly to QuickBillingScreen
+  // Quick Action 1: New Order -> Navigate directly to QuickBilling
   const handleOpenNewOrder = () => {
     const custToPass = customer || initialCustomer || {
       id: customerId,
@@ -305,14 +283,13 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
       product_name: it.product_details?.name || 'Item',
       quantity: it.quantity,
     }));
-
     navigation.navigate('QuickBilling', {
       customer: customer || initialCustomer,
       prefilledItems,
     });
   };
 
-  // Recurring Order Templates
+  // Recurring Order Handlers
   const handleOpenCreateRecurring = () => {
     navigation.navigate('RecurringOrder', {
       customer: customer || initialCustomer,
@@ -359,12 +336,6 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     });
   };
 
-  // Header More Options Menu
-  const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
-  const handleHeaderMore = () => {
-    setHeaderMenuVisible(true);
-  };
-
   // Derived Values
   const displayName = customer?.name || initialCustomer?.name || 'Customer';
   const displayPhone = customer?.phone || initialCustomer?.phone || '';
@@ -375,18 +346,18 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
   if (loading && !customer) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.customHeaderBar}>
+        <View style={styles.topHeader}>
           <TouchableOpacity
-            style={styles.headerBackBtn}
+            style={styles.backButton}
             onPress={() => navigation.goBack()}
             activeOpacity={0.7}
           >
-            <Ionicons name="arrow-back" size={22} color="#8C331A" />
+            <Ionicons name="arrow-back" size={22} color={colors.primary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Customer Profile</Text>
+          <Text style={styles.screenTitle}>Customer Profile</Text>
         </View>
         <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color="#8C331A" />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       </SafeAreaView>
     );
@@ -394,25 +365,26 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* 1. Header with Back button, Title: Customer Profile, and More Options */}
-      <View style={styles.customHeaderBar}>
-        <View style={styles.headerLeftGroup}>
+      {/* 1. TOP HEADER */}
+      <View style={styles.topHeader}>
+        <View style={styles.topHeaderLeft}>
           <TouchableOpacity
-            style={styles.headerBackBtn}
+            style={styles.backButton}
             onPress={() => navigation.goBack()}
             activeOpacity={0.7}
           >
-            <Ionicons name="arrow-back" size={20} color="#8C331A" />
+            <Ionicons name="arrow-back" size={22} color={colors.primary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Customer Profile</Text>
+          <Text style={styles.screenTitle}>Customer Profile</Text>
         </View>
 
         <TouchableOpacity
-          style={styles.headerMoreBtn}
-          onPress={handleHeaderMore}
+          style={styles.editActionHeaderBtn}
+          onPress={() => setEditCustomerModalVisible(true)}
           activeOpacity={0.7}
         >
-          <Ionicons name="ellipsis-vertical" size={19} color="#2A2421" />
+          <Ionicons name="create-outline" size={18} color={colors.primary} style={{ marginRight: 4 }} />
+          <Text style={styles.editActionHeaderText}>Edit</Text>
         </TouchableOpacity>
       </View>
 
@@ -420,212 +392,191 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#8C331A']} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
         }
       >
-        {/* 2. Customer Profile Card */}
-        <View style={styles.profileCard}>
-          <View style={styles.profileMainRow}>
-            {/* Circular initials avatar */}
-            <View style={styles.avatarCircle}>
+        {/* 2. CUSTOMER IDENTITY CARD */}
+        <View style={styles.identityCard}>
+          <View style={styles.identityTopRow}>
+            <View style={styles.avatarBox}>
               <Text style={styles.avatarInitials}>
                 {displayName.substring(0, 2).toUpperCase()}
               </Text>
             </View>
 
-            {/* Profile Info */}
-            <View style={styles.profileInfoCol}>
-              <Text style={styles.profileName} numberOfLines={1}>
+            <View style={styles.identityInfoCol}>
+              <Text style={styles.customerName} numberOfLines={1}>
                 {displayName}
               </Text>
 
               {displayPhone ? (
                 <TouchableOpacity
-                  style={styles.phonePill}
+                  style={styles.phoneChip}
                   onPress={() => Linking.openURL(`tel:${displayPhone}`).catch(() => {})}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="call" size={11} color="#8C331A" style={{ marginRight: 4 }} />
-                  <Text style={styles.phonePillText}>{displayPhone}</Text>
+                  <Ionicons name="call" size={12} color={colors.primary} style={{ marginRight: 5 }} />
+                  <Text style={styles.phoneChipText}>{displayPhone}</Text>
                 </TouchableOpacity>
               ) : (
-                <Text style={styles.noPhoneText}>No mobile number</Text>
+                <Text style={styles.noPhoneText}>No mobile number registered</Text>
               )}
+            </View>
+          </View>
 
-              <View style={styles.addressRow}>
-                <Ionicons name="location-outline" size={13} color="#8E8278" style={{ marginRight: 3, marginTop: 1 }} />
-                <Text style={styles.addressText} numberOfLines={1}>
-                  {displayAddress}
-                </Text>
+          <View style={styles.addressRow}>
+            <Ionicons name="location-outline" size={15} color={colors.textSecondary} style={{ marginRight: 6, marginTop: 1 }} />
+            <Text style={styles.addressText} numberOfLines={2}>
+              {displayAddress}
+            </Text>
+          </View>
+        </View>
+
+        {/* 3. OVERVIEW METRICS CARDS */}
+        <View style={styles.overviewRow}>
+          <View style={[styles.overviewMetricCard, amountDue > 0 && styles.overviewMetricDueCard]}>
+            <View style={styles.overviewCardTop}>
+              <Text style={styles.overviewCardLabel}>AMOUNT DUE</Text>
+              <View style={[styles.overviewIconWrap, { backgroundColor: amountDue > 0 ? '#FEF2F2' : '#ECFDF5' }]}>
+                <Ionicons
+                  name={amountDue > 0 ? 'alert-circle' : 'checkmark-circle'}
+                  size={16}
+                  color={amountDue > 0 ? colors.danger : colors.success}
+                />
               </View>
             </View>
-
-            {/* Edit Customer Action */}
-            <TouchableOpacity
-              style={styles.editCustomerBtn}
-              onPress={() => setEditCustomerModalVisible(true)}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="pencil-outline" size={14} color="#8C331A" />
-              <Text style={styles.editCustomerBtnText}>Edit</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* 3. Account Overview (Two balanced cards) */}
-        <View style={styles.overviewContainer}>
-          <View style={[styles.overviewCard, styles.overviewDueCard]}>
-            <View style={styles.overviewIconBox}>
-              <Ionicons name="alert-circle-outline" size={18} color="#8C331A" />
-            </View>
-            <Text style={styles.overviewCardLabel}>AMOUNT DUE</Text>
-            <Text style={[styles.overviewCardValue, amountDue > 0 ? styles.dueHighlight : styles.clearHighlight]}>
-              ₹{amountDue.toLocaleString()}
+            <Text style={[styles.overviewCardAmount, amountDue > 0 ? styles.dueText : styles.settledText]}>
+              ₹{amountDue.toLocaleString('en-IN')}
             </Text>
-            <Text style={styles.overviewCardSubtext}>
-              {amountDue > 0 ? 'Pending Collection' : 'All Clear / Settled'}
+            <Text style={styles.overviewCardSub}>
+              {amountDue > 0 ? 'Pending collection' : 'All clear • No dues'}
             </Text>
           </View>
 
-          <View style={styles.overviewCard}>
-            <View style={[styles.overviewIconBox, { backgroundColor: '#F3EFEA' }]}>
-              <Ionicons name="receipt-outline" size={18} color="#6B5E55" />
+          <View style={styles.overviewMetricCard}>
+            <View style={styles.overviewCardTop}>
+              <Text style={styles.overviewCardLabel}>TOTAL ORDERS</Text>
+              <View style={[styles.overviewIconWrap, { backgroundColor: '#F5EFEA' }]}>
+                <Ionicons name="cart-outline" size={16} color={colors.primary} />
+              </View>
             </View>
-            <Text style={styles.overviewCardLabel}>TOTAL ORDERS</Text>
-            <Text style={styles.overviewCardValue}>{totalOrdersCount}</Text>
-            <Text style={styles.overviewCardSubtext}>
-              {customerSummary ? `Billed: ₹${parseFloat(customerSummary.total_billed).toLocaleString()}` : 'Recorded Orders'}
+            <Text style={styles.overviewCardAmount}>{totalOrdersCount}</Text>
+            <Text style={styles.overviewCardSub}>
+              {customerSummary?.total_invoices ? `${customerSummary.total_invoices} invoices billed` : 'Lifetime orders'}
             </Text>
           </View>
         </View>
 
-        {/* 4. Quick Actions (3 compact actions) */}
-        <View style={styles.actionsContainer}>
+        {/* 4. MAIN ACTION BUTTONS */}
+        <View style={styles.actionsBar}>
           <TouchableOpacity
-            style={[styles.actionBtn, styles.actionPrimaryBtn]}
+            style={styles.primaryActionBtn}
             onPress={handleOpenNewOrder}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
           >
-            <Ionicons name="cart" size={16} color="#FFFFFF" style={{ marginRight: 5 }} />
-            <Text style={styles.actionPrimaryText}>New Order</Text>
+            <Ionicons name="add-circle" size={18} color={colors.white} style={{ marginRight: 6 }} />
+            <Text style={styles.primaryActionText}>New Order</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={handleOpenCollectPayment}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="wallet-outline" size={16} color="#8C331A" style={{ marginRight: 5 }} />
-            <Text style={styles.actionBtnText}>Collect Payment</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionBtn}
+            style={styles.secondaryActionBtn}
             onPress={handleRepeatOrder}
-            activeOpacity={0.8}
+            activeOpacity={0.7}
           >
-            <Ionicons name="repeat" size={16} color="#8C331A" style={{ marginRight: 5 }} />
-            <Text style={styles.actionBtnText}>Repeat Order</Text>
+            <Ionicons name="repeat" size={17} color={colors.primary} style={{ marginRight: 5 }} />
+            <Text style={styles.secondaryActionText}>Repeat Order</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryActionBtn}
+            onPress={handleOpenCollectPayment}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="cash-outline" size={17} color={colors.primary} style={{ marginRight: 5 }} />
+            <Text style={styles.secondaryActionText}>Collect Cash</Text>
           </TouchableOpacity>
         </View>
 
-        {/* 5. Recurring Orders */}
-        <View style={styles.sectionWrap}>
-          <View style={styles.sectionTitleRow}>
-            <View style={styles.titleWithIcon}>
-              <Ionicons name="repeat-outline" size={16} color="#8C331A" style={{ marginRight: 5 }} />
-              <Text style={styles.sectionHeading}>RECURRING ORDERS</Text>
+        {/* 5. RECURRING ORDER TEMPLATES */}
+        <View style={styles.sectionContainer}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionHeaderLeft}>
+              <Ionicons name="calendar-outline" size={18} color={colors.primary} style={{ marginRight: 6 }} />
+              <Text style={styles.sectionTitle}>RECURRING ORDERS</Text>
             </View>
             <TouchableOpacity
-              style={styles.headerActionPill}
+              style={styles.addTemplatePill}
               onPress={handleOpenCreateRecurring}
               activeOpacity={0.7}
             >
-              <Ionicons name="add" size={14} color="#8C331A" />
-              <Text style={styles.headerActionPillText}>Add Template</Text>
+              <Ionicons name="add" size={15} color={colors.primary} />
+              <Text style={styles.addTemplatePillText}>Add Template</Text>
             </TouchableOpacity>
           </View>
 
           {recurringLoading ? (
-            <ActivityIndicator size="small" color="#8C331A" style={{ marginVertical: 12 }} />
+            <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 16 }} />
           ) : recurringTemplates.length === 0 ? (
             <View style={styles.emptyCard}>
-              <Ionicons name="calendar-outline" size={24} color="#C4BCB5" />
+              <Ionicons name="calendar-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
               <Text style={styles.emptyCardTitle}>No Recurring Templates</Text>
-              <Text style={styles.emptyCardSub}>Save daily or weekday orders to automate delivery.</Text>
+              <Text style={styles.emptyCardSub}>Save daily or weekday orders to automate deliveries.</Text>
             </View>
           ) : (
             recurringTemplates.map(template => {
-              const freqLabel = template.frequency === 'daily'
-                ? 'Daily'
-                : (template.weekdays
-                    ? template.weekdays.split(',').map(d => d.trim().slice(0, 3).toUpperCase()).join(', ')
-                    : 'Specific Days');
-
+              const freqLabel = template.frequency === 'weekdays' ? 'Weekdays (Mon-Fri)' : 'Everyday (Daily)';
+              const partner = template.delivery_partner_name ? `Assigned: ${template.delivery_partner_name}` : 'No driver assigned';
               return (
-                <View key={template.id} style={[styles.compactTemplateCard, template.is_paused && styles.cardPaused]}>
-                  <View style={styles.templateTopRow}>
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <Text style={styles.templateFreqTitle}>{freqLabel}</Text>
-                        {template.is_paused ? (
-                          <View style={styles.pausedTag}>
-                            <Text style={styles.pausedTagText}>PAUSED</Text>
-                          </View>
-                        ) : (
-                          <View style={styles.activeTag}>
-                            <Text style={styles.activeTagText}>ACTIVE</Text>
-                          </View>
-                        )}
+                <View key={template.id} style={[styles.templateCard, template.is_paused && styles.templateCardPaused]}>
+                  <View style={styles.templateHeader}>
+                    <View style={styles.templateHeaderTitleGroup}>
+                      <Text style={styles.templateFreqTitle}>{freqLabel}</Text>
+                      <View style={[styles.statusTag, template.is_paused ? styles.statusTagPaused : styles.statusTagActive]}>
+                        <Text style={[styles.statusTagText, template.is_paused ? styles.statusTagTextPaused : styles.statusTagTextActive]}>
+                          {template.is_paused ? 'PAUSED' : 'ACTIVE'}
+                        </Text>
                       </View>
-                      <Text style={styles.templatePartnerLine} numberOfLines={1}>
-                        <Ionicons name="bicycle-outline" size={12} color="#8E8278" />{' '}
-                        {template.delivery_partner_name ? `Driver: ${template.delivery_partner_name}` : 'Unassigned driver'}
-                      </Text>
                     </View>
 
                     <TouchableOpacity
-                      style={styles.templateManageBtn}
+                      style={styles.templateEditBtn}
                       onPress={() => handleOpenEditRecurring(template)}
                       activeOpacity={0.7}
                     >
-                      <Ionicons name="pencil-outline" size={13} color="#8C331A" />
-                      <Text style={styles.templateManageText}>Edit</Text>
+                      <Text style={styles.templateEditText}>Edit</Text>
                     </TouchableOpacity>
                   </View>
 
-                  {/* Items Summary */}
-                  <View style={styles.templatePillsRow}>
-                    {template.items && template.items.length > 0 ? (
-                      template.items.map((it, idx) => (
-                        <View key={it.id || idx} style={styles.templateProductPill}>
-                          <Text style={styles.templateProductText}>
-                            {it.quantity}x {it.product_name}
-                          </Text>
-                        </View>
-                      ))
-                    ) : (
-                      <Text style={styles.emptyItemText}>No products specified</Text>
-                    )}
+                  <Text style={styles.templatePartnerText} numberOfLines={1}>{partner}</Text>
+
+                  {/* Items list */}
+                  <View style={styles.templateItemsRow}>
+                    {(template.items || []).map((it, idx) => (
+                      <View key={it.id || idx} style={styles.templateItemChip}>
+                        <Text style={styles.templateItemChipText}>
+                          {it.quantity}x {it.product_name}
+                        </Text>
+                      </View>
+                    ))}
                   </View>
 
-                  {/* Quick Toggle Pause/Resume */}
-                  <View style={styles.templateBottomBar}>
-                    <Text style={styles.templateSubAddress} numberOfLines={1}>
-                      {template.delivery_address || 'Standard Delivery'}
+                  {/* Pause / Resume action bar */}
+                  <View style={styles.templateFooter}>
+                    <Text style={styles.templateDeliveryAddress} numberOfLines={1}>
+                      {template.delivery_address || displayAddress}
                     </Text>
                     <TouchableOpacity
-                      style={[styles.pauseToggleBtn, template.is_paused && styles.pauseToggleActive]}
+                      style={[styles.pauseBtn, template.is_paused && styles.resumeBtn]}
                       onPress={() => handleTogglePauseRecurring(template)}
                       activeOpacity={0.7}
                     >
                       <Ionicons
-                        name={template.is_paused ? 'play' : 'pause'}
-                        size={11}
-                        color={template.is_paused ? '#059669' : '#6B5E55'}
-                        style={{ marginRight: 3 }}
+                        name={template.is_paused ? 'play-circle-outline' : 'pause-circle-outline'}
+                        size={15}
+                        color={template.is_paused ? colors.success : colors.warning}
+                        style={{ marginRight: 4 }}
                       />
-                      <Text style={[styles.pauseToggleText, template.is_paused && { color: '#059669' }]}>
+                      <Text style={[styles.pauseBtnText, template.is_paused && { color: colors.success }]}>
                         {template.is_paused ? 'Resume' : 'Pause'}
                       </Text>
                     </TouchableOpacity>
@@ -636,164 +587,138 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
           )}
         </View>
 
-        {/* 6. Recent Orders */}
-        <View style={styles.sectionWrap}>
-          <View style={styles.sectionTitleRow}>
-            <View style={styles.titleWithIcon}>
-              <Ionicons name="bag-check-outline" size={16} color="#8C331A" style={{ marginRight: 5 }} />
-              <Text style={styles.sectionHeading}>RECENT ORDERS ({recentOrders.length})</Text>
+        {/* 6. RECENT ORDERS */}
+        <View style={styles.sectionContainer}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionHeaderLeft}>
+              <Ionicons name="receipt-outline" size={18} color={colors.primary} style={{ marginRight: 6 }} />
+              <Text style={styles.sectionTitle}>RECENT ORDERS ({recentOrders.length})</Text>
             </View>
-
-            {recentOrders.length > 0 && (
-              <TouchableOpacity
-                onPress={() => navigation.navigate('Orders')}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.viewLinkText}>View All Orders →</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Orders')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.viewAllLink}>View All →</Text>
+            </TouchableOpacity>
           </View>
 
           {ordersLoading ? (
-            <ActivityIndicator size="small" color="#8C331A" style={{ marginVertical: 12 }} />
+            <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 16 }} />
           ) : recentOrders.length === 0 ? (
             <View style={styles.emptyCard}>
-              <Ionicons name="receipt-outline" size={24} color="#C4BCB5" />
-              <Text style={styles.emptyCardTitle}>No Orders Yet</Text>
+              <Ionicons name="cart-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
+              <Text style={styles.emptyCardTitle}>No Prior Orders</Text>
               <Text style={styles.emptyCardSub}>Tap 'New Order' above to start billing.</Text>
             </View>
           ) : (
-            recentOrders.slice(0, 4).map(order => (
-              <TouchableOpacity
-                key={order.id}
-                style={styles.cleanOrderCard}
-                onPress={() => {
-                  if (order.has_invoice && order.invoice_number) {
-                    navigation.navigate('InvoiceDetail', {
-                      invoice: {
-                        id: String(order.id),
-                        invoiceNo: order.invoice_number,
-                        name: order.customer_name,
-                        amount: `₹${parseFloat(order.total_amount).toLocaleString()}`,
-                        numericAmount: parseFloat(order.total_amount),
-                        deliveryStatus: order.status,
-                        items: order.items.map(it => ({
-                          id: String(it.id),
-                          name: it.product_details?.name || 'Item',
-                          qty: it.quantity,
-                          price: parseFloat(it.price),
-                        })),
-                      },
-                    });
-                  } else {
-                    navigation.navigate('Orders');
-                  }
-                }}
-                activeOpacity={0.7}
-              >
-                <View style={styles.orderCardHeader}>
-                  <View>
-                    <Text style={styles.orderIdTitle}>Order #{order.id}</Text>
-                    <Text style={styles.orderDateSubtitle}>
-                      {new Date(order.created_at).toLocaleDateString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
-                    </Text>
+            recentOrders.slice(0, 5).map(order => {
+              const orderDate = new Date(order.created_at).toLocaleDateString('en-IN', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              });
+              const itemsSummary = (order.items || [])
+                .map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`)
+                .join(' • ');
+
+              return (
+                <TouchableOpacity
+                  key={order.id}
+                  style={styles.orderCard}
+                  onPress={() => navigation.navigate('OrderDetails', { orderId: order.id, order })}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.orderCardTop}>
+                    <View>
+                      <Text style={styles.orderCardId}>Order #{order.id}</Text>
+                      <Text style={styles.orderCardDate}>{orderDate}</Text>
+                    </View>
+                    <View style={styles.orderStatusBadge}>
+                      <Text style={styles.orderStatusBadgeText}>{order.status.toUpperCase()}</Text>
+                    </View>
                   </View>
 
-                  <View style={styles.orderStatusBadge}>
-                    <Text style={styles.orderStatusText}>{order.status.toUpperCase()}</Text>
-                  </View>
-                </View>
-
-                <Text style={styles.orderItemsPreview} numberOfLines={1}>
-                  {order.items && order.items.length > 0
-                    ? order.items.map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`).join(' • ')
-                    : 'Order Delivery'}
-                </Text>
-
-                <View style={styles.orderCardFooter}>
-                  <Text style={styles.orderTotalAmount}>
-                    ₹{parseFloat(order.total_amount || '0').toLocaleString()}
+                  <Text style={styles.orderCardItems} numberOfLines={1}>
+                    {itemsSummary || 'Standard Daily Delivery'}
                   </Text>
 
-                  {order.has_invoice ? (
-                    <View style={styles.invoicedTag}>
-                      <Ionicons name="checkmark-done" size={12} color="#059669" style={{ marginRight: 2 }} />
-                      <Text style={styles.invoicedTagText}>{order.invoice_number || 'INVOICED'}</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.pendingInvoiceTag}>Pending Invoicing</Text>
-                  )}
-                </View>
-              </TouchableOpacity>
-            ))
+                  <View style={styles.orderCardBottom}>
+                    <Text style={styles.orderCardTotal}>₹{parseFloat(order.total_amount || '0').toLocaleString('en-IN')}</Text>
+                    {order.has_invoice ? (
+                      <View style={styles.invoicedTag}>
+                        <Ionicons name="checkmark-done" size={13} color={colors.success} style={{ marginRight: 4 }} />
+                        <Text style={styles.invoicedTagText}>{order.invoice_number || 'INVOICED'}</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.unbilledTag}>Pending Invoice</Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })
           )}
         </View>
 
-        {/* 7. Customer Ledger (Compact Financial Summary) */}
-        <View style={styles.sectionWrap}>
-          <View style={styles.sectionTitleRow}>
-            <View style={styles.titleWithIcon}>
-              <Ionicons name="book-outline" size={16} color="#8C331A" style={{ marginRight: 5 }} />
-              <Text style={styles.sectionHeading}>CUSTOMER LEDGER</Text>
+        {/* 7. CUSTOMER LEDGER STATEMENT */}
+        <View style={styles.sectionContainer}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionHeaderLeft}>
+              <Ionicons name="book-outline" size={18} color={colors.primary} style={{ marginRight: 6 }} />
+              <Text style={styles.sectionTitle}>CUSTOMER LEDGER</Text>
             </View>
-
             <TouchableOpacity
               onPress={() => setLedgerModalVisible(true)}
               activeOpacity={0.7}
             >
-              <Text style={styles.viewLinkText}>View Full Ledger →</Text>
+              <Text style={styles.viewAllLink}>View Full Ledger →</Text>
             </TouchableOpacity>
           </View>
 
           {ledgerLoading ? (
-            <ActivityIndicator size="small" color="#8C331A" style={{ marginVertical: 12 }} />
+            <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 16 }} />
           ) : ledgerStatement ? (
-            <View style={styles.ledgerCompactCard}>
+            <View style={styles.ledgerCard}>
               <View style={styles.ledgerGrid}>
-                <View style={styles.ledgerGridCol}>
+                <View style={styles.ledgerCol}>
                   <Text style={styles.ledgerColLabel}>OPENING BAL</Text>
                   <Text style={styles.ledgerColValue}>
-                    ₹{parseFloat(ledgerStatement.summary.opening_balance || '0').toLocaleString()}
+                    ₹{parseFloat(ledgerStatement.summary?.opening_balance || '0').toLocaleString('en-IN')}
                   </Text>
                 </View>
 
-                <View style={styles.ledgerGridCol}>
+                <View style={styles.ledgerCol}>
                   <Text style={styles.ledgerColLabel}>TOTAL INVOICED</Text>
-                  <Text style={[styles.ledgerColValue, { color: '#DC2626' }]}>
-                    +₹{parseFloat(ledgerStatement.summary.total_debit || '0').toLocaleString()}
+                  <Text style={[styles.ledgerColValue, { color: colors.danger }]}>
+                    +₹{parseFloat(ledgerStatement.summary?.total_debit || '0').toLocaleString('en-IN')}
                   </Text>
                 </View>
 
-                <View style={styles.ledgerGridCol}>
+                <View style={styles.ledgerCol}>
                   <Text style={styles.ledgerColLabel}>COLLECTIONS</Text>
-                  <Text style={[styles.ledgerColValue, { color: '#059669' }]}>
-                    -₹{parseFloat(ledgerStatement.summary.total_credit || '0').toLocaleString()}
+                  <Text style={[styles.ledgerColValue, { color: colors.success }]}>
+                    -₹{parseFloat(ledgerStatement.summary?.total_credit || '0').toLocaleString('en-IN')}
                   </Text>
                 </View>
 
-                <View style={[styles.ledgerGridCol, { borderRightWidth: 0 }]}>
+                <View style={[styles.ledgerCol, { borderRightWidth: 0 }]}>
                   <Text style={styles.ledgerColLabel}>AMOUNT DUE</Text>
-                  <Text style={[styles.ledgerColValue, { color: '#8C331A', fontWeight: '800' }]}>
-                    ₹{parseFloat(ledgerStatement.summary.closing_balance || '0').toLocaleString()}
+                  <Text style={[styles.ledgerColValue, { color: colors.primary, fontWeight: '800' }]}>
+                    ₹{parseFloat(ledgerStatement.summary?.closing_balance || '0').toLocaleString('en-IN')}
                   </Text>
                 </View>
               </View>
 
-              <View style={styles.ledgerFooterRow}>
+              <View style={styles.ledgerCardFooter}>
                 <Text style={styles.ledgerPeriodText}>
-                  Passbook: {new Date(ledgerStatement.period.start_date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
+                  Passbook: {ledgerStatement.period?.start_date ? new Date(ledgerStatement.period.start_date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : 'Current Month'}
                 </Text>
                 <TouchableOpacity
                   style={styles.collectMiniBtn}
                   onPress={handleOpenCollectPayment}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="wallet-outline" size={12} color="#8C331A" style={{ marginRight: 4 }} />
-                  <Text style={styles.collectMiniBtnText}>Collect Payment</Text>
+                  <Ionicons name="cash-outline" size={13} color={colors.white} style={{ marginRight: 4 }} />
+                  <Text style={styles.collectMiniBtnText}>Collect Cash</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -805,74 +730,55 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
         </View>
       </ScrollView>
 
-      {/* --- MODALS --- */}
+      {/* --- MODALS & DIALOGS --- */}
 
       {/* 1. Edit Customer Modal */}
       <AddCustomerModal
         visible={editCustomerModalVisible}
-        title="Edit Customer"
-        isEditing={true}
-        initialData={{
-          name: customer?.name || '',
-          phone: customer?.phone || '',
-          address: customer?.address || '',
-          openingBalance: 0,
-        }}
         onClose={() => setEditCustomerModalVisible(false)}
         onSubmit={handleEditCustomerSubmit}
+        initialData={
+          customer
+            ? {
+                name: customer.name,
+                phone: customer.phone,
+                address: customer.address,
+              }
+            : undefined
+        }
+        title="Edit Customer Details"
       />
 
       {/* 2. Select Order to Repeat Modal */}
-      <Modal visible={repeatOrderModalVisible} transparent animationType="fade" onRequestClose={() => setRepeatOrderModalVisible(false)} statusBarTranslucent={true}>
+      <Modal visible={repeatOrderModalVisible} transparent animationType="fade" onRequestClose={() => setRepeatOrderModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setRepeatOrderModalVisible(false)} />
-          <View style={styles.modalCenterCard}>
-            <View style={styles.modalSheetHeader}>
+          <View style={styles.modalCenterBox}>
+            <View style={styles.modalHeaderRow}>
               <View>
-                <Text style={styles.modalSheetTitle}>Repeat Previous Order</Text>
-                <Text style={styles.modalSheetSubtitle}>
-                  Choose an order to prefill items into Quick Billing
-                </Text>
+                <Text style={styles.modalSheetTitle}>Repeat Order</Text>
+                <Text style={styles.modalSheetSub}>Choose an order to duplicate products</Text>
               </View>
               <TouchableOpacity onPress={() => setRepeatOrderModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close" size={20} color="#6B5E55" />
+                <Ionicons name="close" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={true} style={{ maxHeight: 380 }} bounces={false}>
+            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
               {recentOrders.map(ord => (
                 <TouchableOpacity
                   key={ord.id}
-                  style={styles.repeatOrderCard}
+                  style={styles.repeatOrderOptionCard}
                   onPress={() => repeatSpecificOrder(ord)}
                   activeOpacity={0.7}
                 >
                   <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Text style={styles.repeatOrderId}>Order #{ord.id}</Text>
-                      <Text style={styles.repeatOrderDate}>
-                        • {new Date(ord.created_at).toLocaleDateString('en-IN', {
-                          day: 'numeric',
-                          month: 'short',
-                        })}
-                      </Text>
-                    </View>
-                    <Text style={styles.repeatOrderSummary} numberOfLines={2}>
-                      {ord.items && ord.items.length > 0
-                        ? ord.items.map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`).join(', ')
-                        : 'No item summary'}
+                    <Text style={styles.repeatOptionId}>Order #{ord.id}</Text>
+                    <Text style={styles.repeatOptionItems} numberOfLines={1}>
+                      {(ord.items || []).map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`).join(', ')}
                     </Text>
                   </View>
-
-                  <View style={{ alignItems: 'flex-end', marginLeft: 10 }}>
-                    <Text style={styles.repeatOrderTotal}>
-                      ₹{parseFloat(ord.total_amount).toLocaleString()}
-                    </Text>
-                    <View style={styles.repeatSelectBtn}>
-                      <Text style={styles.repeatSelectText}>Select</Text>
-                      <Ionicons name="arrow-forward" size={11} color="#8C331A" />
-                    </View>
-                  </View>
+                  <Text style={styles.repeatOptionTotal}>₹{parseFloat(ord.total_amount || '0').toLocaleString('en-IN')}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -880,72 +786,69 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
         </View>
       </Modal>
 
-      {/* 3. Collect Payment Modal */}
+      {/* 3. Cash Payment Modal (Strictly Cash Only) */}
       <CollectPaymentModal
         visible={collectModalVisible}
         onClose={() => setCollectModalVisible(false)}
         onSubmit={handleConfirmCollectPayment}
         customerName={displayName}
         totalPendingAmount={amountDue}
+        initialAmount={collectAmount}
       />
 
       {/* 4. Full Ledger Passbook Modal */}
-      <Modal visible={ledgerModalVisible} transparent animationType="fade" onRequestClose={() => setLedgerModalVisible(false)} statusBarTranslucent={true}>
+      <Modal visible={ledgerModalVisible} transparent animationType="fade" onRequestClose={() => setLedgerModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setLedgerModalVisible(false)} />
-          <View style={[styles.modalCenterCard, { maxHeight: '85%' }]}>
-            <View style={styles.modalSheetHeader}>
+          <View style={[styles.modalCenterBox, { maxHeight: '82%' }]}>
+            <View style={styles.modalHeaderRow}>
               <View>
                 <Text style={styles.modalSheetTitle}>Customer Ledger Passbook</Text>
-                <Text style={styles.modalSheetSubtitle}>
-                  Chronological financial transactions for {displayName}
-                </Text>
+                <Text style={styles.modalSheetSub}>{displayName} • Detailed Statement</Text>
               </View>
               <TouchableOpacity onPress={() => setLedgerModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close" size={20} color="#6B5E55" />
+                <Ionicons name="close" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
             {ledgerStatement ? (
               <ScrollView showsVerticalScrollIndicator={false}>
-                {/* Ledger Period Summary Box */}
-                <View style={styles.modalLedgerSummary}>
-                  <View style={styles.summaryLine}>
-                    <Text style={styles.sumLineLabel}>Opening Balance</Text>
-                    <Text style={styles.sumLineValue}>₹{ledgerStatement.summary.opening_balance}</Text>
+                <View style={styles.ledgerStatementSummary}>
+                  <View style={styles.stmtSummaryRow}>
+                    <Text style={styles.stmtLabel}>Opening Balance</Text>
+                    <Text style={styles.stmtValue}>₹{ledgerStatement.summary?.opening_balance || '0'}</Text>
                   </View>
-                  <View style={styles.summaryLine}>
-                    <Text style={styles.sumLineLabel}>Total Invoiced (Debits)</Text>
-                    <Text style={[styles.sumLineValue, { color: '#DC2626' }]}>+₹{ledgerStatement.summary.total_debit}</Text>
+                  <View style={styles.stmtSummaryRow}>
+                    <Text style={styles.stmtLabel}>Total Invoiced (Debits)</Text>
+                    <Text style={[styles.stmtValue, { color: colors.danger }]}>+₹{ledgerStatement.summary?.total_debit || '0'}</Text>
                   </View>
-                  <View style={styles.summaryLine}>
-                    <Text style={styles.sumLineLabel}>Total Collections (Credits)</Text>
-                    <Text style={[styles.sumLineValue, { color: '#059669' }]}>-₹{ledgerStatement.summary.total_credit}</Text>
+                  <View style={styles.stmtSummaryRow}>
+                    <Text style={styles.stmtLabel}>Total Collections (Credits)</Text>
+                    <Text style={[styles.stmtValue, { color: colors.success }]}>-₹{ledgerStatement.summary?.total_credit || '0'}</Text>
                   </View>
-                  <View style={[styles.summaryLine, { borderTopWidth: 1, borderTopColor: '#EFEAE4', paddingTop: 6, marginTop: 4 }]}>
-                    <Text style={styles.sumLineClosingLabel}>Current Balance</Text>
-                    <Text style={styles.sumLineClosingValue}>₹{ledgerStatement.summary.closing_balance}</Text>
+                  <View style={[styles.stmtSummaryRow, { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 6 }]}>
+                    <Text style={[styles.stmtLabel, { fontWeight: '700' }]}>Net Closing Balance</Text>
+                    <Text style={[styles.stmtValue, { fontWeight: '800', color: colors.primary }]}>₹{ledgerStatement.summary?.closing_balance || '0'}</Text>
                   </View>
                 </View>
 
-                <Text style={styles.timelineHeader}>TRANSACTION TIMELINE</Text>
-                {ledgerStatement.transactions.length === 0 ? (
+                <Text style={styles.transactionsHeader}>TRANSACTION TIMELINE</Text>
+                {(!ledgerStatement.transactions || ledgerStatement.transactions.length === 0) ? (
                   <Text style={styles.emptyNote}>No transactions recorded in this period.</Text>
                 ) : (
                   ledgerStatement.transactions.map((tx: any, idx: number) => {
                     const isDebit = parseFloat(tx.debit) > 0;
                     return (
-                      <View key={idx} style={styles.timelineRow}>
-                        <View style={{ flex: 1, marginRight: 8 }}>
-                          <Text style={styles.timelineRef}>{tx.reference_no}</Text>
-                          <Text style={styles.timelineDesc} numberOfLines={1}>{tx.description}</Text>
-                          <Text style={styles.timelineDate}>{new Date(tx.date).toLocaleDateString()}</Text>
+                      <View key={idx} style={styles.txRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.txDesc}>{tx.description}</Text>
+                          <Text style={styles.txDate}>{tx.date}</Text>
                         </View>
                         <View style={{ alignItems: 'flex-end' }}>
-                          <Text style={[styles.timelineAmount, isDebit ? styles.txDebit : styles.txCredit]}>
-                            {isDebit ? `+ ₹${tx.debit}` : `- ₹${tx.credit}`}
+                          <Text style={[styles.txAmount, isDebit ? { color: colors.danger } : { color: colors.success }]}>
+                            {isDebit ? `+₹${tx.debit}` : `-₹${tx.credit}`}
                           </Text>
-                          <Text style={styles.timelineBal}>Bal: ₹{tx.running_balance}</Text>
+                          <Text style={styles.txRunningBal}>Bal: ₹{tx.running_balance}</Text>
                         </View>
                       </View>
                     );
@@ -953,13 +856,13 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
                 )}
               </ScrollView>
             ) : (
-              <ActivityIndicator size="small" color="#8C331A" style={{ marginVertical: 20 }} />
+              <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 30 }} />
             )}
           </View>
         </View>
       </Modal>
 
-      {/* Centralized Reusable Confirm Dialog */}
+      {/* 5. Centralized Reusable Confirm Dialog */}
       <ConfirmDialog
         visible={confirmDialogConfig.visible}
         title={confirmDialogConfig.title}
@@ -971,59 +874,6 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
         onConfirm={confirmDialogConfig.onConfirm}
         onCancel={() => setConfirmDialogConfig(prev => ({ ...prev, visible: false }))}
       />
-
-      {/* Header Quick Menu Modal */}
-      <Modal visible={headerMenuVisible} transparent animationType="fade">
-        <TouchableOpacity
-          style={styles.menuBackdrop}
-          activeOpacity={1}
-          onPress={() => setHeaderMenuVisible(false)}
-        >
-          <View style={styles.menuCard}>
-            <View style={styles.menuHeader}>
-              <Text style={styles.menuTitle} numberOfLines={1}>{displayName}</Text>
-              <Text style={styles.menuSubtitle}>Quick Actions</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => {
-                setHeaderMenuVisible(false);
-                setEditCustomerModalVisible(true);
-              }}
-            >
-              <Ionicons name="pencil-outline" size={18} color="#8C331A" style={{ marginRight: 12 }} />
-              <Text style={styles.menuItemText}>Edit Profile</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => {
-                setHeaderMenuVisible(false);
-                handleOpenCollectPayment();
-              }}
-            >
-              <Ionicons name="wallet-outline" size={18} color="#8C331A" style={{ marginRight: 12 }} />
-              <Text style={styles.menuItemText}>Collect Payment</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => {
-                setHeaderMenuVisible(false);
-                handleOpenCreateRecurring();
-              }}
-            >
-              <Ionicons name="repeat-outline" size={18} color="#8C331A" style={{ marginRight: 12 }} />
-              <Text style={styles.menuItemText}>Create Recurring Template</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.menuItem, { borderBottomWidth: 0 }]}
-              onPress={() => setHeaderMenuVisible(false)}
-            >
-              <Ionicons name="close-circle-outline" size={18} color="#8E8278" style={{ marginRight: 12 }} />
-              <Text style={[styles.menuItemText, { color: '#8E8278' }]}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -1031,869 +881,685 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAF8F5',
-  },
-  scrollContent: {
-    paddingBottom: 36,
+    backgroundColor: colors.background,
   },
   centerBox: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-
-  /* 1. Header */
-  customHeaderBar: {
+  topHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#FAF8F5',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.cardBackground,
     borderBottomWidth: 1,
-    borderBottomColor: '#EFEAE4',
+    borderBottomColor: colors.border,
   },
-  headerLeftGroup: {
+  topHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  headerBackBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F5EBE6',
-    borderWidth: 1,
-    borderColor: '#EFE3D9',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
+  backButton: {
+    padding: spacing.xs,
+    marginRight: spacing.xs,
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#2A2421',
-    letterSpacing: -0.3,
+  screenTitle: {
+    ...typography.heading1,
+    color: colors.textPrimary,
   },
-  headerMoreBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    justifyContent: 'center',
+  editActionHeaderBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#F7EFE9',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#F5C6B8',
+  },
+  editActionHeaderText: {
+    ...typography.badge,
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  scrollContent: {
+    padding: spacing.md,
+    paddingBottom: spacing.xxl,
   },
 
-  /* 2. Customer Profile Card */
-  profileCard: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginTop: 12,
-    borderRadius: 16,
-    padding: 14,
+  /* 2. Customer Identity Card */
+  identityCard: {
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.lg,
+    padding: spacing.md,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    shadowColor: '#2A2421',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    borderColor: colors.border,
+    ...shadows.sm,
+    marginBottom: spacing.md,
   },
-  profileMainRow: {
+  identityTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: spacing.sm,
   },
-  avatarCircle: {
+  avatarBox: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#F5EBE6',
-    borderWidth: 1,
-    borderColor: '#EFE3D9',
+    backgroundColor: '#FDEBE4',
+    borderWidth: 1.5,
+    borderColor: '#F5C6B8',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: spacing.md,
   },
   avatarInitials: {
-    fontSize: 18,
+    ...typography.heading2,
+    color: colors.primary,
     fontWeight: '800',
-    color: '#8C331A',
   },
-  profileInfoCol: {
+  identityInfoCol: {
     flex: 1,
   },
-  profileName: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#2A2421',
-    letterSpacing: -0.2,
+  customerName: {
+    ...typography.heading1,
+    color: colors.textPrimary,
+    marginBottom: 4,
   },
-  phonePill: {
+  phoneChip: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: '#FDF6F3',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginTop: 3,
+    backgroundColor: '#FAF4ED',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: '#F5C6B8',
   },
-  phonePillText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#8C331A',
+  phoneChipText: {
+    ...typography.caption,
+    fontFamily: 'Inter-SemiBold',
+    color: colors.primary,
+    fontWeight: '600',
   },
   noPhoneText: {
-    fontSize: 11,
-    color: '#A0958D',
-    fontStyle: 'italic',
-    marginTop: 2,
+    ...typography.caption,
+    color: colors.textMuted,
   },
   addressRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 3,
+    alignItems: 'flex-start',
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
   },
   addressText: {
-    fontSize: 11,
-    color: '#8E8278',
+    ...typography.caption,
+    color: colors.textSecondary,
     flex: 1,
-  },
-  editCustomerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 8,
-  },
-  editCustomerBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#8C331A',
-    marginLeft: 3,
+    lineHeight: 18,
   },
 
-  /* 3. Account Overview (Balanced Cards) */
-  overviewContainer: {
+  /* 3. Overview Metrics */
+  overviewRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginHorizontal: 16,
-    marginTop: 10,
+    gap: spacing.sm,
+    marginBottom: spacing.md,
   },
-  overviewCard: {
+  overviewMetricCard: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.lg,
+    padding: spacing.md,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    shadowColor: '#2A2421',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
   },
-  overviewDueCard: {
-    backgroundColor: '#FDF6F3',
-    borderColor: '#F5DDD3',
+  overviewMetricDueCard: {
+    borderColor: '#FCA5A5',
   },
-  overviewIconBox: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#F5EBE6',
-    justifyContent: 'center',
+  overviewCardTop: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 6,
   },
   overviewCardLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#8E8278',
+    ...typography.badge,
+    color: colors.textMuted,
     letterSpacing: 0.5,
   },
-  overviewCardValue: {
-    fontSize: 18,
+  overviewIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  overviewCardAmount: {
+    ...typography.heading1,
+    fontSize: 22,
     fontWeight: '800',
-    color: '#2A2421',
-    marginTop: 2,
-    letterSpacing: -0.3,
+    color: colors.textPrimary,
+    marginBottom: 2,
   },
-  dueHighlight: {
-    color: '#8C331A',
+  dueText: {
+    color: colors.danger,
   },
-  clearHighlight: {
-    color: '#059669',
+  settledText: {
+    color: colors.success,
   },
-  overviewCardSubtext: {
-    fontSize: 10,
-    color: '#8E8278',
-    marginTop: 2,
+  overviewCardSub: {
+    ...typography.caption,
+    fontSize: 11,
+    color: colors.textSecondary,
   },
 
-  /* 4. Quick Actions */
-  actionsContainer: {
+  /* 4. Action Buttons */
+  actionsBar: {
     flexDirection: 'row',
-    gap: 8,
-    marginHorizontal: 16,
-    marginTop: 10,
+    gap: spacing.xs,
+    marginBottom: spacing.lg,
   },
-  actionBtn: {
-    flex: 1,
+  primaryActionBtn: {
+    flex: 1.2,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    borderRadius: 12,
-    paddingVertical: 10,
-    shadowColor: '#2A2421',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
+    ...shadows.sm,
   },
-  actionPrimaryBtn: {
-    backgroundColor: '#8C331A',
-    borderColor: '#8C331A',
-  },
-  actionPrimaryText: {
-    color: '#FFFFFF',
-    fontSize: 12,
+  primaryActionText: {
+    ...typography.badge,
+    fontSize: 13,
+    color: colors.white,
     fontWeight: '700',
   },
-  actionBtnText: {
-    color: '#8C331A',
+  secondaryActionBtn: {
+    flex: 1,
+    backgroundColor: colors.cardBackground,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.sm,
+  },
+  secondaryActionText: {
+    ...typography.badge,
     fontSize: 12,
+    color: colors.primary,
     fontWeight: '700',
   },
 
-  /* Section Structure */
-  sectionWrap: {
-    marginHorizontal: 16,
-    marginTop: 14,
+  /* Common Section Header */
+  sectionContainer: {
+    marginBottom: spacing.lg,
   },
-  sectionTitleRow: {
+  sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: spacing.sm,
   },
-  titleWithIcon: {
+  sectionHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  sectionHeading: {
-    fontSize: 11,
+  sectionTitle: {
+    ...typography.caption,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: '#8E8278',
+    color: colors.textMuted,
     letterSpacing: 0.6,
   },
-  headerActionPill: {
+  viewAllLink: {
+    ...typography.caption,
+    fontFamily: 'Inter-SemiBold',
+    fontWeight: '600',
+    color: colors.primary,
+  },
+  addTemplatePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 8,
+    backgroundColor: '#F7EFE9',
+    paddingHorizontal: spacing.sm,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: radius.full,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: '#F5C6B8',
   },
-  headerActionPillText: {
+  addTemplatePillText: {
+    ...typography.badge,
     fontSize: 11,
+    color: colors.primary,
     fontWeight: '700',
-    color: '#8C331A',
     marginLeft: 2,
   },
-  viewLinkText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#8C331A',
-  },
 
-  /* Empty State */
+  /* Empty state */
   emptyCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: colors.border,
+    borderStyle: 'dashed',
   },
   emptyCardTitle: {
-    fontSize: 13,
+    ...typography.body,
     fontWeight: '700',
-    color: '#2A2421',
-    marginTop: 5,
+    color: colors.textPrimary,
+    marginBottom: 2,
   },
   emptyCardSub: {
-    fontSize: 11,
-    color: '#8E8278',
+    ...typography.caption,
+    color: colors.textSecondary,
     textAlign: 'center',
-    marginTop: 2,
   },
 
-  /* 5. Recurring Orders (Compact Cards) */
-  compactTemplateCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
+  /* Template Cards */
+  templateCard: {
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.lg,
+    padding: spacing.md,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    shadowColor: '#2A2421',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 2,
-    elevation: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
+    marginBottom: spacing.sm,
   },
-  cardPaused: {
-    opacity: 0.8,
-    backgroundColor: '#FAFAF9',
+  templateCardPaused: {
+    backgroundColor: '#FAF9F8',
+    borderColor: colors.gray200,
+    opacity: 0.85,
   },
-  templateTopRow: {
+  templateHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  templateHeaderTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
   },
   templateFreqTitle: {
-    fontSize: 12,
+    ...typography.body,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  statusTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+  },
+  statusTagActive: {
+    backgroundColor: colors.approvedBackground,
+  },
+  statusTagPaused: {
+    backgroundColor: '#F3F4F6',
+  },
+  statusTagText: {
+    fontSize: 10,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: '#8C331A',
   },
-  activeTag: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
-    marginLeft: 6,
+  statusTagTextActive: {
+    color: colors.approved,
   },
-  activeTagText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#059669',
+  statusTagTextPaused: {
+    color: colors.gray500,
   },
-  pausedTag: {
-    backgroundColor: '#F3EFEA',
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
-    marginLeft: 6,
-  },
-  pausedTagText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#8E8278',
-  },
-  templatePartnerLine: {
-    fontSize: 11,
-    color: '#8E8278',
-    marginTop: 2,
-  },
-  templateManageBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FAF8F5',
-    paddingHorizontal: 8,
+  templateEditBtn: {
+    paddingHorizontal: spacing.sm,
     paddingVertical: 3,
-    borderRadius: 6,
+    borderRadius: radius.sm,
+    backgroundColor: '#FAF4ED',
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: '#F5C6B8',
   },
-  templateManageText: {
+  templateEditText: {
+    ...typography.caption,
     fontSize: 11,
     fontWeight: '700',
-    color: '#8C331A',
-    marginLeft: 2,
+    color: colors.primary,
   },
-  templatePillsRow: {
+  templatePartnerText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  templateItemsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 5,
-    marginVertical: 7,
+    gap: 6,
+    marginVertical: spacing.xs,
   },
-  templateProductPill: {
-    backgroundColor: '#FAF8F5',
-    borderRadius: 6,
-    paddingHorizontal: 7,
+  templateItemChip: {
+    backgroundColor: '#F8F6F4',
+    paddingHorizontal: spacing.sm,
     paddingVertical: 3,
+    borderRadius: radius.sm,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: colors.borderLight,
   },
-  templateProductText: {
+  templateItemChipText: {
+    ...typography.caption,
     fontSize: 11,
-    fontWeight: '600',
-    color: '#2A2421',
+    color: colors.textPrimary,
+    fontWeight: '500',
   },
-  emptyItemText: {
-    fontSize: 11,
-    color: '#8E8278',
-    fontStyle: 'italic',
-  },
-  templateBottomBar: {
+  templateFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 6,
+    marginTop: spacing.xs,
+    paddingTop: spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: '#FAF8F5',
+    borderTopColor: colors.borderLight,
   },
-  templateSubAddress: {
-    fontSize: 10,
-    color: '#8E8278',
+  templateDeliveryAddress: {
+    ...typography.caption,
+    fontSize: 11,
+    color: colors.textMuted,
     flex: 1,
-    marginRight: 6,
+    marginRight: spacing.sm,
   },
-  pauseToggleBtn: {
+  pauseBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FAF8F5',
-    paddingHorizontal: 7,
+    paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderRadius: radius.sm,
+    backgroundColor: colors.warningBg,
   },
-  pauseToggleActive: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
+  resumeBtn: {
+    backgroundColor: colors.approvedBackground,
   },
-  pauseToggleText: {
-    fontSize: 10,
+  pauseBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter-Bold',
     fontWeight: '700',
-    color: '#6B5E55',
+    color: colors.warning,
   },
 
-  /* 6. Recent Orders */
-  cleanOrderCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
+  /* Order Cards */
+  orderCard: {
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.lg,
+    padding: spacing.md,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    shadowColor: '#2A2421',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 2,
-    elevation: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
+    marginBottom: spacing.sm,
   },
-  orderCardHeader: {
+  orderCardTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    marginBottom: 4,
   },
-  orderIdTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#2A2421',
+  orderCardId: {
+    ...typography.body,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '700',
+    color: colors.textPrimary,
   },
-  orderDateSubtitle: {
-    fontSize: 10,
-    color: '#8E8278',
-    marginTop: 1,
+  orderCardDate: {
+    ...typography.caption,
+    color: colors.textMuted,
   },
   orderStatusBadge: {
-    backgroundColor: '#F5EBE6',
-    paddingHorizontal: 6,
+    backgroundColor: '#FAF4ED',
+    paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: '#F5C6B8',
   },
-  orderStatusText: {
-    fontSize: 9,
+  orderStatusBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter-Bold',
+    color: colors.primary,
     fontWeight: '800',
-    color: '#8C331A',
   },
-  orderItemsPreview: {
-    fontSize: 12,
-    color: '#4B3F38',
-    marginVertical: 5,
+  orderCardItems: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginVertical: 4,
   },
-  orderCardFooter: {
+  orderCardBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginTop: 4,
     paddingTop: 6,
     borderTopWidth: 1,
-    borderTopColor: '#FAF8F5',
+    borderTopColor: colors.borderLight,
   },
-  orderTotalAmount: {
-    fontSize: 14,
+  orderCardTotal: {
+    ...typography.body,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: '#2A2421',
+    color: colors.textPrimary,
   },
   invoicedTag: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 6,
+    backgroundColor: colors.approvedBackground,
+    paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: 5,
+    borderRadius: radius.sm,
   },
   invoicedTagText: {
-    fontSize: 10,
+    fontSize: 11,
+    fontFamily: 'Inter-Bold',
+    color: colors.approved,
     fontWeight: '700',
-    color: '#059669',
   },
-  pendingInvoiceTag: {
-    fontSize: 10,
-    color: '#8E8278',
+  unbilledTag: {
+    fontSize: 11,
+    color: colors.textMuted,
     fontStyle: 'italic',
   },
 
-  /* 7. Customer Ledger */
-  ledgerCompactCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
+  /* Ledger Card */
+  ledgerCard: {
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    shadowColor: '#2A2421',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
+    overflow: 'hidden',
   },
   ledgerGrid: {
     flexDirection: 'row',
-    backgroundColor: '#FAF8F5',
-    borderRadius: 10,
-    padding: 8,
+    paddingVertical: spacing.md,
   },
-  ledgerGridCol: {
+  ledgerCol: {
     flex: 1,
     alignItems: 'center',
     borderRightWidth: 1,
-    borderRightColor: '#EFEAE4',
-    paddingHorizontal: 2,
+    borderRightColor: colors.borderLight,
+    paddingHorizontal: 4,
   },
   ledgerColLabel: {
-    fontSize: 8,
+    fontSize: 9,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: '#8E8278',
+    color: colors.textMuted,
+    marginBottom: 4,
     textAlign: 'center',
   },
   ledgerColValue: {
-    fontSize: 11,
+    fontSize: 13,
+    fontFamily: 'Inter-Bold',
     fontWeight: '700',
-    color: '#2A2421',
-    marginTop: 2,
-    textAlign: 'center',
+    color: colors.textPrimary,
   },
-  ledgerFooterRow: {
+  ledgerCardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 8,
-    paddingTop: 8,
+    backgroundColor: '#FAF8F5',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: '#FAF8F5',
+    borderTopColor: colors.borderLight,
   },
   ledgerPeriodText: {
-    fontSize: 10,
-    color: '#8E8278',
-    fontWeight: '600',
+    ...typography.caption,
+    fontSize: 11,
+    color: colors.textSecondary,
+    fontWeight: '500',
   },
   collectMiniBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FDF6F3',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#F5DDD3',
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
   },
   collectMiniBtnText: {
-    fontSize: 10,
+    ...typography.caption,
+    fontSize: 11,
     fontWeight: '700',
-    color: '#8C331A',
+    color: colors.white,
   },
 
-  /* Modals */
+  /* Modals Overlay */
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+    padding: spacing.lg,
   },
-  modalCenterCard: {
-    width: '92%',
-    maxWidth: 420,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 18,
-    shadowColor: '#2A2421',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    elevation: 10,
-    overflow: 'hidden',
+  modalCenterBox: {
+    width: '100%',
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    ...shadows.lg,
   },
-  modalSheet: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 18,
-    maxHeight: '90%',
-  },
-  modalSheetHeader: {
+  modalHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
+    alignItems: 'center',
+    marginBottom: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+    paddingBottom: spacing.sm,
   },
   modalSheetTitle: {
-    fontSize: 16,
+    ...typography.heading2,
+    color: colors.textPrimary,
     fontWeight: '800',
-    color: '#2A2421',
   },
-  modalSheetSubtitle: {
-    fontSize: 11,
-    color: '#8E8278',
+  modalSheetSub: {
+    ...typography.caption,
+    color: colors.textSecondary,
     marginTop: 2,
   },
-  fieldLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#8E8278',
-    letterSpacing: 0.5,
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  modalInput: {
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    height: 42,
-    fontSize: 13,
-    color: '#2A2421',
-  },
-  methodChipsRow: {
+  repeatOrderOptionCard: {
     flexDirection: 'row',
-    gap: 6,
-  },
-  methodChip: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 7,
-    borderRadius: 8,
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-  },
-  methodChipActive: {
-    backgroundColor: '#8C331A',
-    borderColor: '#8C331A',
-  },
-  methodChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#6B5E55',
-  },
-  methodChipTextActive: {
-    color: '#FFFFFF',
-  },
-  primarySubmitBtn: {
-    backgroundColor: '#8C331A',
-    borderRadius: 12,
-    height: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 14,
-  },
-  primarySubmitText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-
-  /* Repeat Order Modal */
-  repeatOrderCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 8,
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
   },
-  repeatOrderId: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#2A2421',
+  repeatOptionId: {
+    ...typography.body,
+    fontWeight: '700',
+    color: colors.textPrimary,
   },
-  repeatOrderDate: {
-    fontSize: 11,
-    color: '#8E8278',
-    marginLeft: 4,
-  },
-  repeatOrderSummary: {
-    fontSize: 11,
-    color: '#4B3F38',
+  repeatOptionItems: {
+    ...typography.caption,
+    color: colors.textSecondary,
     marginTop: 2,
   },
-  repeatOrderTotal: {
-    fontSize: 13,
+  repeatOptionTotal: {
+    ...typography.body,
     fontWeight: '800',
-    color: '#2A2421',
-  },
-  repeatSelectBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FDF6F3',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: '#F5DDD3',
-    marginTop: 3,
-  },
-  repeatSelectText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#8C331A',
-    marginRight: 2,
+    color: colors.primary,
+    marginLeft: spacing.sm,
   },
 
-  /* Ledger Modal Timeline */
-  modalLedgerSummary: {
+  /* Ledger Statement Modal */
+  ledgerStatementSummary: {
     backgroundColor: '#FAF8F5',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    marginBottom: 12,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    marginBottom: spacing.md,
   },
-  summaryLine: {
+  stmtSummaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginVertical: 2,
+    alignItems: 'center',
+    marginVertical: 3,
   },
-  sumLineLabel: {
-    fontSize: 12,
-    color: '#8E8278',
+  stmtLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
   },
-  sumLineValue: {
-    fontSize: 12,
+  stmtValue: {
+    ...typography.caption,
     fontWeight: '700',
-    color: '#2A2421',
+    color: colors.textPrimary,
   },
-  sumLineClosingLabel: {
-    fontSize: 13,
+  transactionsHeader: {
+    fontSize: 11,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: '#2A2421',
-  },
-  sumLineClosingValue: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#8C331A',
-  },
-  timelineHeader: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#8E8278',
+    color: colors.textMuted,
+    marginVertical: spacing.sm,
     letterSpacing: 0.5,
-    marginBottom: 6,
   },
   emptyNote: {
-    fontSize: 11,
-    color: '#8E8278',
+    ...typography.caption,
+    color: colors.textMuted,
     textAlign: 'center',
-    marginVertical: 12,
+    marginVertical: spacing.md,
   },
-  timelineRow: {
+  txRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#FAF8F5',
-  },
-  timelineRef: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#2A2421',
-  },
-  timelineDesc: {
-    fontSize: 11,
-    color: '#8E8278',
-    marginTop: 1,
-  },
-  timelineDate: {
-    fontSize: 9,
-    color: '#A0958D',
-    marginTop: 1,
-  },
-  timelineAmount: {
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  txDebit: {
-    color: '#DC2626',
-  },
-  txCredit: {
-    color: '#059669',
-  },
-  timelineBal: {
-    fontSize: 9,
-    color: '#8E8278',
-    marginTop: 1,
-  },
-  menuBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(17, 24, 39, 0.45)',
-    justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
-  },
-  menuCard: {
-    width: '100%',
-    maxWidth: 320,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  menuHeader: {
-    padding: 16,
+    paddingVertical: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3EFEA',
-    backgroundColor: '#FAF8F5',
+    borderBottomColor: colors.borderLight,
   },
-  menuTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#2A2421',
+  txDesc: {
+    ...typography.caption,
+    fontWeight: '600',
+    color: colors.textPrimary,
   },
-  menuSubtitle: {
+  txDate: {
     fontSize: 11,
-    color: '#8E8278',
+    color: colors.textMuted,
     marginTop: 2,
   },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#FAF8F5',
+  txAmount: {
+    ...typography.body,
+    fontWeight: '700',
   },
-  menuItemText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#2A2421',
+  txRunningBal: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    marginTop: 2,
   },
 });

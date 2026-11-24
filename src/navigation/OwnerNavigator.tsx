@@ -5,6 +5,7 @@ import BottomTabs from './BottomTabs';
 import ProfileScreen from '../Screens/owner/ProfileScreen';
 import CustomerDetailScreen from '../Screens/owner/CustomerDetailScreen';
 import InvoicesScreen from '../Screens/owner/InvoicesScreen';
+import DailyBillsScreen from '../Screens/owner/DailyBillsScreen';
 import QuickBillingScreen from '../Screens/owner/QuickBillingScreen';
 import InvoiceDetailScreen from '../Screens/owner/InvoiceDetailScreen';
 import ProductDetailScreen from '../Screens/owner/ProductDetailScreen';
@@ -29,6 +30,7 @@ export type OwnerStackParamList = {
   Settings: undefined;
   CustomerDetail: { customerId?: string; customer?: any } | undefined;
   Invoices: undefined;
+  DailyBills: undefined;
   Orders: undefined;
   PendingPayments: undefined;
   CreateInvoice: { customer?: any; prefilledItems?: Array<{ product_id: number; product_name?: string; quantity: number }> } | undefined;
@@ -93,6 +95,7 @@ export default function OwnerNavigator() {
       <Stack.Screen name="Settings" component={SettingsScreen} />
       <Stack.Screen name="CustomerDetail" component={CustomerDetailScreen} />
       <Stack.Screen name="Invoices" component={InvoicesScreen} />
+      <Stack.Screen name="DailyBills" component={DailyBillsScreen} />
       <Stack.Screen name="PendingPayments" component={PendingPaymentsScreen} />
       <Stack.Screen name="CreateInvoice" component={QuickBillingScreen} />
       <Stack.Screen name="QuickBilling" component={QuickBillingScreen} />

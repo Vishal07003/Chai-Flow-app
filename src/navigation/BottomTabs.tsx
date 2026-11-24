@@ -9,6 +9,7 @@ import { colors } from '../theme';
 import DashboardScreen from '../Screens/owner/DashboardScreen';
 import CustomersScreen from '../Screens/owner/CustomersScreen';
 import OrdersScreen from '../Screens/owner/OrdersScreen';
+import DailyBillsScreen from '../Screens/owner/DailyBillsScreen';
 import QuickBillingScreen from '../Screens/owner/QuickBillingScreen';
 import MoreScreen from '../Screens/owner/MoreScreen';
 
@@ -139,8 +140,7 @@ export default function BottomTabs() {
           />
           <Tab.Screen
             name="Billing"
-            component={QuickBillingScreen}
-            initialParams={{ fromTab: true }}
+            component={DailyBillsScreen}
             options={{ tabBarLabel: 'BILLING' }}
           />
           <Tab.Screen
