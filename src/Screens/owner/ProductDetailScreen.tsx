@@ -21,6 +21,7 @@ import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { CustomDialog } from '../../components/common';
 import { useApp, ProductItem } from '../../context/AppContext';
 import { productService } from '../../services/product.service';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export const EXACT_CATEGORIES = [
   'Snacks',

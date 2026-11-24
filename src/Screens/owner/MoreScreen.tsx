@@ -12,6 +12,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../components/common';
 import { useApp } from '../../context/AppContext';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 interface ToolItem {
   id: string;

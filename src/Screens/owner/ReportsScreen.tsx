@@ -35,6 +35,7 @@ import {
   ProfitLossReportData,
 } from '../../services/reports.service';
 import pdfService from '../../services/pdf.service';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 const REPORT_TABS: Array<{ id: ReportType; label: string; icon: string }> = [
   { id: 'overview', label: 'Overview', icon: 'stats-chart-outline' },

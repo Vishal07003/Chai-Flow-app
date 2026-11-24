@@ -18,6 +18,7 @@ import { CustomDialog } from '../../components/common';
 import { useApp } from '../../context/AppContext';
 import { validation } from '../../utils/validation';
 import { AppToast } from '../../utils/toast';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function AddDeliveryBoyScreen({ navigation }: any) {
   const { addDeliveryBoy } = useApp();

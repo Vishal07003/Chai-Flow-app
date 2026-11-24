@@ -19,6 +19,7 @@ import { useApp } from '../../context/AppContext';
 import { AppToast } from '../../utils/toast';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import orderService, { GlobalRecurringNotificationSetting } from '../../services/order.service';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function SettingsScreen() {
   const navigation = useNavigation<any>();

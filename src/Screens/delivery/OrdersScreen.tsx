@@ -23,6 +23,7 @@ import ConfirmDialog from '../../components/ConfirmDialog';
 import deliveryService, { BackendDelivery } from '../../services/delivery.service';
 import locationTrackingService from '../../services/location.service';
 import offlineDeliveryService, { QueuedDeliveryAction, SyncStatus } from '../../services/offlineDelivery.service';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 const tabs = ['ALL', 'ASSIGNED', 'ACCEPTED', 'PICKED_UP', 'ON_THE_WAY', 'DELIVERED'];
 

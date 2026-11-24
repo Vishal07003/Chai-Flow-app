@@ -14,6 +14,7 @@ import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import { useApp, NotificationItem } from '../../context/AppContext';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { AppToast } from '../../utils/toast';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 interface SwipeableDeliveryNotificationProps {
   item: NotificationItem;

@@ -16,6 +16,7 @@ import { Header, CustomDialog } from '../../components/common';
 import { CollectPaymentModal, type CollectPaymentFormData } from '../../components/payment';
 import { useApp, InvoiceItem } from '../../context/AppContext';
 import AppToast from '../../utils/toast';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function PendingPaymentsScreen({ navigation }: any) {
   const { invoices, customers, collectInvoicePayment, refreshBackendData } = useApp();

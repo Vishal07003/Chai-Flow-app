@@ -20,6 +20,7 @@ import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import { useApp } from '../../context/AppContext';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function ProfileScreen({ navigation: _navigation }: any) {
   const { userProfile, updateUserProfile, logout } = useApp();

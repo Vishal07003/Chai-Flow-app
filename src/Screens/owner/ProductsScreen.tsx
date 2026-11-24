@@ -17,6 +17,7 @@ import {
 import { CategoryChip, ProductCard } from '../../components/owner';
 
 import { useApp } from '../../context/AppContext';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export const PRODUCT_CATEGORIES = [
   'All',

@@ -15,6 +15,7 @@ import orderService, { BackendOrder, OrderInvoicePreview } from '../../services/
 import deliveryService, { BackendDelivery, DeliveryPartnerProfile } from '../../services/delivery.service';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import AppToast from '../../utils/toast';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function OrderDetailsScreen({ route, navigation }: any) {
   const initialOrder: BackendOrder | undefined = route.params?.order;

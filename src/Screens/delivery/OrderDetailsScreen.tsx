@@ -21,6 +21,7 @@ import ConfirmDialog from '../../components/ConfirmDialog';
 import deliveryService, { BackendDelivery } from '../../services/delivery.service';
 import locationTrackingService from '../../services/location.service';
 import offlineDeliveryService, { QueuedDeliveryAction, SyncStatus } from '../../services/offlineDelivery.service';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function OrderDetailsScreen({ route, navigation }: any) {
   const deliveryParam: BackendDelivery | undefined = route.params?.delivery;

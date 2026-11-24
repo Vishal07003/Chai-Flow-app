@@ -5,6 +5,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import { useApp } from '../../context/AppContext';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function SettingsScreen({ navigation }: any) {
   const { logout } = useApp();

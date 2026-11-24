@@ -23,6 +23,7 @@ import { AddCustomerModal, type AddCustomerFormData } from '../../components/cus
 import { CollectPaymentModal, type CollectPaymentFormData } from '../../components/payment';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import AppToast from '../../utils/toast';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function CustomerDetailScreen({ route, navigation }: any) {
   const { refreshBackendData } = useApp();

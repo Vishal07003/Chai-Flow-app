@@ -16,6 +16,7 @@ import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import Header from '../../components/common/Header';
 import { useApp } from '../../context/AppContext';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function ProfileScreen() {
   const { userProfile, updateUserProfile, logout } = useApp();

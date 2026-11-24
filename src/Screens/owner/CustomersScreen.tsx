@@ -25,6 +25,7 @@ import { CollectPaymentModal, type CollectPaymentFormData } from '../../componen
 import AppToast from '../../utils/toast';
 
 import { useApp, Customer } from '../../context/AppContext';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 const filterTabs = ['All', 'Due Today', 'Defaulters'];
 

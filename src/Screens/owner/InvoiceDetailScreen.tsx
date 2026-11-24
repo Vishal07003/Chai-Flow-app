@@ -16,6 +16,7 @@ import { Header, CustomDialog } from '../../components/common';
 import { useApp, InvoiceItem, DeliveryBoyItem } from '../../context/AppContext';
 import { pdfService } from '../../services/pdf.service';
 import billingService, { BackendInvoice } from '../../services/billing.service';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function InvoiceDetailScreen({ route, navigation }: any) {
   const { invoice } = route.params || {};

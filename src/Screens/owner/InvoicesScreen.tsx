@@ -15,6 +15,7 @@ import { Header } from '../../components/common';
 import { ReportsPagination } from '../../components/ReportsPagination';
 
 import { useApp, InvoiceItem } from '../../context/AppContext';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function InvoicesScreen({ navigation }: any) {
   const { invoices, customers, markInvoiceAsPaid, refreshBackendData } = useApp();

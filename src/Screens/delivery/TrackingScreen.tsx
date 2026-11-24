@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import deliveryService, { BackendDelivery } from '../../services/delivery.service';
 import locationTrackingService from '../../services/location.service';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function TrackingScreen() {
   const [activeDeliveries, setActiveDeliveries] = useState<BackendDelivery[]>([]);

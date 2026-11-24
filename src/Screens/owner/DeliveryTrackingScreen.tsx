@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import deliveryService, { BackendDelivery } from '../../services/delivery.service';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 interface OwnerDeliveryTrackingProps {
   route: {
