@@ -16,6 +16,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
 import { useApp } from '../../context/AppContext';
 import { validation } from '../../utils/validation';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export interface DeliveryPartnerDropdownProps {
   selectedPartnerId: number | null;

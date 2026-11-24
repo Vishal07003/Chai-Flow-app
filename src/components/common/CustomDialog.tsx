@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export type DialogType = 'confirm' | 'success' | 'danger' | 'info' | 'warning';
 

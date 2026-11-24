@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { colors, typography, radius, spacing, shadows } from '../theme';
 
 export const PAGE_SIZE_OPTIONS = [10, 20, 30] as const;
 export type PageSizeOption = (typeof PAGE_SIZE_OPTIONS)[number];

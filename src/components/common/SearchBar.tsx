@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, TextInput, TouchableOpacity, View, ViewStyle } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { colors, radius, typography } from '../../theme';
 
 export interface SearchBarProps {
   value: string;
@@ -20,24 +21,24 @@ export default function SearchBar({
   return (
     <View style={[styles.container, containerStyle]}>
       <View style={styles.searchBox}>
-        <Ionicons name="search-outline" size={20} color="#8E8278" style={styles.searchIcon} />
+        <Ionicons name="search-outline" size={20} color={colors.textMuted} style={styles.searchIcon} />
         <TextInput
           style={styles.input}
           placeholder={placeholder}
-          placeholderTextColor="#998E85"
+          placeholderTextColor={colors.textMuted}
           value={value}
           onChangeText={onChangeText}
         />
         {value.length > 0 && (
           <TouchableOpacity onPress={() => onChangeText('')}>
-            <Ionicons name="close-circle" size={18} color="#998E85" />
+            <Ionicons name="close-circle" size={18} color={colors.textMuted} />
           </TouchableOpacity>
         )}
       </View>
 
       {onFilterPress ? (
         <TouchableOpacity style={styles.filterBtn} activeOpacity={0.8} onPress={onFilterPress}>
-          <Ionicons name="options-outline" size={20} color="#8C331A" />
+          <Ionicons name="options-outline" size={20} color={colors.primary} />
         </TouchableOpacity>
       ) : null}
     </View>
@@ -54,12 +55,12 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    backgroundColor: colors.surfaceContainer,
+    borderRadius: radius.FULL,
     paddingHorizontal: 16,
     height: 48,
     borderWidth: 1,
-    borderColor: '#EFECE8',
+    borderColor: colors.border,
     elevation: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -71,15 +72,15 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    fontSize: 14,
-    color: '#2C201A',
+    ...typography.body,
+    color: colors.textPrimary,
     paddingVertical: 0,
   },
   filterBtn: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: '#F7EFE9',
+    borderRadius: radius.FULL,
+    backgroundColor: colors.surfaceContainerLow,
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 10,

@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import CustomButton from './CustomButton';
+import { colors, radius, spacing, typography, shadows } from '../../theme';
 
 export interface CustomModalProps {
   visible: boolean;
@@ -54,7 +55,7 @@ export default function CustomModal({
             <View style={styles.headerRow}>
               <Text style={styles.title}>{title}</Text>
               <TouchableOpacity onPress={onClose} activeOpacity={0.7}>
-                <Ionicons name="close" size={24} color="#64748B" />
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
@@ -70,7 +71,7 @@ export default function CustomModal({
                   title={primaryButtonTitle}
                   onPress={onPrimaryPress}
                   loading={primaryLoading}
-                  style={styles.actionBtn}
+                  style={styles.footerBtn}
                 />
               ) : null}
             </ScrollView>
@@ -84,35 +85,36 @@ export default function CustomModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'flex-end',
   },
   contentCard: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: '85%',
+    backgroundColor: colors.surfaceContainer,
+    borderTopLeftRadius: radius.XL,
+    borderTopRightRadius: radius.XL,
+    maxHeight: '90%',
+    paddingBottom: Platform.OS === 'ios' ? 40 : 20,
+    ...shadows.lg,
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
-    paddingBottom: 12,
+    paddingHorizontal: spacing.LG,
+    paddingVertical: spacing.LG,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: colors.border,
   },
   title: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0F172A',
+    ...typography.heading2,
+    color: colors.primary,
   },
   bodyScroll: {
-    paddingBottom: 10,
+    paddingHorizontal: spacing.LG,
+    paddingTop: spacing.LG,
   },
-  actionBtn: {
-    marginTop: 20,
-    marginBottom: 8,
+  footerBtn: {
+    marginTop: spacing.LG,
+    marginBottom: spacing.MD,
   },
 });

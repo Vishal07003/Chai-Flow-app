@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { colors, radius, typography } from '../../theme';
 
 interface EmptyStateProps {
   icon?: string;
@@ -16,7 +17,7 @@ export default function EmptyState({
   return (
     <View style={styles.container}>
       <View style={styles.iconCircle}>
-        <Ionicons name={icon} size={36} color="#8C331A" />
+        <Ionicons name={icon} size={36} color={colors.primary} />
       </View>
       <Text style={styles.title}>{title}</Text>
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
@@ -33,22 +34,21 @@ const styles = StyleSheet.create({
   iconCircle: {
     width: 68,
     height: 68,
-    borderRadius: 34,
-    backgroundColor: '#F7EFE9',
+    borderRadius: radius.FULL,
+    backgroundColor: colors.primaryBg,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
   },
   title: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#1E293B',
+    ...typography.heading2,
+    color: colors.primary,
     textAlign: 'center',
     marginBottom: 6,
   },
   subtitle: {
-    fontSize: 13,
-    color: '#64748B',
+    ...typography.caption,
+    color: colors.secondaryText,
     textAlign: 'center',
     lineHeight: 18,
   },
