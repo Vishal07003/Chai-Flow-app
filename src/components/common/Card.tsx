@@ -10,6 +10,7 @@ import {
   StyleProp,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { colors, radius, spacing, typography, fontFamilies } from '../../theme';
 
 export interface CardProps {
   title?: string;
@@ -38,13 +39,13 @@ export default function Card({
   avatarUrl,
   initials,
   icon,
-  iconColor = '#8C331A',
-  iconBgColor = '#F7EFE9',
+  iconColor = colors.primary,
+  iconBgColor = colors.surfaceContainerLow,
   badge,
-  badgeBgColor = '#FEE2E2',
-  badgeTextColor = '#DC2626',
+  badgeBgColor = colors.correctionBackground,
+  badgeTextColor = colors.correction,
   amount,
-  amountColor = '#8C331A',
+  amountColor = colors.primary,
   amountSubtext,
   onPress,
   rightElement,
@@ -79,9 +80,11 @@ export default function Card({
         {/* Middle Info */}
         <View style={styles.infoCol}>
           <View style={styles.titleRow}>
-            <Text style={[styles.title, titleStyle]} numberOfLines={1}>
-              {title}
-            </Text>
+            {title ? (
+              <Text style={[styles.title, titleStyle]} numberOfLines={1}>
+                {title}
+              </Text>
+            ) : null}
             {badge ? (
               <View style={[styles.badge, { backgroundColor: badgeBgColor }]}>
                 <Text style={[styles.badgeText, { color: badgeTextColor }]}>
@@ -112,7 +115,7 @@ export default function Card({
             {rightElement}
           </View>
         ) : onPress ? (
-          <Ionicons name="chevron-forward" size={18} color="#A89F97" />
+          <Ionicons name="chevron-forward" size={18} color={colors.secondaryText} />
         ) : null}
       </View>
 
@@ -123,15 +126,17 @@ export default function Card({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    backgroundColor: colors.surfaceContainer,
+    borderRadius: radius.LG,
+    padding: spacing.LG,
+    marginBottom: spacing.MD,
+    borderWidth: 1,
+    borderColor: colors.border,
     elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
   },
   contentRow: {
     flexDirection: 'row',
@@ -140,20 +145,21 @@ const styles = StyleSheet.create({
   avatarImage: {
     width: 48,
     height: 48,
-    borderRadius: 24,
+    borderRadius: radius.FULL,
     marginRight: 12,
-    backgroundColor: '#EBE6E1',
+    backgroundColor: colors.surfaceContainerLow,
   },
   avatarFallback: {
     width: 48,
     height: 48,
-    borderRadius: 24,
+    borderRadius: radius.FULL,
     marginRight: 12,
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarInitials: {
     fontSize: 16,
+    fontFamily: fontFamilies.bold,
     fontWeight: '700',
   },
   infoCol: {
@@ -164,42 +170,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1E293B',
+    ...typography.heading2,
+    color: colors.primary,
     marginRight: 8,
   },
   subtitle: {
-    fontSize: 13,
-    color: '#64748B',
+    ...typography.caption,
+    color: colors.secondaryText,
     marginTop: 2,
   },
   badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingHorizontal: spacing.SM,
+    paddingVertical: spacing.XS,
+    borderRadius: radius.FULL,
   },
   badgeText: {
-    fontSize: 10,
-    fontWeight: '700',
+    ...typography.badge,
   },
   rightCol: {
     alignItems: 'flex-end',
     marginLeft: 8,
   },
   amountText: {
-    fontSize: 15,
+    ...typography.heading2,
     fontWeight: '700',
   },
   amountSubtext: {
-    fontSize: 11,
-    color: '#64748B',
+    ...typography.caption,
+    color: colors.secondaryText,
     marginTop: 2,
   },
   extraContent: {
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: colors.border,
   },
 });

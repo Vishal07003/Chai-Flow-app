@@ -3,6 +3,7 @@ import { View, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useApp } from '../context/AppContext';
+import { colors } from '../theme';
 
 // Owner Screens (Approved 5 Tabs: Dashboard, Customers, Orders, Billing, More)
 import DashboardScreen from '../Screens/owner/DashboardScreen';
@@ -24,7 +25,8 @@ export default function BottomTabs() {
   const { userRole } = useApp();
   const isDeliveryPartner = userRole === 'DELIVERY_PARTNER';
 
-  const activeColor = isDeliveryPartner ? '#059669' : '#8C331A';
+  // Unified Chai Flow Brand Identity across both Owner and Delivery Partner apps
+  const activeColor = colors.primary; // #8C331A
 
   return (
     <Tab.Navigator
@@ -32,13 +34,13 @@ export default function BottomTabs() {
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarActiveTintColor: activeColor,
-        tabBarInactiveTintColor: '#8E8278',
+        tabBarInactiveTintColor: colors.textMuted,
         tabBarStyle: {
           height: 75,
           paddingBottom: 10,
           paddingTop: 6,
-          backgroundColor: '#FAF8F5',
-          borderTopColor: '#EFEAE4',
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
           borderTopWidth: 1,
         },
         tabBarLabelStyle: {

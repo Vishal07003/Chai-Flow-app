@@ -7,6 +7,7 @@ import {
   ViewStyle,
   TextStyle,
 } from 'react-native';
+import { colors, radius, fontFamilies } from '../../theme';
 
 interface CustomButtonProps {
   title: string;
@@ -59,7 +60,7 @@ export default function CustomButton({
       disabled={disabled || loading}
     >
       {loading ? (
-        <ActivityIndicator color={variant === 'outline' ? '#8C331A' : '#FFF'} />
+        <ActivityIndicator color={variant === 'outline' ? colors.primary : colors.onPrimary} />
       ) : (
         <Text style={[getTextStyle(), textStyle]}>{title}</Text>
       )}
@@ -69,42 +70,48 @@ export default function CustomButton({
 
 const styles = StyleSheet.create({
   baseBtn: {
-    height: 48,
-    borderRadius: 12,
+    height: 52,
+    borderRadius: radius.LG,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 16,
   },
   primaryBtn: {
-    backgroundColor: '#8C331A',
+    backgroundColor: colors.primary,
   },
   secondaryBtn: {
-    backgroundColor: '#F3EAE3',
+    backgroundColor: colors.surfaceContainer,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   outlineBtn: {
     backgroundColor: 'transparent',
     borderWidth: 1.5,
-    borderColor: '#8C331A',
+    borderColor: colors.primary,
   },
   dangerBtn: {
-    backgroundColor: '#E11D48',
+    backgroundColor: colors.correction,
   },
   disabledBtn: {
-    opacity: 0.6,
+    opacity: 0.5,
   },
   btnText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
+    color: colors.onPrimary,
+    fontSize: 16,
+    fontFamily: fontFamilies.semiBold,
+    fontWeight: '600',
   },
   secondaryText: {
-    color: '#8C331A',
-    fontSize: 15,
-    fontWeight: '700',
+    color: colors.primary,
+    fontSize: 14,
+    fontFamily: fontFamilies.medium,
+    fontWeight: '600',
   },
   outlineText: {
-    color: '#8C331A',
+    color: colors.primary,
     fontSize: 15,
-    fontWeight: '700',
+    fontFamily: fontFamilies.semiBold,
+    fontWeight: '600',
   },
 });
+

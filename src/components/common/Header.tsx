@@ -4,6 +4,8 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation, DrawerActions } from '@react-navigation/native';
 import { useApp } from '../../context/AppContext';
 
+import { colors } from '../../theme';
+
 interface HeaderProps {
   title?: string;
   showBack?: boolean;
@@ -22,12 +24,13 @@ export default function Header({
   const navigation = useNavigation<any>();
 
   const isDelivery = userRole === 'DELIVERY_PARTNER';
-  const primaryColor = isDelivery ? '#059669' : '#8C331A';
-  const badgeBg = isDelivery ? '#ECFDF5' : '#F7EFE9';
-  const badgeBorder = isDelivery ? '#A7F3D0' : '#EFE3D9';
-  const titleColor = isDelivery ? '#047857' : '#7A2E19';
-  const notifBg = isDelivery ? '#ECFDF5' : '#F5EAE4';
-  const iconColor = isDelivery ? '#047857' : '#332219';
+  // Harmonized Chai Flow Brown / Chai primary branding across Owner and Delivery Partner
+  const primaryColor = colors.primary; // #8C331A
+  const badgeBg = colors.primaryBg; // #FDEBE4
+  const badgeBorder = colors.primaryBorder; // #F5C6B8
+  const titleColor = colors.accent; // #7A2E19
+  const notifBg = colors.surfaceContainerLow; // #F7EFE9
+  const iconColor = colors.primaryDark; // #662210
 
   const handleOpenMenu = () => {
     try {

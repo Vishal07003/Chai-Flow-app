@@ -6,6 +6,7 @@ import {
   StyleSheet,
   TextInputProps,
 } from 'react-native';
+import { colors, radius, typography, fontFamilies } from '../../theme';
 
 interface CustomInputProps extends TextInputProps {
   label?: string;
@@ -23,7 +24,7 @@ export default function CustomInput({
       {label && <Text style={styles.label}>{label}</Text>}
       <TextInput
         style={[styles.input, error ? styles.inputError : null, style]}
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.secondaryText}
         {...props}
       />
       {error && <Text style={styles.errorText}>{error}</Text>}
@@ -36,27 +37,27 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
+    ...typography.metricLabel,
+    color: colors.primary,
     marginBottom: 6,
   },
   input: {
     height: 48,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surfaceContainer,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 10,
+    borderColor: colors.border,
+    borderRadius: radius.MD,
     paddingHorizontal: 14,
-    fontSize: 15,
-    color: '#0F172A',
+    fontSize: 14,
+    fontFamily: fontFamilies.regular,
+    color: colors.primary,
   },
   inputError: {
-    borderColor: '#E11D48',
+    borderColor: colors.correction,
   },
   errorText: {
-    fontSize: 12,
-    color: '#E11D48',
+    ...typography.caption,
+    color: colors.correction,
     marginTop: 4,
   },
 });

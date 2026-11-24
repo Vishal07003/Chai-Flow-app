@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Linking, Alert } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { colors, radius, spacing, typography } from '../../theme';
 
 export interface DeliveryOrder {
   id: string;
@@ -41,13 +42,26 @@ export default function OrderCard({ order, onPress, onStatusChange }: OrderCardP
   const getStatusColor = () => {
     switch (order.status) {
       case 'DELIVERED':
-        return '#10B981';
+        return colors.approved;
       case 'EN_ROUTE':
-        return '#3B82F6';
+        return colors.info;
       case 'FAILED':
-        return '#EF4444';
+        return colors.correction;
       default:
-        return '#F59E0B';
+        return colors.pending;
+    }
+  };
+
+  const getStatusBgColor = () => {
+    switch (order.status) {
+      case 'DELIVERED':
+        return colors.approvedBackground;
+      case 'EN_ROUTE':
+        return colors.infoBackground;
+      case 'FAILED':
+        return colors.correctionBackground;
+      default:
+        return colors.pendingBackground;
     }
   };
 
@@ -65,7 +79,7 @@ export default function OrderCard({ order, onPress, onStatusChange }: OrderCardP
           <Text style={styles.customerName}>{order.customerName}</Text>
           <Text style={styles.timeSlot}>{order.timeSlot || 'Morning Shift • 07:00 AM'}</Text>
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor() + '18' }]}>
+        <View style={[styles.statusBadge, { backgroundColor: getStatusBgColor() }]}>
           <View style={[styles.statusDot, { backgroundColor: getStatusColor() }]} />
           <Text style={[styles.statusText, { color: getStatusColor() }]}>
             {order.status}
@@ -74,40 +88,43 @@ export default function OrderCard({ order, onPress, onStatusChange }: OrderCardP
       </View>
 
       <View style={styles.addressRow}>
-        <Ionicons name="location" size={18} color="#059669" style={styles.iconMargin} />
+        <Ionicons name="location" size={18} color={colors.approved} style={styles.iconMargin} />
         <Text style={styles.addressText} numberOfLines={2}>
           {order.address}
         </Text>
       </View>
 
       <View style={styles.itemsRow}>
-        <Ionicons name="cube-outline" size={16} color="#6B7280" style={styles.iconMargin} />
+        <Ionicons name="cart-outline" size={18} color={colors.secondaryText} style={styles.iconMargin} />
         <Text style={styles.itemsText} numberOfLines={1}>
           {order.items}
         </Text>
       </View>
 
+      <View style={styles.footerDivider} />
+
       <View style={styles.footerRow}>
-        <View style={styles.statusIndicatorWrapper}>
-          <Text style={styles.operationalTag}>Delivery Stop #{order.sequence || 1}</Text>
+        <View style={styles.paymentInfo}>
+          <Text style={styles.amountLabel}>Total Amount</Text>
+          <Text style={styles.amountValue}>₹{order.amount}</Text>
         </View>
 
-        <View style={styles.actionsGroup}>
-          <TouchableOpacity activeOpacity={0.8} style={styles.iconBtn} onPress={handleCall}>
-            <Ionicons name="call" size={18} color="#059669" />
+        <View style={styles.actionsContainer}>
+          <TouchableOpacity
+            style={styles.actionIconBtn}
+            onPress={handleCall}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="call" size={20} color={colors.primary} />
           </TouchableOpacity>
-          <TouchableOpacity activeOpacity={0.8} style={styles.iconBtn} onPress={handleNavigate}>
-            <Ionicons name="navigate" size={18} color="#3B82F6" />
+
+          <TouchableOpacity
+            style={styles.actionIconBtn}
+            onPress={handleNavigate}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="navigate" size={20} color={colors.approved} />
           </TouchableOpacity>
-          {order.status !== 'DELIVERED' && onStatusChange && (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={styles.deliverBtn}
-              onPress={() => onStatusChange(order.id, 'DELIVERED')}
-            >
-              <Text style={styles.deliverBtnText}>Deliver</Text>
-            </TouchableOpacity>
-          )}
         </View>
       </View>
     </TouchableOpacity>
@@ -116,17 +133,17 @@ export default function OrderCard({ order, onPress, onStatusChange }: OrderCardP
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    backgroundColor: colors.surfaceContainer,
+    borderRadius: radius.LG,
+    padding: spacing.LG,
+    marginBottom: spacing.MD,
     borderWidth: 1,
-    borderColor: '#EFECE8',
+    borderColor: colors.border,
+    elevation: 2,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
   },
   headerRow: {
     flexDirection: 'row',
@@ -134,131 +151,101 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   seqBadge: {
-    backgroundColor: '#ECFDF5',
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
+    backgroundColor: colors.surfaceContainerLow,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.SM,
+    marginRight: 8,
   },
   seqText: {
-    color: '#059669',
-    fontWeight: '800',
-    fontSize: 13,
+    ...typography.badge,
+    color: colors.primary,
   },
   titleWrapper: {
     flex: 1,
   },
   customerName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#111827',
+    ...typography.heading2,
+    color: colors.primary,
   },
   timeSlot: {
-    fontSize: 12,
-    color: '#6B7280',
+    ...typography.caption,
+    color: colors.secondaryText,
     marginTop: 2,
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingHorizontal: spacing.SM,
+    paddingVertical: spacing.XS,
+    borderRadius: radius.FULL,
   },
   statusDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    marginRight: 6,
+    marginRight: 5,
   },
   statusText: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.4,
+    ...typography.badge,
   },
   addressRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     marginBottom: 8,
   },
-  iconMargin: {
-    marginRight: 8,
-    marginTop: 2,
-  },
-  addressText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#374151',
-    lineHeight: 18,
-  },
   itemsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    padding: 8,
-    borderRadius: 10,
     marginBottom: 12,
   },
+  iconMargin: {
+    marginRight: 8,
+    marginTop: 1,
+  },
+  addressText: {
+    ...typography.body,
+    color: colors.secondaryText,
+    flex: 1,
+  },
   itemsText: {
-    fontSize: 12,
-    color: '#4B5563',
+    ...typography.body,
+    color: colors.primary,
+    flex: 1,
     fontWeight: '500',
+  },
+  footerDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginBottom: 12,
   },
   footerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    paddingTop: 10,
   },
-  statusIndicatorWrapper: {
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  operationalTag: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#4B5563',
+  paymentInfo: {
+    justifyContent: 'center',
   },
   amountLabel: {
-    fontSize: 11,
-    color: '#6B7280',
-    fontWeight: '600',
+    ...typography.caption,
+    color: colors.secondaryText,
   },
   amountValue: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#059669',
-    marginTop: 2,
+    ...typography.heading1,
+    color: colors.primary,
   },
-  actionsGroup: {
+  actionsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F3F4F6',
+  actionIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.FULL,
+    backgroundColor: colors.surfaceContainerLow,
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 8,
-  },
-  deliverBtn: {
-    backgroundColor: '#059669',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 14,
-    marginLeft: 10,
-  },
-  deliverBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
   },
 });
