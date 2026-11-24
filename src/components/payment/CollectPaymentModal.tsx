@@ -19,7 +19,7 @@ import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export interface CollectPaymentFormData {
   amount: number;
-  paymentMethod: 'cash' | 'online' | 'upi' | 'bank_transfer';
+  paymentMethod: 'cash';
   notes: string;
 }
 
@@ -41,7 +41,7 @@ export default function CollectPaymentModal({
   initialAmount,
 }: CollectPaymentModalProps) {
   const [amountInput, setAmountInput] = useState<string>('');
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'online' | 'upi' | 'bank_transfer'>('cash');
+  const paymentMethod: 'cash' = 'cash';
   const [notes, setNotes] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState<boolean>(false);
@@ -58,7 +58,6 @@ export default function CollectPaymentModal({
       } else {
         setAmountInput('');
       }
-      setPaymentMethod('cash');
       setNotes('');
       setErrorMessage('');
       setIsSubmitting(false);
@@ -244,54 +243,18 @@ export default function CollectPaymentModal({
                 />
               </View>
 
-              {/* Payment Method Selection */}
+              {/* Payment Method - Fixed Cash Only Badge */}
               <Text style={styles.fieldLabel}>PAYMENT METHOD</Text>
-              <View style={styles.methodChipsRow}>
-                {(['cash', 'online', 'upi', 'bank_transfer'] as const).map(m => {
-                  const isActive = paymentMethod === m;
-                  const label =
-                    m === 'cash'
-                      ? 'Cash'
-                      : m === 'online'
-                      ? 'Online'
-                      : m === 'upi'
-                      ? 'UPI'
-                      : 'Bank';
-                  const iconName =
-                    m === 'cash'
-                      ? 'cash-outline'
-                      : m === 'online'
-                      ? 'card-outline'
-                      : m === 'upi'
-                      ? 'qr-code-outline'
-                      : 'business-outline';
-
-                  return (
-                    <TouchableOpacity
-                      key={m}
-                      style={[styles.methodChip, isActive && styles.methodChipActive]}
-                      onPress={() => setPaymentMethod(m)}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons
-                        name={iconName}
-                        size={14}
-                        color={isActive ? '#FFFFFF' : '#6B5E55'}
-                        style={{ marginRight: 4 }}
-                      />
-                      <Text style={[styles.methodChipText, isActive && styles.methodChipTextActive]}>
-                        {label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+              <View style={styles.fixedCashBadge}>
+                <Ionicons name="cash-outline" size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                <Text style={styles.fixedCashText}>Payment Mode: Cash</Text>
               </View>
 
               {/* Notes / Reference */}
               <Text style={styles.fieldLabel}>NOTES / REFERENCE (OPTIONAL)</Text>
               <TextInput
                 style={styles.notesInput}
-                placeholder="e.g. Cash collected at counter / UPI Ref"
+                placeholder="e.g. Cash collected at counter"
                 placeholderTextColor="#A0958D"
                 value={notes}
                 onChangeText={setNotes}
@@ -512,6 +475,24 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#2A2421',
     paddingVertical: 0,
+  },
+  fixedCashBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F4EBE6',
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    alignSelf: 'flex-start',
+    gap: spacing.xs,
+  },
+  fixedCashText: {
+    ...typography.body,
+    fontFamily: 'Inter-SemiBold',
+    fontWeight: '600',
+    color: colors.primary,
   },
   methodChipsRow: {
     flexDirection: 'row',

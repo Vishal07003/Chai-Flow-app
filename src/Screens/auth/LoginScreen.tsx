@@ -18,6 +18,7 @@ import { useApp } from '../../context/AppContext';
 import { authService } from '../../services/auth.service';
 import { validation } from '../../utils/validation';
 import { AppToast } from '../../utils/toast';
+import { colors, typography, spacing, radius, shadows } from '../../theme';
 
 interface LoginScreenProps {
   navigation?: any;
@@ -68,7 +69,7 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FAF8F5" />
+      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
       <KeyboardAvoidingView
         style={styles.keyboardAvoiding}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -98,7 +99,7 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
               <Ionicons
                 name="call-outline"
                 size={18}
-                color="#7A6A60"
+                color={colors.textSecondary}
                 style={styles.phoneIcon}
               />
               <Text style={styles.countryCode}>+91</Text>
@@ -111,7 +112,7 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
                 autoComplete="tel"
                 maxLength={10}
                 placeholder="Enter 10-digit mobile number"
-                placeholderTextColor="#A09085"
+                placeholderTextColor={colors.textMuted}
                 editable={!isLoading}
               />
             </View>
@@ -123,14 +124,14 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
               disabled={isLoading}
             >
               {isLoading ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
+                <ActivityIndicator color={colors.white} size="small" />
               ) : (
                 <>
                   <Text style={styles.buttonText}>Continue</Text>
                   <Ionicons
                     name="arrow-forward"
                     size={18}
-                    color="#FFFFFF"
+                    color={colors.white}
                     style={styles.arrowIcon}
                   />
                 </>
@@ -140,7 +141,7 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
 
           {/* 4. Security Information directly below form */}
           <View style={styles.footer}>
-            <Ionicons name="shield-checkmark-outline" size={15} color="#8C7C72" />
+            <Ionicons name="shield-checkmark-outline" size={15} color={colors.textSecondary} />
             <Text style={styles.footerText}>
               Secure OTP verification
             </Text>
@@ -154,86 +155,87 @@ export default function LoginScreen({ navigation }: LoginScreenProps) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#FAF8F5',
+    backgroundColor: colors.background,
   },
   keyboardAvoiding: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 24,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xl,
   },
   heroSection: {
-    marginTop: 4,
-    marginBottom: 16,
+    marginTop: spacing.xs,
+    marginBottom: spacing.md,
   },
   mainTitle: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#1F2937',
+    ...typography.display,
+    fontFamily: 'Inter-Black',
+    fontWeight: '900',
+    color: colors.textPrimary,
     letterSpacing: -0.5,
-    marginBottom: 4,
+    marginBottom: spacing.xs,
   },
   subTitle: {
-    fontSize: 14,
-    color: '#6B7280',
+    ...typography.body,
+    fontFamily: 'Inter-Regular',
+    color: colors.textSecondary,
     lineHeight: 20,
   },
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 20,
-    shadowColor: '#8C331A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    elevation: 3,
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    ...shadows.sm,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: colors.border,
   },
   inputLabel: {
-    fontSize: 11,
+    ...typography.caption,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: '#5C4A3E',
+    color: colors.textPrimary,
     letterSpacing: 0.8,
-    marginBottom: 8,
+    marginBottom: spacing.sm,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FAF7F4',
+    backgroundColor: colors.surface,
     borderWidth: 1.5,
-    borderColor: '#E8DED6',
-    borderRadius: 12,
-    paddingHorizontal: 12,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
     height: 48,
-    marginBottom: 16,
+    marginBottom: spacing.md,
   },
   phoneIcon: {
-    marginRight: 6,
+    marginRight: spacing.xs,
   },
   countryCode: {
-    fontSize: 15,
+    ...typography.heading2,
+    fontFamily: 'Inter-Bold',
     fontWeight: '700',
-    color: '#2C1E18',
-    marginRight: 8,
+    color: colors.textPrimary,
+    marginRight: spacing.xs,
   },
   input: {
     flex: 1,
-    fontSize: 15,
-    color: '#2C1E18',
+    ...typography.heading2,
+    fontFamily: 'Inter-SemiBold',
     fontWeight: '600',
+    color: colors.textPrimary,
     padding: 0,
   },
   continueButton: {
-    backgroundColor: '#8C331A',
-    borderRadius: 12,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
     height: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#8C331A',
+    shadowColor: colors.primary,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
     shadowRadius: 6,
@@ -243,24 +245,25 @@ const styles = StyleSheet.create({
     backgroundColor: '#C5A496',
   },
   buttonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
+    color: colors.white,
+    ...typography.body,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
     letterSpacing: 0.5,
   },
   arrowIcon: {
-    marginLeft: 8,
+    marginLeft: spacing.xs,
   },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 18,
+    marginTop: spacing.lg,
   },
   footerText: {
-    fontSize: 12,
-    color: '#8C7C72',
+    ...typography.caption,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
     marginLeft: 6,
-    fontWeight: '500',
   },
 });

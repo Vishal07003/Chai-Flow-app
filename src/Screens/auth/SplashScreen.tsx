@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Image, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { colors, typography, spacing } from '../../theme';
 
 interface SplashScreenProps {
   navigation?: any;
@@ -17,11 +18,11 @@ export default function SplashScreen({ navigation }: SplashScreenProps) {
   return (
     <View style={styles.container}>
       <View style={styles.logoCircle}>
-        <Ionicons name="cafe" size={54} color="#8C331A" />
+        <Ionicons name="cafe" size={54} color={colors.primary} />
       </View>
       <Text style={styles.title}>ChaiFlow</Text>
       <Text style={styles.subtitle}>Smart Tea Supply & Delivery Network</Text>
-      <ActivityIndicator size="small" color="#8C331A" style={styles.loader} />
+      <ActivityIndicator size="small" color={colors.primary} style={styles.loader} />
     </View>
   );
 }
@@ -29,32 +30,35 @@ export default function SplashScreen({ navigation }: SplashScreenProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAF4ED',
+    backgroundColor: colors.background,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    padding: spacing.xl,
   },
   logoCircle: {
     width: 100,
     height: 100,
     borderRadius: 50,
-    backgroundColor: '#F7EFE9',
+    backgroundColor: '#F4EBE6',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: spacing.lg,
   },
   title: {
+    ...typography.display,
+    fontFamily: 'Inter-Black',
+    fontWeight: '900',
     fontSize: 32,
-    fontWeight: '800',
-    color: '#2C1E18',
+    color: colors.textPrimary,
     letterSpacing: -0.5,
   },
   subtitle: {
-    fontSize: 14,
-    color: '#7A6A60',
-    marginTop: 8,
+    ...typography.body,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
   },
   loader: {
-    marginTop: 40,
+    marginTop: spacing.xxl,
   },
 });

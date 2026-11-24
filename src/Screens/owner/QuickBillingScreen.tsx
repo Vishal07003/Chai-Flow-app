@@ -107,9 +107,9 @@ export default function QuickBillingScreen({ route, navigation }: any) {
   const [partners, setPartners] = useState<DeliveryPartnerProfile[]>([]);
   const [loadingPartners, setLoadingPartners] = useState<boolean>(false);
 
-  // Payment Options: Status (Full, Partial, Unpaid), Method (Cash, Online)
+  // Payment Options: Status (Full, Partial, Unpaid), Method (Cash only)
   const [paymentStatus, setPaymentStatus] = useState<'FULL' | 'PARTIAL' | 'UNPAID'>('FULL');
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'online'>('cash');
+  const paymentMethod: 'cash' = 'cash';
   const [discount, setDiscount] = useState<string>('');
   const [receivedAmount, setReceivedAmount] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -522,7 +522,6 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     setSelectedCustomer(null);
     setReceivedAmount('0');
     setPaymentStatus('FULL');
-    setPaymentMethod('cash');
     setDeliveryAddress('');
     setSelectedPartnerId(null);
     setOrderNotes('');

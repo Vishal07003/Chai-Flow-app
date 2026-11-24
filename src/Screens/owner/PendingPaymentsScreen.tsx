@@ -170,12 +170,7 @@ export default function PendingPaymentsScreen({ navigation }: any) {
       return;
     }
 
-    const mappedMethod =
-      data.paymentMethod === 'online' || data.paymentMethod === 'upi'
-        ? 'UPI'
-        : data.paymentMethod === 'bank_transfer'
-        ? 'Bank Transfer'
-        : 'Cash';
+    const mappedMethod = 'Cash';
 
     collectInvoicePayment(selectedInvoice.id, paidVal, mappedMethod as any);
     refreshBackendData();

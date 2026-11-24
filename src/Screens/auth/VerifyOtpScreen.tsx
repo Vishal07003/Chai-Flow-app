@@ -18,6 +18,7 @@ import { useApp } from '../../context/AppContext';
 import { authService } from '../../services/auth.service';
 import { validation } from '../../utils/validation';
 import { AppToast } from '../../utils/toast';
+import { colors, typography, spacing, radius, shadows } from '../../theme';
 
 interface VerifyOtpScreenProps {
   navigation?: any;
@@ -128,7 +129,7 @@ export default function VerifyOtpScreen({ navigation, route }: VerifyOtpScreenPr
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FAF8F5" />
+      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
       <KeyboardAvoidingView
         style={styles.keyboardAvoiding}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -262,36 +263,39 @@ export default function VerifyOtpScreen({ navigation, route }: VerifyOtpScreenPr
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#FAF8F5',
+    backgroundColor: colors.background,
   },
   keyboardAvoiding: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 24,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xl,
   },
   headingSection: {
-    marginTop: 4,
-    marginBottom: 14,
+    marginTop: spacing.xs,
+    marginBottom: spacing.md,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#1F2937',
-    marginBottom: 4,
+    ...typography.display,
+    fontFamily: 'Inter-Black',
+    fontWeight: '900',
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
     letterSpacing: -0.4,
   },
   subtitle: {
-    fontSize: 13,
-    color: '#6B7280',
+    ...typography.body,
+    fontFamily: 'Inter-Regular',
+    color: colors.textSecondary,
     lineHeight: 18,
-    marginBottom: 6,
+    marginBottom: spacing.xs,
   },
   phoneHighlight: {
+    fontFamily: 'Inter-Bold',
     fontWeight: '700',
-    color: '#8C331A',
+    color: colors.primary,
   },
   changeNumberRow: {
     flexDirection: 'row',
@@ -300,63 +304,62 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   changeNumberText: {
-    fontSize: 12,
-    color: '#8C331A',
+    ...typography.caption,
+    fontFamily: 'Inter-Bold',
+    color: colors.primary,
     fontWeight: '700',
     marginLeft: 4,
   },
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 20,
-    shadowColor: '#8C331A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    elevation: 3,
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    ...shadows.sm,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: colors.border,
   },
   label: {
-    fontSize: 11,
+    ...typography.caption,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: '#5C4A3E',
+    color: colors.textPrimary,
     letterSpacing: 0.8,
-    marginBottom: 14,
+    marginBottom: spacing.md,
     textAlign: 'center',
   },
   otpBoxesRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 20,
+    marginBottom: spacing.lg,
   },
   otpBox: {
     width: 44,
     height: 50,
-    borderRadius: 12,
+    borderRadius: radius.md,
     borderWidth: 1.5,
-    borderColor: '#E8DED6',
-    backgroundColor: '#FAF7F4',
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
   otpBoxActive: {
-    borderColor: '#8C331A',
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#8C331A',
+    borderColor: colors.primary,
+    backgroundColor: colors.white,
+    shadowColor: colors.primary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.12,
     shadowRadius: 4,
     elevation: 2,
   },
   otpBoxFilled: {
-    borderColor: '#8C331A',
+    borderColor: colors.primary,
     backgroundColor: '#FAF4ED',
   },
   otpDigitText: {
-    fontSize: 20,
+    ...typography.heading1,
+    fontFamily: 'Inter-Black',
     fontWeight: '800',
-    color: '#2C1E18',
+    color: colors.textPrimary,
   },
   hiddenInput: {
     position: 'absolute',
@@ -365,13 +368,13 @@ const styles = StyleSheet.create({
     opacity: 0.01,
   },
   verifyButton: {
-    backgroundColor: '#8C331A',
-    borderRadius: 12,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
     height: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#8C331A',
+    shadowColor: colors.primary,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
     shadowRadius: 6,
@@ -381,43 +384,46 @@ const styles = StyleSheet.create({
     backgroundColor: '#C5A496',
   },
   verifyButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
+    color: colors.white,
+    ...typography.body,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
     letterSpacing: 0.5,
   },
   verifyIcon: {
-    marginLeft: 8,
+    marginLeft: spacing.xs,
   },
   resendContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 16,
+    marginTop: spacing.md,
   },
   resendLabel: {
-    fontSize: 12,
-    color: '#7A6A60',
+    ...typography.caption,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
     marginRight: 6,
   },
   resendText: {
-    fontSize: 12,
-    color: '#8C331A',
+    ...typography.caption,
+    fontFamily: 'Inter-Bold',
+    color: colors.primary,
     fontWeight: '800',
   },
   resendTextDisabled: {
-    color: '#A09085',
+    color: colors.textMuted,
   },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 18,
+    marginTop: spacing.lg,
   },
   footerText: {
-    fontSize: 12,
-    color: '#8C7C72',
+    ...typography.caption,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
     marginLeft: 6,
-    fontWeight: '500',
   },
 });
