@@ -59,9 +59,6 @@ export default function PendingPaymentsScreen({ navigation }: any) {
   );
   const [isCollectModalVisible, setIsCollectModalVisible] = useState(false);
   const [paidAmountInput, setPaidAmountInput] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<
-    'Cash' | 'UPI' | 'Card' | 'Bank Transfer'
-  >('UPI');
 
   // Filter invoices to only show unpaid/pending invoices
   const pendingInvoices = useMemo(() => {
@@ -117,7 +114,6 @@ export default function PendingPaymentsScreen({ navigation }: any) {
         : parseInt((invoice.amount || '').replace(/[^0-9]/g, '')) || 0;
     setSelectedInvoice(invoice);
     setPaidAmountInput(numVal.toString());
-    setPaymentMethod('UPI');
     setIsCollectModalVisible(true);
   };
 
