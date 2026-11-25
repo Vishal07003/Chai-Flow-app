@@ -28,6 +28,7 @@ export interface BackendOrder {
   delivery_status?: 'assigned' | 'accepted' | 'picked_up' | 'on_the_way' | 'delivered' | 'failed' | null;
   has_invoice?: boolean;
   invoice_number?: string | null;
+  order_type?: 'One-Time' | 'Scheduled';
   created_at: string;
   updated_at: string;
   items: OrderItemDetail[];
@@ -37,6 +38,8 @@ export interface CreateOrderPayload {
   customer_id?: number | null;
   company_id?: number | null;
   delivery_partner_id?: number | null;
+  scheduled_delivery_date?: string | null;
+  scheduled_delivery_time?: string | null;
   delivery_address: string;
   notes?: string;
   items: Array<{

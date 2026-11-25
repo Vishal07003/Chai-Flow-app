@@ -68,17 +68,16 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
   const [schedulesLoading, setSchedulesLoading] = useState<boolean>(false);
   const [scheduleModalVisible, setScheduleModalVisible] = useState<boolean>(false);
   const [editingSchedule, setEditingSchedule] = useState<DailyDeliverySchedule | null>(null);
-  const [cancellingDateSchedule, setCancellingDateSchedule] = useState<DailyDeliverySchedule | null>(null);
-  const [cancelDateInput, setCancelDateInput] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [cancelModalVisible, setCancelModalVisible] = useState<boolean>(false);
-  const [cancelReasonInput, setCancelReasonInput] = useState<string>('');
+
+  // 3-Tab Navigation State ('ORDERS' | 'SCHEDULE' | 'LEDGER')
+  const [activeTab, setActiveTab] = useState<'ORDERS' | 'SCHEDULE' | 'LEDGER'>('ORDERS');
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Modals & Action States
   const [editCustomerModalVisible, setEditCustomerModalVisible] = useState<boolean>(false);
   const [collectModalVisible, setCollectModalVisible] = useState<boolean>(false);
   const [collectAmount, setCollectAmount] = useState<string>('');
   const [submittingPayment, setSubmittingPayment] = useState<boolean>(false);
-  const [repeatOrderModalVisible, setRepeatOrderModalVisible] = useState<boolean>(false);
   const [ledgerModalVisible, setLedgerModalVisible] = useState<boolean>(false);
 
   // Centralized Confirmation Dialog State
@@ -237,7 +236,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     }
   };
 
-  // Quick Action 1: New Order -> Navigate directly to QuickBilling
+  // Action 1: New Order -> Navigate directly to QuickBillingScreen in order mode with customer preselected
   const handleOpenNewOrder = () => {
     const custToPass = customer || initialCustomer || {
       id: customerId,
@@ -247,62 +246,23 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     };
     navigation.navigate('QuickBilling', {
       customer: custToPass,
+      customerId: customerId,
+      mode: 'order',
     });
   };
 
-  // Quick Action 2: Collect Payment
-  const handleOpenCollectPayment = () => {
-    setCollectAmount(String(amountDue > 0 ? amountDue : ''));
-    setCollectModalVisible(true);
-  };
-
-  // Quick Action 3: Repeat Order
-  const handleRepeatOrder = () => {
-    if (recentOrders.length === 0) {
-      setConfirmDialogConfig({
-        visible: true,
-        title: 'No Prior Orders',
-        description: 'This customer has no prior orders to repeat. Would you like to open Quick Billing to create a fresh order?',
-        confirmLabel: 'Open Quick Billing',
-        cancelLabel: 'Cancel',
-        type: 'info',
-        icon: 'cart-outline',
-        onConfirm: () => {
-          setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
-          navigation.navigate('QuickBilling', {
-            customer: customer || initialCustomer,
-          });
-        },
-      });
-      return;
-    }
-
-    if (recentOrders.length === 1) {
-      repeatSpecificOrder(recentOrders[0]);
-    } else {
-      setRepeatOrderModalVisible(true);
-    }
-  };
-
-  const repeatSpecificOrder = (order: BackendOrder) => {
-    setRepeatOrderModalVisible(false);
-    const prefilledItems = (order.items || []).map(it => ({
-      product_id: Number(it.product || it.product_details?.id),
-      product_name: it.product_details?.name || 'Item',
-      quantity: it.quantity,
-    }));
-    navigation.navigate('QuickBilling', {
-      customer: customer || initialCustomer,
-      prefilledItems,
-    });
-  };
-
-  // Schedule Actions
+  // Action 2: New Schedule
   const handleOpenCreateSchedule = () => {
     navigation.navigate('CreateEditDailySchedule', {
       customerId,
       customer: customer || initialCustomer,
     });
+  };
+
+  // Action 3: Collect Cash Payment
+  const handleOpenCollectPayment = () => {
+    setCollectAmount(String(amountDue > 0 ? amountDue : ''));
+    setCollectModalVisible(true);
   };
 
   const handleOpenEditSchedule = (sched: DailyDeliverySchedule) => {
@@ -324,32 +284,90 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     fetchSchedules();
   };
 
-  const handleOpenCancelDateModal = (sched: DailyDeliverySchedule) => {
-    setCancellingDateSchedule(sched);
-    setCancelDateInput(new Date().toISOString().split('T')[0]);
-    setCancelReasonInput('');
-    setCancelModalVisible(true);
-  };
-
-  const handleConfirmCancelDate = async () => {
-    if (!cancellingDateSchedule) return;
+  const handleToggleSchedulePause = async (sched: DailyDeliverySchedule) => {
     try {
-      const res = await orderService.cancelDateDelivery(
-        cancellingDateSchedule.id,
-        cancelDateInput,
-        cancelReasonInput.trim()
+      const nextActive = !sched.is_active;
+      await orderService.updateDailySchedule(sched.id, { is_active: nextActive });
+      AppToast.success(
+        nextActive ? 'Schedule Resumed' : 'Schedule Paused',
+        `Schedule is now ${nextActive ? 'Active' : 'Paused'}.`
       );
-      setCancelModalVisible(false);
       fetchSchedules();
-      fetchOrders();
-      AppToast.info(
-        res.case === 'B' ? "Today's Delivery Cancelled" : 'Delivery Date Skipped',
-        res.message
-      );
     } catch (err: any) {
-      AppToast.error('Cancellation Failed', err?.message || 'Could not cancel delivery for selected date.');
+      AppToast.error('Action Failed', err?.message || 'Could not update status.');
     }
   };
+
+  const handleOpenCancelDateModal = (sched: DailyDeliverySchedule) => {
+    setConfirmDialogConfig({
+      visible: true,
+      title: "Cancel Today's Delivery?",
+      description: `Skip today's scheduled delivery for ${displayName}? Upcoming future deliveries will remain active.`,
+      confirmLabel: "Cancel Today",
+      cancelLabel: "Go Back",
+      type: "danger",
+      icon: "close-circle-outline",
+      onConfirm: async () => {
+        try {
+          const today = new Date().toISOString().split('T')[0];
+          const res = await orderService.cancelDateDelivery(sched.id, today, 'Skipped by store owner');
+          fetchSchedules();
+          fetchOrders();
+          AppToast.info(
+            res.case === 'B' ? "Today's Delivery Cancelled" : 'Delivery Date Skipped',
+            res.message || 'Today delivery marked cancelled.'
+          );
+        } catch (err: any) {
+          AppToast.error('Cancellation Failed', err?.message || 'Could not cancel today.');
+        } finally {
+          setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
+        }
+      },
+    });
+  };
+
+  // Filtered Orders for Tab 1 (Customer-specific already via customerId backend filter)
+  const filteredOrders = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return recentOrders;
+    return recentOrders.filter(ord => {
+      const matchId = String(ord.id).includes(q);
+      const matchStatus = (ord.status || '').toLowerCase().includes(q);
+      const matchDate = (ord.created_at || '').includes(q);
+      const matchProduct = (ord.items || []).some(it =>
+        (it.product_details?.name || '').toLowerCase().includes(q)
+      );
+      return matchId || matchStatus || matchDate || matchProduct;
+    });
+  }, [recentOrders, searchQuery]);
+
+  // Filtered Schedules for Tab 2 (Customer-specific)
+  const filteredCustomerSchedules = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return schedules;
+    return schedules.filter(sched => {
+      const matchPartner = (sched.delivery_partner_name || '').toLowerCase().includes(q);
+      const matchTime = (sched.delivery_time || '').includes(q);
+      const matchDays = (sched.weekdays || '').includes(q);
+      const matchProduct = (sched.items || []).some(it =>
+        (it.product_name || '').toLowerCase().includes(q)
+      );
+      return matchPartner || matchTime || matchDays || matchProduct;
+    });
+  }, [schedules, searchQuery]);
+
+  // Filtered Transactions for Tab 3 (Customer Ledger)
+  const filteredTransactions = useMemo(() => {
+    const txs = ledgerStatement?.transactions || [];
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return txs;
+    return txs.filter((tx: any) => {
+      const matchDesc = (tx.description || '').toLowerCase().includes(q);
+      const matchDate = (tx.date || '').includes(q);
+      const matchAmount = String(tx.debit || '').includes(q) || String(tx.credit || '').includes(q);
+      return matchDesc || matchDate || matchAmount;
+    });
+  }, [ledgerStatement?.transactions, searchQuery]);
 
   // Derived Values
   const displayName = customer?.name || initialCustomer?.name || 'Customer';
@@ -406,6 +424,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        stickyHeaderIndices={[3]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
         }
@@ -482,24 +501,24 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
           </View>
         </View>
 
-        {/* 4. MAIN ACTION BUTTONS */}
+        {/* 4. MAIN ACTION BUTTONS: 1. New Order (Quick Billing), 2. New Schedule, 3. Collect Cash */}
         <View style={styles.actionsBar}>
           <TouchableOpacity
             style={styles.primaryActionBtn}
             onPress={handleOpenNewOrder}
             activeOpacity={0.85}
           >
-            <Ionicons name="add-circle" size={18} color={colors.white} style={{ marginRight: 6 }} />
+            <Ionicons name="cart-outline" size={17} color={colors.white} style={{ marginRight: 5 }} />
             <Text style={styles.primaryActionText}>New Order</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.secondaryActionBtn}
-            onPress={handleRepeatOrder}
+            onPress={handleOpenCreateSchedule}
             activeOpacity={0.7}
           >
-            <Ionicons name="repeat" size={17} color={colors.primary} style={{ marginRight: 5 }} />
-            <Text style={styles.secondaryActionText}>Repeat Order</Text>
+            <Ionicons name="calendar-outline" size={16} color={colors.primary} style={{ marginRight: 5 }} />
+            <Text style={styles.secondaryActionText}>New Schedule</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -507,92 +526,276 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
             onPress={handleOpenCollectPayment}
             activeOpacity={0.7}
           >
-            <Ionicons name="cash-outline" size={17} color={colors.primary} style={{ marginRight: 5 }} />
+            <Ionicons name="cash-outline" size={16} color={colors.primary} style={{ marginRight: 5 }} />
             <Text style={styles.secondaryActionText}>Collect Cash</Text>
           </TouchableOpacity>
         </View>
 
-        {/* 5. DAILY DELIVERY SCHEDULE */}
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={styles.sectionHeaderLeft}>
-              <Ionicons name="time-outline" size={18} color={colors.primary} style={{ marginRight: 6 }} />
-              <Text style={styles.sectionTitle}>DAILY DELIVERY SCHEDULE</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.addTemplatePill}
-              onPress={handleOpenCreateSchedule}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="add" size={15} color={colors.primary} />
-              <Text style={styles.addTemplatePillText}>Create Schedule</Text>
-            </TouchableOpacity>
+        {/* 5. STICKY SEARCH BAR & SEGMENTED 3 TABS: Orders | Daily Schedule | Customer Ledger */}
+        <View style={styles.stickySectionWrapper}>
+          {/* Search Bar */}
+          <View style={styles.searchBar}>
+            <Ionicons name="search-outline" size={17} color="#888" style={{ marginRight: 8 }} />
+            <TextInput
+              placeholder={
+                activeTab === 'ORDERS'
+                  ? "Search orders by ID, product, date, status..."
+                  : activeTab === 'SCHEDULE'
+                  ? "Search schedule by partner, product, time..."
+                  : "Search ledger transactions by description, date..."
+              }
+              placeholderTextColor="#988E85"
+              style={styles.searchInput}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+              </TouchableOpacity>
+            )}
           </View>
 
-          {schedulesLoading ? (
-            <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 16 }} />
-          ) : schedules.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Ionicons name="calendar-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
-              <Text style={styles.emptyCardTitle}>No Daily Delivery Schedule</Text>
-              <Text style={styles.emptyCardSub}>Configure automated daily orders, delivery time and dedicated partner.</Text>
-            </View>
-          ) : (
-            schedules.map(sched => {
-              const weekdaysMap = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-              const daysLabel = sched.weekdays
-                ? sched.weekdays
-                    .split(',')
-                    .map(d => weekdaysMap[parseInt(d.trim(), 10)])
-                    .filter(Boolean)
-                    .join(', ')
-                : 'Everyday';
-              const timeDisplay = sched.delivery_time ? sched.delivery_time.substring(0, 5) : '10:00';
-              const itemsList = (sched.items || []).map(i => `${i.quantity}x ${i.product_name}`).join(' • ');
+          {/* Segmented 3-Tab Bar */}
+          <View style={styles.tabBarRow}>
+            <TouchableOpacity
+              style={[styles.segmentTab, activeTab === 'ORDERS' && styles.segmentTabActive]}
+              onPress={() => setActiveTab('ORDERS')}
+              activeOpacity={0.75}
+            >
+              <Ionicons
+                name="receipt-outline"
+                size={13}
+                color={activeTab === 'ORDERS' ? '#FFFFFF' : '#6B7280'}
+                style={{ marginRight: 4 }}
+              />
+              <Text style={[styles.segmentTabText, activeTab === 'ORDERS' && styles.segmentTabTextActive]}>
+                Orders ({recentOrders.length})
+              </Text>
+            </TouchableOpacity>
 
-              return (
-                <View key={sched.id} style={styles.scheduleCard}>
-                  {/* Card Header */}
-                  <View style={styles.scheduleCardHeader}>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={styles.scheduleTimeText}>{timeDisplay}</Text>
-                        <View style={[styles.statusTag, sched.is_active ? styles.statusTagActive : styles.statusTagPaused]}>
-                          <Text style={[styles.statusTagText, sched.is_active ? styles.statusTagTextActive : styles.statusTagTextPaused]}>
-                            {sched.is_active ? 'ACTIVE' : 'INACTIVE'}
-                          </Text>
+            <TouchableOpacity
+              style={[styles.segmentTab, activeTab === 'SCHEDULE' && styles.segmentTabActive]}
+              onPress={() => setActiveTab('SCHEDULE')}
+              activeOpacity={0.75}
+            >
+              <Ionicons
+                name="calendar-outline"
+                size={13}
+                color={activeTab === 'SCHEDULE' ? '#FFFFFF' : '#6B7280'}
+                style={{ marginRight: 4 }}
+              />
+              <Text style={[styles.segmentTabText, activeTab === 'SCHEDULE' && styles.segmentTabTextActive]}>
+                Daily Schedule ({schedules.length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.segmentTab, activeTab === 'LEDGER' && styles.segmentTabActive]}
+              onPress={() => setActiveTab('LEDGER')}
+              activeOpacity={0.75}
+            >
+              <Ionicons
+                name="book-outline"
+                size={13}
+                color={activeTab === 'LEDGER' ? '#FFFFFF' : '#6B7280'}
+                style={{ marginRight: 4 }}
+              />
+              <Text style={[styles.segmentTabText, activeTab === 'LEDGER' && styles.segmentTabTextActive]}>
+                Customer Ledger
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* TAB 1: ORDERS (Customer-Specific Order History) */}
+        {activeTab === 'ORDERS' && (
+          <View style={styles.tabContentContainer}>
+            <View style={styles.sectionHeaderRow}>
+              <View style={styles.sectionHeaderLeft}>
+                <Ionicons name="receipt-outline" size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>
+                  CUSTOMER ORDERS ({filteredOrders.length})
+                </Text>
+              </View>
+            </View>
+
+            {ordersLoading ? (
+              <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
+            ) : filteredOrders.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <Ionicons name="cart-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
+                <Text style={styles.emptyCardTitle}>No Customer Orders Found</Text>
+                <Text style={styles.emptyCardSub}>
+                  {searchQuery ? `No orders matching "${searchQuery}"` : "Tap 'New Order' above to place an order for this customer."}
+                </Text>
+              </View>
+            ) : (
+              filteredOrders.map(order => {
+                const dateObj = new Date(order.created_at);
+                const orderDate = dateObj.toLocaleDateString('en-IN', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                });
+                const orderTime = dateObj.toLocaleTimeString('en-IN', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: true,
+                });
+
+                const itemsSummary = (order.items || [])
+                  .map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`)
+                  .join(' • ');
+
+                return (
+                  <TouchableOpacity
+                    key={order.id}
+                    style={styles.orderCard}
+                    onPress={() => navigation.navigate('OrderDetails', { orderId: order.id, order })}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.orderCardTop}>
+                      <View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={styles.orderCardId}>Order #{order.id}</Text>
+                          <View style={[
+                            styles.orderTypeBadge,
+                            order.order_type === 'Scheduled' ? styles.orderTypeScheduled : styles.orderTypeOneTime
+                          ]}>
+                            <Text style={[
+                              styles.orderTypeBadgeText,
+                              order.order_type === 'Scheduled' ? styles.orderTypeScheduledText : styles.orderTypeOneTimeText
+                            ]}>
+                              {order.order_type || (order.scheduled_delivery_date ? 'Scheduled' : 'One-Time')}
+                            </Text>
+                          </View>
                         </View>
+                        <Text style={styles.orderCardDate}>
+                          {orderDate} • {order.scheduled_delivery_time ? order.scheduled_delivery_time.substring(0, 5) : orderTime}
+                        </Text>
                       </View>
-                      <Text style={styles.scheduleDaysText}>{daysLabel}</Text>
+                      <View style={styles.orderStatusBadge}>
+                        <Text style={styles.orderStatusBadgeText}>{order.status.toUpperCase()}</Text>
+                      </View>
                     </View>
 
-                    <TouchableOpacity
-                      style={styles.scheduleEditBtn}
-                      onPress={() => handleOpenEditSchedule(sched)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.scheduleEditText}>Edit</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Fixed Partner */}
-                  <View style={styles.schedulePartnerRow}>
-                    <Ionicons name="bicycle-outline" size={15} color={colors.primary} style={{ marginRight: 6 }} />
-                    <Text style={styles.schedulePartnerName} numberOfLines={1}>
-                      Fixed Partner: <Text style={{ fontWeight: '700', color: colors.textPrimary }}>{sched.delivery_partner_name}</Text>
+                    <Text style={styles.orderCardItems} numberOfLines={2}>
+                      {itemsSummary || 'Standard Daily Delivery'}
                     </Text>
-                  </View>
 
-                  {/* Products */}
-                  <View style={styles.scheduleItemsBox}>
-                    <Text style={styles.scheduleItemsText} numberOfLines={2}>
-                      {itemsList || 'No products configured'}
-                    </Text>
-                  </View>
+                    <View style={styles.orderCardBottom}>
+                      <View>
+                        <Text style={styles.orderAmountLabel}>Amount</Text>
+                        <Text style={styles.orderCardTotal}>
+                          ₹{parseFloat(order.total_amount || '0').toLocaleString('en-IN')}
+                        </Text>
+                      </View>
 
-                  {/* Next Scheduled Delivery & Lead Time */}
-                  <View style={styles.scheduleFooterRow}>
-                    <View style={{ flex: 1 }}>
+                      {order.has_invoice ? (
+                        <View style={styles.invoicedTag}>
+                          <Ionicons name="checkmark-done" size={13} color={colors.success} style={{ marginRight: 4 }} />
+                          <Text style={styles.invoicedTagText}>{order.invoice_number || 'INVOICED'}</Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.unbilledTag}>Pending Invoice</Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+        )}
+
+        {/* TAB 2: SCHEDULE (Customer-Specific Daily Schedule with 2x2 Buttons) */}
+        {activeTab === 'SCHEDULE' && (
+          <View style={styles.tabContentContainer}>
+            <View style={styles.sectionHeaderRow}>
+              <View style={styles.sectionHeaderLeft}>
+                <Ionicons name="calendar-outline" size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>
+                  CUSTOMER SCHEDULES ({filteredCustomerSchedules.length})
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.addTemplatePill}
+                onPress={handleOpenCreateSchedule}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="add" size={14} color={colors.primary} />
+                <Text style={styles.addTemplatePillText}>+ Add Schedule</Text>
+              </TouchableOpacity>
+            </View>
+
+            {schedulesLoading ? (
+              <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
+            ) : filteredCustomerSchedules.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <Ionicons name="calendar-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
+                <Text style={styles.emptyCardTitle}>No Schedules Configured</Text>
+                <Text style={styles.emptyCardSub}>
+                  {searchQuery ? `No schedules matching "${searchQuery}"` : "Configure automated daily orders, delivery time and dedicated partner."}
+                </Text>
+              </View>
+            ) : (
+              filteredCustomerSchedules.map(sched => {
+                const weekdaysMap = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+                const daysLabel = sched.weekdays
+                  ? sched.weekdays
+                      .split(',')
+                      .map(d => weekdaysMap[parseInt(d.trim(), 10)])
+                      .filter(Boolean)
+                      .join(', ')
+                  : 'Everyday';
+                const timeDisplay = sched.delivery_time ? sched.delivery_time.substring(0, 5) : '10:00';
+                const itemsList = (sched.items || []).map(i => `${i.quantity}x ${i.product_name}`).join(' • ');
+
+                // Calculate schedule total amount
+                const schedTotal = (sched.items || []).reduce((sum, item) => {
+                  const p = parseFloat(item.unit_price) || parseFloat(item.product_price) || 0;
+                  return sum + p * item.quantity;
+                }, 0);
+
+                return (
+                  <View key={sched.id} style={styles.scheduleCard}>
+                    {/* Card Header */}
+                    <View style={styles.scheduleCardHeader}>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={styles.scheduleTimeText}>{timeDisplay}</Text>
+                          <View style={[styles.statusTag, sched.is_active ? styles.statusTagActive : styles.statusTagPaused]}>
+                            <Text style={[styles.statusTagText, sched.is_active ? styles.statusTagTextActive : styles.statusTagTextPaused]}>
+                              {sched.is_active ? 'ACTIVE' : 'PAUSED'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.scheduleDaysText}>{daysLabel}</Text>
+                      </View>
+
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={styles.scheduleTotalLabel}>DAILY AMOUNT</Text>
+                        <Text style={styles.scheduleTotalAmount}>₹{schedTotal.toFixed(2)}</Text>
+                      </View>
+                    </View>
+
+                    {/* Fixed Partner */}
+                    <View style={styles.schedulePartnerRow}>
+                      <Ionicons name="bicycle-outline" size={14} color={colors.primary} style={{ marginRight: 6 }} />
+                      <Text style={styles.schedulePartnerName} numberOfLines={1}>
+                        Fixed Partner: <Text style={{ fontWeight: '700', color: colors.textPrimary }}>{sched.delivery_partner_name}</Text>
+                      </Text>
+                    </View>
+
+                    {/* Products */}
+                    <View style={styles.scheduleItemsBox}>
+                      <Text style={styles.scheduleItemsText} numberOfLines={2}>
+                        {itemsList || 'No products configured'}
+                      </Text>
+                    </View>
+
+                    {/* Next Scheduled Delivery & Lead Time */}
+                    <View style={styles.scheduleMetaRow}>
                       <Text style={styles.scheduleNextLabel}>
                         Next: {sched.next_scheduled_delivery || 'Not scheduled'}
                       </Text>
@@ -601,162 +804,164 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
                       </Text>
                     </View>
 
+                    {/* 2x2 Action Buttons: Prevents overflow on all phone sizes */}
+                    <View style={styles.actionsGrid}>
+                      <View style={styles.actionsGridRow}>
+                        <TouchableOpacity
+                          style={styles.actionGridBtn}
+                          onPress={() => handleOpenEditSchedule(sched)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="create-outline" size={13} color="#8C331A" style={{ marginRight: 4 }} />
+                          <Text style={[styles.actionGridBtnText, { color: '#8C331A' }]}>Edit</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.actionGridBtn}
+                          onPress={() => handleToggleSchedulePause(sched)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons
+                            name={sched.is_active ? 'pause-circle-outline' : 'play-circle-outline'}
+                            size={13}
+                            color={sched.is_active ? '#D97706' : '#10B981'}
+                            style={{ marginRight: 4 }}
+                          />
+                          <Text
+                            style={[
+                              styles.actionGridBtnText,
+                              sched.is_active ? { color: '#D97706' } : { color: '#10B981' },
+                            ]}
+                          >
+                            {sched.is_active ? 'Pause' : 'Resume'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={styles.actionsGridRow}>
+                        <TouchableOpacity
+                          style={[styles.actionGridBtn, styles.cancelActionBtn]}
+                          onPress={() => handleOpenCancelDateModal(sched)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="close-circle-outline" size={13} color={colors.danger} style={{ marginRight: 4 }} />
+                          <Text style={[styles.actionGridBtnText, { color: colors.danger }]}>Cancel Today</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </View>
+        )}
+
+        {/* TAB 3: CUSTOMER LEDGER (Statement, Summary & Transaction Timeline) */}
+        {activeTab === 'LEDGER' && (
+          <View style={styles.tabContentContainer}>
+            <View style={styles.sectionHeaderRow}>
+              <View style={styles.sectionHeaderLeft}>
+                <Ionicons name="book-outline" size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>
+                  CUSTOMER LEDGER & PASSBOOK
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setLedgerModalVisible(true)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.viewAllLink}>Full View →</Text>
+              </TouchableOpacity>
+            </View>
+
+            {ledgerLoading ? (
+              <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
+            ) : ledgerStatement ? (
+              <View>
+                {/* Summary Card */}
+                <View style={styles.ledgerCard}>
+                  <View style={styles.ledgerGrid}>
+                    <View style={styles.ledgerCol}>
+                      <Text style={styles.ledgerColLabel}>OPENING BAL</Text>
+                      <Text style={styles.ledgerColValue}>
+                        ₹{parseFloat(ledgerStatement.summary?.opening_balance || '0').toLocaleString('en-IN')}
+                      </Text>
+                    </View>
+
+                    <View style={styles.ledgerCol}>
+                      <Text style={styles.ledgerColLabel}>INVOICED</Text>
+                      <Text style={[styles.ledgerColValue, { color: colors.danger }]}>
+                        +₹{parseFloat(ledgerStatement.summary?.total_debit || '0').toLocaleString('en-IN')}
+                      </Text>
+                    </View>
+
+                    <View style={styles.ledgerCol}>
+                      <Text style={styles.ledgerColLabel}>COLLECTIONS</Text>
+                      <Text style={[styles.ledgerColValue, { color: colors.success }]}>
+                        -₹{parseFloat(ledgerStatement.summary?.total_credit || '0').toLocaleString('en-IN')}
+                      </Text>
+                    </View>
+
+                    <View style={[styles.ledgerCol, { borderRightWidth: 0 }]}>
+                      <Text style={styles.ledgerColLabel}>AMOUNT DUE</Text>
+                      <Text style={[styles.ledgerColValue, { color: colors.primary, fontWeight: '800' }]}>
+                        ₹{parseFloat(ledgerStatement.summary?.closing_balance || '0').toLocaleString('en-IN')}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.ledgerCardFooter}>
+                    <Text style={styles.ledgerPeriodText}>
+                      Period: {ledgerStatement.period?.start_date ? new Date(ledgerStatement.period.start_date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : 'Current Month'}
+                    </Text>
                     <TouchableOpacity
-                      style={styles.cancelDateBtn}
-                      onPress={() => handleOpenCancelDateModal(sched)}
+                      style={styles.collectMiniBtn}
+                      onPress={handleOpenCollectPayment}
                       activeOpacity={0.7}
                     >
-                      <Ionicons name="close-circle-outline" size={13} color={colors.danger} style={{ marginRight: 4 }} />
-                      <Text style={styles.cancelDateBtnText}>Cancel Today</Text>
+                      <Ionicons name="cash-outline" size={13} color={colors.white} style={{ marginRight: 4 }} />
+                      <Text style={styles.collectMiniBtnText}>Collect Cash</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
-              );
-            })
-          )}
-        </View>
 
-        {/* 6. RECENT ORDERS */}
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={styles.sectionHeaderLeft}>
-              <Ionicons name="receipt-outline" size={18} color={colors.primary} style={{ marginRight: 6 }} />
-              <Text style={styles.sectionTitle}>RECENT ORDERS ({recentOrders.length})</Text>
-            </View>
-            <TouchableOpacity
-              onPress={() => navigation.navigate('Orders')}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.viewAllLink}>View All →</Text>
-            </TouchableOpacity>
-          </View>
-
-          {ordersLoading ? (
-            <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 16 }} />
-          ) : recentOrders.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Ionicons name="cart-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
-              <Text style={styles.emptyCardTitle}>No Prior Orders</Text>
-              <Text style={styles.emptyCardSub}>Tap 'New Order' above to start billing.</Text>
-            </View>
-          ) : (
-            recentOrders.slice(0, 5).map(order => {
-              const orderDate = new Date(order.created_at).toLocaleDateString('en-IN', {
-                day: 'numeric',
-                month: 'short',
-                year: 'numeric',
-              });
-              const itemsSummary = (order.items || [])
-                .map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`)
-                .join(' • ');
-
-              return (
-                <TouchableOpacity
-                  key={order.id}
-                  style={styles.orderCard}
-                  onPress={() => navigation.navigate('OrderDetails', { orderId: order.id, order })}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.orderCardTop}>
-                    <View>
-                      <Text style={styles.orderCardId}>Order #{order.id}</Text>
-                      <Text style={styles.orderCardDate}>{orderDate}</Text>
-                    </View>
-                    <View style={styles.orderStatusBadge}>
-                      <Text style={styles.orderStatusBadgeText}>{order.status.toUpperCase()}</Text>
-                    </View>
-                  </View>
-
-                  <Text style={styles.orderCardItems} numberOfLines={1}>
-                    {itemsSummary || 'Standard Daily Delivery'}
-                  </Text>
-
-                  <View style={styles.orderCardBottom}>
-                    <Text style={styles.orderCardTotal}>₹{parseFloat(order.total_amount || '0').toLocaleString('en-IN')}</Text>
-                    {order.has_invoice ? (
-                      <View style={styles.invoicedTag}>
-                        <Ionicons name="checkmark-done" size={13} color={colors.success} style={{ marginRight: 4 }} />
-                        <Text style={styles.invoicedTagText}>{order.invoice_number || 'INVOICED'}</Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.unbilledTag}>Pending Invoice</Text>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              );
-            })
-          )}
-        </View>
-
-        {/* 7. CUSTOMER LEDGER STATEMENT */}
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={styles.sectionHeaderLeft}>
-              <Ionicons name="book-outline" size={18} color={colors.primary} style={{ marginRight: 6 }} />
-              <Text style={styles.sectionTitle}>CUSTOMER LEDGER</Text>
-            </View>
-            <TouchableOpacity
-              onPress={() => setLedgerModalVisible(true)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.viewAllLink}>View Full Ledger →</Text>
-            </TouchableOpacity>
-          </View>
-
-          {ledgerLoading ? (
-            <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 16 }} />
-          ) : ledgerStatement ? (
-            <View style={styles.ledgerCard}>
-              <View style={styles.ledgerGrid}>
-                <View style={styles.ledgerCol}>
-                  <Text style={styles.ledgerColLabel}>OPENING BAL</Text>
-                  <Text style={styles.ledgerColValue}>
-                    ₹{parseFloat(ledgerStatement.summary?.opening_balance || '0').toLocaleString('en-IN')}
-                  </Text>
-                </View>
-
-                <View style={styles.ledgerCol}>
-                  <Text style={styles.ledgerColLabel}>TOTAL INVOICED</Text>
-                  <Text style={[styles.ledgerColValue, { color: colors.danger }]}>
-                    +₹{parseFloat(ledgerStatement.summary?.total_debit || '0').toLocaleString('en-IN')}
-                  </Text>
-                </View>
-
-                <View style={styles.ledgerCol}>
-                  <Text style={styles.ledgerColLabel}>COLLECTIONS</Text>
-                  <Text style={[styles.ledgerColValue, { color: colors.success }]}>
-                    -₹{parseFloat(ledgerStatement.summary?.total_credit || '0').toLocaleString('en-IN')}
-                  </Text>
-                </View>
-
-                <View style={[styles.ledgerCol, { borderRightWidth: 0 }]}>
-                  <Text style={styles.ledgerColLabel}>AMOUNT DUE</Text>
-                  <Text style={[styles.ledgerColValue, { color: colors.primary, fontWeight: '800' }]}>
-                    ₹{parseFloat(ledgerStatement.summary?.closing_balance || '0').toLocaleString('en-IN')}
-                  </Text>
+                {/* Inline Transactions List */}
+                <View style={styles.ledgerInlineTransactionsCard}>
+                  <Text style={styles.ledgerInlineHeader}>TRANSACTION HISTORY ({filteredTransactions.length})</Text>
+                  {filteredTransactions.length === 0 ? (
+                    <Text style={styles.emptyNote}>
+                      {searchQuery ? `No transactions matching "${searchQuery}"` : 'No transactions recorded for this customer.'}
+                    </Text>
+                  ) : (
+                    filteredTransactions.map((tx: any, idx: number) => {
+                      const isDebit = parseFloat(tx.debit) > 0;
+                      return (
+                        <View key={idx} style={styles.txRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.txDesc}>{tx.description}</Text>
+                            <Text style={styles.txDate}>{tx.date}</Text>
+                          </View>
+                          <View style={{ alignItems: 'flex-end' }}>
+                            <Text style={[styles.txAmount, isDebit ? { color: colors.danger } : { color: colors.success }]}>
+                              {isDebit ? `+₹${tx.debit}` : `-₹${tx.credit}`}
+                            </Text>
+                            <Text style={styles.txRunningBal}>Bal: ₹{tx.running_balance}</Text>
+                          </View>
+                        </View>
+                      );
+                    })
+                  )}
                 </View>
               </View>
-
-              <View style={styles.ledgerCardFooter}>
-                <Text style={styles.ledgerPeriodText}>
-                  Passbook: {ledgerStatement.period?.start_date ? new Date(ledgerStatement.period.start_date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : 'Current Month'}
-                </Text>
-                <TouchableOpacity
-                  style={styles.collectMiniBtn}
-                  onPress={handleOpenCollectPayment}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="cash-outline" size={13} color={colors.white} style={{ marginRight: 4 }} />
-                  <Text style={styles.collectMiniBtnText}>Collect Cash</Text>
-                </TouchableOpacity>
+            ) : (
+              <View style={styles.emptyCard}>
+                <Ionicons name="book-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
+                <Text style={styles.emptyCardTitle}>No Ledger Records</Text>
+                <Text style={styles.emptyCardSub}>No transaction ledger statement generated yet.</Text>
               </View>
-            </View>
-          ) : (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyCardSub}>No ledger passbook entries recorded yet.</Text>
-            </View>
-          )}
-        </View>
+            )}
+          </View>
+        )}
       </ScrollView>
 
       {/* --- MODALS & DIALOGS --- */}
@@ -778,44 +983,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
         title="Edit Customer Details"
       />
 
-      {/* 2. Select Order to Repeat Modal */}
-      <Modal visible={repeatOrderModalVisible} transparent animationType="fade" onRequestClose={() => setRepeatOrderModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setRepeatOrderModalVisible(false)} />
-          <View style={styles.modalCenterBox}>
-            <View style={styles.modalHeaderRow}>
-              <View>
-                <Text style={styles.modalSheetTitle}>Repeat Order</Text>
-                <Text style={styles.modalSheetSub}>Choose an order to duplicate products</Text>
-              </View>
-              <TouchableOpacity onPress={() => setRepeatOrderModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close" size={20} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
-              {recentOrders.map(ord => (
-                <TouchableOpacity
-                  key={ord.id}
-                  style={styles.repeatOrderOptionCard}
-                  onPress={() => repeatSpecificOrder(ord)}
-                  activeOpacity={0.7}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.repeatOptionId}>Order #{ord.id}</Text>
-                    <Text style={styles.repeatOptionItems} numberOfLines={1}>
-                      {(ord.items || []).map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`).join(', ')}
-                    </Text>
-                  </View>
-                  <Text style={styles.repeatOptionTotal}>₹{parseFloat(ord.total_amount || '0').toLocaleString('en-IN')}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 3. Cash Payment Modal (Strictly Cash Only) */}
+      {/* 2. Cash Payment Modal (Strictly Cash Only) */}
       <CollectPaymentModal
         visible={collectModalVisible}
         onClose={() => setCollectModalVisible(false)}
@@ -902,68 +1070,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
         existingSchedule={editingSchedule}
       />
 
-      {/* 6. Cancel Date Modal */}
-      <Modal visible={cancelModalVisible} transparent animationType="fade" onRequestClose={() => setCancelModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setCancelModalVisible(false)} />
-          <View style={styles.modalCenterBox}>
-            <View style={styles.modalHeaderRow}>
-              <View>
-                <Text style={styles.modalSheetTitle}>Cancel Delivery for Date</Text>
-                <Text style={styles.modalSheetSub}>{displayName} • Skip Date Exception</Text>
-              </View>
-              <TouchableOpacity onPress={() => setCancelModalVisible(false)}>
-                <Ionicons name="close" size={20} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <View style={{ marginVertical: spacing.md }}>
-              <Text style={styles.inputSubLabel}>Select Date to Cancel (YYYY-MM-DD):</Text>
-              <TextInput
-                style={styles.cancelDateInput}
-                value={cancelDateInput}
-                onChangeText={setCancelDateInput}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={colors.textMuted}
-              />
-
-              <Text style={[styles.inputSubLabel, { marginTop: spacing.sm }]}>Reason for Cancellation:</Text>
-              <TextInput
-                style={[styles.cancelDateInput, { height: 48 }]}
-                value={cancelReasonInput}
-                onChangeText={setCancelReasonInput}
-                placeholder="e.g. Office closed for public holiday"
-                placeholderTextColor={colors.textMuted}
-                multiline
-              />
-
-              <Text style={styles.cancelNoticeNote}>
-                • If an order is already generated for this date, it will be marked cancelled and the partner notified.{'\n'}
-                • If not generated yet, the scheduler will skip this date.{'\n'}
-                • Future scheduled deliveries remain completely active.
-              </Text>
-            </View>
-
-            <View style={styles.cancelModalActions}>
-              <TouchableOpacity
-                style={styles.cancelModalCancelBtn}
-                onPress={() => setCancelModalVisible(false)}
-              >
-                <Text style={styles.cancelModalCancelText}>Back</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.cancelModalConfirmBtn}
-                onPress={handleConfirmCancelDate}
-              >
-                <Text style={styles.cancelModalConfirmText}>Confirm Cancellation</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 7. Centralized Reusable Confirm Dialog */}
+      {/* 6. Centralized Reusable Confirm Dialog */}
       <ConfirmDialog
         visible={confirmDialogConfig.visible}
         title={confirmDialogConfig.title}
@@ -1163,11 +1270,11 @@ const styles = StyleSheet.create({
   /* 4. Action Buttons */
   actionsBar: {
     flexDirection: 'row',
-    gap: spacing.xs,
-    marginBottom: spacing.lg,
+    gap: spacing.sm,
+    marginBottom: spacing.md,
   },
   primaryActionBtn: {
-    flex: 1.2,
+    flex: 1,
     backgroundColor: colors.primary,
     borderRadius: radius.md,
     paddingVertical: 12,
@@ -1199,6 +1306,69 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.primary,
     fontWeight: '700',
+  },
+
+  /* 5. Sticky Search and 2-Tab Segmented Bar */
+  stickySectionWrapper: {
+    backgroundColor: '#FAF8F5',
+    paddingVertical: 4,
+    marginBottom: spacing.md,
+    zIndex: 10,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 42,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
+    marginBottom: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter-Regular',
+    color: '#1F2937',
+    padding: 0,
+  },
+  tabBarRow: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    gap: 4,
+  },
+  segmentTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  segmentTabActive: {
+    backgroundColor: '#8C331A',
+  },
+  segmentTabText: {
+    fontSize: 12,
+    fontFamily: 'Inter-SemiBold',
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  segmentTabTextActive: {
+    color: '#FFFFFF',
+  },
+  tabContentContainer: {
+    marginBottom: spacing.md,
   },
 
   /* Common Section Header */
@@ -1296,19 +1466,18 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 2,
   },
-  scheduleEditBtn: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: radius.sm,
-    backgroundColor: '#FAF4ED',
-    borderWidth: 1,
-    borderColor: '#F5C6B8',
-  },
-  scheduleEditText: {
-    fontSize: 11,
+  scheduleTotalLabel: {
+    fontSize: 9,
     fontFamily: 'Inter-Bold',
-    fontWeight: '700',
-    color: colors.primary,
+    fontWeight: '800',
+    color: '#9CA3AF',
+    letterSpacing: 0.4,
+  },
+  scheduleTotalAmount: {
+    fontSize: 14,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '800',
+    color: '#8C331A',
   },
   schedulePartnerRow: {
     flexDirection: 'row',
@@ -1332,13 +1501,11 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     lineHeight: 18,
   },
-  scheduleFooterRow: {
+  scheduleMetaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
+    marginVertical: 4,
   },
   scheduleNextLabel: {
     fontSize: 11,
@@ -1350,23 +1517,43 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'Inter-Regular',
     color: colors.textMuted,
-    marginTop: 1,
   },
-  cancelDateBtn: {
+  actionsGrid: {
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+    paddingTop: 8,
+    marginTop: 4,
+    gap: 6,
+  },
+  actionsGridRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionGridBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: radius.sm,
-    backgroundColor: '#FEF2F2',
+    justifyContent: 'center',
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#FAF8F5',
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: '#EFEAE4',
   },
-  cancelDateBtnText: {
+  actionGridBtnText: {
     fontSize: 11,
-    fontFamily: 'Inter-Bold',
+    fontFamily: 'Inter-SemiBold',
     fontWeight: '700',
-    color: colors.danger,
+    color: '#374151',
+  },
+  cancelActionBtn: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FEE2E2',
+  },
+  orderAmountLabel: {
+    fontSize: 9,
+    fontFamily: 'Inter-Regular',
+    color: '#9CA3AF',
   },
   cancelDateInput: {
     backgroundColor: colors.background,
@@ -1710,5 +1897,53 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Medium',
     color: colors.textSecondary,
     marginBottom: 4,
+  },
+  orderTypeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+  },
+  orderTypeBadgeText: {
+    fontSize: 9,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '800',
+  },
+  orderTypeOneTime: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  orderTypeOneTimeText: {
+    fontSize: 9,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '800',
+    color: '#1D4ED8',
+  },
+  orderTypeScheduled: {
+    backgroundColor: '#F5EFEA',
+    borderColor: '#E8D7CA',
+  },
+  orderTypeScheduledText: {
+    fontSize: 9,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  ledgerInlineTransactionsCard: {
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginTop: spacing.sm,
+    ...shadows.sm,
+  },
+  ledgerInlineHeader: {
+    fontSize: 11,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '800',
+    color: colors.textMuted,
+    marginBottom: spacing.xs,
+    letterSpacing: 0.5,
   },
 });

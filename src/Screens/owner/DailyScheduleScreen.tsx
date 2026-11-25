@@ -397,59 +397,63 @@ export default function DailyScheduleScreen({ navigation }: DailyScheduleScreenP
                   </View>
                 </View>
 
-                {/* Card Action Buttons (View, Edit, Pause/Resume, Cancel Today) */}
-                <View style={styles.actionsFooterRow}>
-                  <TouchableOpacity
-                    style={styles.actionBtn}
-                    onPress={() =>
-                      navigation.navigate('CustomerDetail', { customerId: sched.customer_profile })
-                    }
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="eye-outline" size={14} color="#4B5563" style={{ marginRight: 4 }} />
-                    <Text style={styles.actionBtnText}>View</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.actionBtn}
-                    onPress={() =>
-                      navigation.navigate('CreateEditDailySchedule', { schedule: sched })
-                    }
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="create-outline" size={14} color="#8C331A" style={{ marginRight: 4 }} />
-                    <Text style={[styles.actionBtnText, { color: '#8C331A' }]}>Edit</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.actionBtn}
-                    onPress={() => handleTogglePauseResume(sched)}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons
-                      name={sched.is_active ? 'pause-circle-outline' : 'play-circle-outline'}
-                      size={14}
-                      color={sched.is_active ? '#D97706' : '#10B981'}
-                      style={{ marginRight: 4 }}
-                    />
-                    <Text
-                      style={[
-                        styles.actionBtnText,
-                        sched.is_active ? { color: '#D97706' } : { color: '#10B981' },
-                      ]}
+                {/* Card Action Buttons: 2x2 grid to prevent overflow */}
+                <View style={styles.actionsGrid}>
+                  <View style={styles.actionsGridRow}>
+                    <TouchableOpacity
+                      style={styles.actionBtn}
+                      onPress={() =>
+                        navigation.navigate('CustomerDetail', { customerId: sched.customer_profile })
+                      }
+                      activeOpacity={0.7}
                     >
-                      {sched.is_active ? 'Pause' : 'Resume'}
-                    </Text>
-                  </TouchableOpacity>
+                      <Ionicons name="eye-outline" size={13} color="#4B5563" style={{ marginRight: 4 }} />
+                      <Text style={styles.actionBtnText}>View</Text>
+                    </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={[styles.actionBtn, styles.cancelActionBtn]}
-                    onPress={() => handleOpenCancelDate(sched)}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="close-circle-outline" size={14} color="#EF4444" style={{ marginRight: 4 }} />
-                    <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>Cancel Today</Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.actionBtn}
+                      onPress={() =>
+                        navigation.navigate('CreateEditDailySchedule', { schedule: sched })
+                      }
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="create-outline" size={13} color="#8C331A" style={{ marginRight: 4 }} />
+                      <Text style={[styles.actionBtnText, { color: '#8C331A' }]}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.actionsGridRow}>
+                    <TouchableOpacity
+                      style={styles.actionBtn}
+                      onPress={() => handleTogglePauseResume(sched)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={sched.is_active ? 'pause-circle-outline' : 'play-circle-outline'}
+                        size={13}
+                        color={sched.is_active ? '#D97706' : '#10B981'}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text
+                        style={[
+                          styles.actionBtnText,
+                          sched.is_active ? { color: '#D97706' } : { color: '#10B981' },
+                        ]}
+                      >
+                        {sched.is_active ? 'Pause' : 'Resume'}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.cancelActionBtn]}
+                      onPress={() => handleOpenCancelDate(sched)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="close-circle-outline" size={13} color="#EF4444" style={{ marginRight: 4 }} />
+                      <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>Cancel Today</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
             );
@@ -873,11 +877,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#8C331A',
   },
-  actionsFooterRow: {
-    flexDirection: 'row',
+  actionsGrid: {
     borderTopWidth: 1,
     borderTopColor: '#F3EFEA',
-    paddingTop: 10,
+    paddingTop: 8,
+    gap: 6,
+  },
+  actionsGridRow: {
+    flexDirection: 'row',
     gap: 8,
   },
   actionBtn: {

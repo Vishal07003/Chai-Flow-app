@@ -104,6 +104,10 @@ export default function QuickBillingScreen({ route, navigation }: any) {
   const [deliveryAddress, setDeliveryAddress] = useState<string>('');
   const [selectedPartnerId, setSelectedPartnerId] = useState<number | null>(null);
   const [orderNotes, setOrderNotes] = useState<string>('');
+  const [deliveryDate, setDeliveryDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [deliveryTime, setDeliveryTime] = useState<string>(
+    new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
+  );
   const [partners, setPartners] = useState<DeliveryPartnerProfile[]>([]);
   const [loadingPartners, setLoadingPartners] = useState<boolean>(false);
 
@@ -648,6 +652,8 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         delivery_address: deliveryAddress.trim() || selectedCustomer?.address || 'Counter Sale / Stalls',
         notes: orderNotes.trim(),
         items: itemsPayload,
+        scheduled_delivery_date: deliveryDate ? deliveryDate.trim() : null,
+        scheduled_delivery_time: deliveryTime ? (deliveryTime.trim().length === 5 ? `${deliveryTime.trim()}:00` : deliveryTime.trim()) : null,
       });
 
       // Reset form
@@ -663,7 +669,11 @@ export default function QuickBillingScreen({ route, navigation }: any) {
       });
 
       setTimeout(() => {
-        navigation.navigate('Orders');
+        if (routeCustomer || initialCustomerId) {
+          navigation.goBack();
+        } else {
+          navigation.navigate('Orders');
+        }
       }, 500);
     } catch (err: any) {
       Toast.show({
@@ -1340,6 +1350,36 @@ export default function QuickBillingScreen({ route, navigation }: any) {
               <View style={styles.deliverySectionHeader}>
                 <Ionicons name="location" size={16} color="#8C331A" style={{ marginRight: 6 }} />
                 <Text style={styles.deliverySectionTitle}>Delivery Address & Notes</Text>
+              </View>
+
+              {/* Delivery Timing: Date & Time */}
+              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.orderFieldLabel}>DELIVERY DATE (YYYY-MM-DD)</Text>
+                  <View style={styles.draftInputBox}>
+                    <Ionicons name="calendar-outline" size={18} color="#8C331A" style={{ marginRight: 8 }} />
+                    <TextInput
+                      style={[styles.draftInputField, { paddingVertical: 8 }]}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor="#9CA3AF"
+                      value={deliveryDate}
+                      onChangeText={setDeliveryDate}
+                    />
+                  </View>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.orderFieldLabel}>DELIVERY TIME (HH:MM)</Text>
+                  <View style={styles.draftInputBox}>
+                    <Ionicons name="time-outline" size={18} color="#8C331A" style={{ marginRight: 8 }} />
+                    <TextInput
+                      style={[styles.draftInputField, { paddingVertical: 8 }]}
+                      placeholder="HH:MM"
+                      placeholderTextColor="#9CA3AF"
+                      value={deliveryTime}
+                      onChangeText={setDeliveryTime}
+                    />
+                  </View>
+                </View>
               </View>
 
               {/* Delivery Address */}
