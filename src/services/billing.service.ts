@@ -29,9 +29,23 @@ export interface BackendPayment {
   notes?: string;
 }
 
+export interface InvoiceAuditLogEntry {
+  id: number;
+  invoice: number;
+  edited_by: number;
+  edited_by_name: string;
+  previous_total: string;
+  updated_total: string;
+  previous_values: any;
+  updated_values: any;
+  reason: string;
+  created_at: string;
+}
+
 export interface BackendInvoice {
   id: number;
   invoice_number: string;
+  order?: number | null;
   customer: number | null;
   customer_name: string;
   customer_phone: string;
@@ -43,6 +57,7 @@ export interface BackendInvoice {
   created_at: string;
   items: BackendInvoiceItem[];
   payments: BackendPayment[];
+  audit_logs?: InvoiceAuditLogEntry[];
   total_paid: string;
   pending_amount: string;
   is_overdue?: boolean;
@@ -205,6 +220,22 @@ export const billingService = {
    */
   async createInvoice(payload: CreateInvoicePayload): Promise<BackendInvoice> {
     return apiClient.post<BackendInvoice>('/billing/invoices/', payload);
+  },
+
+  /**
+   * Part 4: Edit saved bill with audit history and ledger synchronization
+   */
+  async editBill(
+    invoiceId: number | string,
+    payload: {
+      items?: Array<{ product_id?: number | null; product_name?: string; unit_price?: string | number; quantity: number }>;
+      discount_amount?: string | number;
+      notes?: string;
+      due_date?: string | null;
+      reason?: string;
+    },
+  ): Promise<BackendInvoice> {
+    return apiClient.patch<BackendInvoice>(`/billing/invoices/${invoiceId}/edit_bill/`, payload);
   },
 
   /**

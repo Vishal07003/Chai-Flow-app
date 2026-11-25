@@ -4,13 +4,19 @@ import { BackendProduct } from './product.service';
 export interface OrderItemDetail {
   id: number;
   product: number;
-  product_details: BackendProduct;
+  product_name?: string;
+  product_details?: BackendProduct;
   quantity: number;
-  price: string;
+  ordered_quantity?: number;
+  delivered_quantity?: number | null;
+  has_discrepancy?: boolean;
+  price?: string;
+  unit_price?: string | number;
 }
 
 export interface BackendOrder {
   id: number;
+  order_number?: string;
   customer: number;
   customer_profile?: number | null;
   customer_name: string;
@@ -20,8 +26,11 @@ export interface BackendOrder {
   status: 'pending' | 'accepted' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
   total_amount: string;
   delivery_address: string;
+  delivery_date?: string | null;
+  delivery_time?: string | null;
   scheduled_delivery_date?: string | null;
   scheduled_delivery_time?: string | null;
+  discount_amount?: string | number;
   notes?: string;
   delivery_partner_id?: number | null;
   delivery_partner_name?: string | null;
@@ -185,11 +194,17 @@ export const orderService = {
   /**
    * Fetch orders (scoped by role in backend)
    */
-  async getOrders(params?: { status?: string; company?: number | string; customer?: number | string }): Promise<BackendOrder[]> {
+  async getOrders(params?: {
+    status?: string;
+    company?: number | string;
+    customer?: number | string;
+    unbilled?: boolean;
+  }): Promise<BackendOrder[]> {
     const query = new URLSearchParams();
     if (params?.status) query.append('status', params.status);
     if (params?.company) query.append('company', String(params.company));
     if (params?.customer) query.append('customer', String(params.customer));
+    if (params?.unbilled !== undefined) query.append('unbilled', String(params.unbilled));
     const qs = query.toString();
     return apiClient.get<BackendOrder[]>(`/orders/${qs ? `?${qs}` : ''}`);
   },
@@ -231,8 +246,10 @@ export const orderService = {
   async generateManualInvoice(
     orderId: number | string,
     payload?: {
-      items?: Array<{ product_id: number; quantity: number }>;
+      items?: Array<{ product_id: number; quantity: number; unit_price?: number | string; product_name?: string }>;
       notes?: string;
+      discount_amount?: number | string;
+      due_date?: string | null;
     },
   ): Promise<any> {
     return apiClient.post(`/orders/${orderId}/generate-invoice/`, payload || {});
@@ -337,6 +354,10 @@ export const orderService = {
 
   async updateDailySchedule(id: number | string, data: Partial<CreateDailySchedulePayload>): Promise<DailyDeliverySchedule> {
     return apiClient.patch<DailyDeliverySchedule>(`/orders/schedules/${id}/`, data);
+  },
+
+  async deleteDailySchedule(id: number | string): Promise<void> {
+    return apiClient.delete(`/orders/schedules/${id}/`);
   },
 
   async cancelDateDelivery(id: number | string, dateStr: string, reason?: string): Promise<{

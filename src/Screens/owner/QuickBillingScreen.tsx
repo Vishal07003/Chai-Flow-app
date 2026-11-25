@@ -714,8 +714,8 @@ export default function QuickBillingScreen({ route, navigation }: any) {
     return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
   };
 
-  // Execute Draft Creation / Update in Django Backend (Draft Billing Mode)
-  const executeSaveDraft = async () => {
+  // Execute Direct Invoice Creation in Django Backend (Billing Mode)
+  const executeSaveBill = async () => {
     closeDialog();
     closeConfirmDialog();
     if (isSaving) return;
@@ -741,66 +741,35 @@ export default function QuickBillingScreen({ route, navigation }: any) {
       const cleanDueDate = trimmedDueDate || null;
       const cleanNotes = draftNotes.trim();
 
-      if (editingDraft) {
-        // Edit existing draft -> PATCH /api/v1/billing/drafts/{id}/
-        await draftService.updateDraft(editingDraft.id, {
-          customer_id: selectedCustomer ? selectedCustomer.id : null,
-          delivery_partner_id: selectedPartnerId,
-          delivery_address: deliveryAddress.trim() || undefined,
-          items: itemsPayload,
-          discount_amount: discountAmount,
-          due_date: cleanDueDate,
-          notes: cleanNotes,
-        });
+      // Create official invoice directly -> POST /api/v1/billing/invoices/
+      const createdInvoice = await billingService.createInvoice({
+        customer_id: selectedCustomer ? selectedCustomer.id : null,
+        customer_name: selectedCustomer ? selectedCustomer.name : 'Walk-in Customer',
+        customer_phone: selectedCustomer?.phone || '',
+        notes: cleanNotes,
+        discount_amount: discountAmount,
+        items: itemsPayload,
+      });
 
-        // Reset form
-        handleClearCart();
+      // Reset form
+      handleClearCart();
 
-        // Refresh backend datasets
-        refreshBackendData();
+      // Refresh backend datasets
+      refreshBackendData();
 
-        Toast.show({
-          type: 'success',
-          text1: 'Draft Updated',
-          text2: `Draft ${editingDraft.draft_number} saved successfully.`,
-        });
+      Toast.show({
+        type: 'success',
+        text1: 'Bill Saved & Finalized',
+        text2: `Invoice #${createdInvoice.invoice_number} generated successfully.`,
+      });
 
-        setTimeout(() => {
-          navigation.navigate('Orders');
-        }, 400);
-      } else {
-        // Create new draft -> POST /api/v1/billing/drafts/
-        const createdDraft = await draftService.createDraft({
-          customer_id: selectedCustomer ? selectedCustomer.id : null,
-          delivery_partner_id: selectedPartnerId,
-          delivery_address: deliveryAddress.trim() || undefined,
-          billing_source: 'quick_billing',
-          items: itemsPayload,
-          discount_amount: discountAmount,
-          due_date: cleanDueDate,
-          notes: cleanNotes,
-        });
-
-        // Reset form
-        handleClearCart();
-
-        // Refresh backend datasets
-        refreshBackendData();
-
-        Toast.show({
-          type: 'success',
-          text1: 'Draft Bill Created',
-          text2: `Draft ${createdDraft.draft_number} saved in Draft Bills.`,
-        });
-
-        setTimeout(() => {
-          navigation.navigate('Orders');
-        }, 400);
-      }
+      setTimeout(() => {
+        navigation.navigate('InvoiceDetail', { invoice: createdInvoice });
+      }, 400);
     } catch (err: any) {
       Toast.show({
         type: 'error',
-        text1: editingDraft ? 'Failed to update draft' : 'Failed to create draft',
+        text1: 'Failed to save bill',
         text2: err.message || err.detail || 'Please check your connection and try again.',
       });
     } finally {
@@ -893,17 +862,15 @@ export default function QuickBillingScreen({ route, navigation }: any) {
       ? partners.find(p => p.id === selectedPartnerId)?.name || 'Assigned Delivery Partner'
       : 'None (Self pickup / Counter)';
 
-    const isEditing = !!editingDraft;
-
     setConfirmDialogConfig({
       visible: true,
-      title: isEditing ? `Update Draft ${editingDraft.draft_number}?` : 'Save as Billing Draft?',
-      description: `Customer: ${selectedCustomer ? selectedCustomer.name : 'Walk-in Customer'}\nItems: ${totalItemsCount} units\nSubtotal: ₹${subtotal}${discountAmount > 0 ? ` • Discount: -₹${discountAmount}` : ''}\nEstimated Grand Total: ₹${grandTotal}\nDelivery Partner: ${assignedPartnerName}${dueDate ? `\nDue Date: ${dueDate}` : ''}\n\nNotice: This saves a flexible Draft Bill. Official invoice finalization and ledger posting occur from Draft Bills in the Orders Hub.`,
-      confirmLabel: isEditing ? 'Update Draft' : 'Save Draft',
+      title: 'Save & Finalize Bill?',
+      description: `Customer: ${selectedCustomer ? selectedCustomer.name : 'Walk-in Customer'}\nItems: ${totalItemsCount} units\nSubtotal: ₹${subtotal}${discountAmount > 0 ? ` • Discount: -₹${discountAmount}` : ''}\nFinal Bill Amount: ₹${grandTotal}\nDelivery Partner: ${assignedPartnerName}${dueDate ? `\nDue Date: ${dueDate}` : ''}\n\nNotice: This will create an official invoice and post directly to the Customer Ledger.`,
+      confirmLabel: 'Save Bill',
       cancelLabel: 'Cancel',
       type: 'info',
       icon: 'receipt-outline',
-      onConfirm: executeSaveDraft,
+      onConfirm: executeSaveBill,
     });
   };
 
@@ -923,10 +890,10 @@ export default function QuickBillingScreen({ route, navigation }: any) {
           )}
 
           <View style={styles.teaLogoIconContainer}>
-            <Ionicons name={isOrderMode ? "cart" : editingDraft ? "document-text" : "cafe"} size={16} color="#8C331A" />
+            <Ionicons name={isOrderMode ? "cart" : "receipt"} size={16} color="#8C331A" />
           </View>
           <Text style={styles.headerTitleText}>
-            {isOrderMode ? 'New Order' : editingDraft ? `Edit Draft (${editingDraft.draft_number})` : 'Quick Billing Draft'}
+            {isOrderMode ? 'New Order' : 'Quick Billing'}
           </Text>
         </View>
 
@@ -1423,14 +1390,14 @@ export default function QuickBillingScreen({ route, navigation }: any) {
             </View>
           )}
 
-          {/* DRAFT BILLING OPTIONS: DUE DATE & NOTES - ONLY FOR QUICK BILLING DRAFT MODE */}
+          {/* BILLING SETTINGS: DUE DATE & NOTES */}
           {!isOrderMode && (
             <View style={styles.draftOptionsSection}>
               <View style={styles.dottedDivider} />
 
               <View style={styles.deliverySectionHeader}>
                 <Ionicons name="receipt" size={16} color="#8C331A" style={{ marginRight: 6 }} />
-                <Text style={styles.deliverySectionTitle}>Draft Bill Settings</Text>
+                <Text style={styles.deliverySectionTitle}>Billing Settings</Text>
               </View>
 
               {/* Payment Due Date */}
@@ -1459,7 +1426,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
       </KeyboardAwareScrollView>
       )}
 
-      {/* BOTTOM ACTION BUTTON: SAVE DRAFT OR CREATE ORDER */}
+      {/* BOTTOM ACTION BUTTON: SAVE BILL OR CREATE ORDER */}
       <View style={[styles.fixedBottomDock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <TouchableOpacity
           activeOpacity={0.85}
@@ -1472,7 +1439,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
           ) : (
             <>
               <Ionicons
-                name={isOrderMode ? "bag-check-outline" : editingDraft ? "save-outline" : "receipt-outline"}
+                name={isOrderMode ? "bag-check-outline" : "receipt-outline"}
                 size={20}
                 color="#FFFFFF"
                 style={{ marginRight: 8 }}
@@ -1480,9 +1447,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
               <Text style={styles.saveBillBtnText}>
                 {isOrderMode
                   ? `Create Order (₹${subtotal})`
-                  : editingDraft
-                    ? `Update Draft (₹${grandTotal})`
-                    : `Save Draft (₹${grandTotal})`}
+                  : `Save Bill (₹${grandTotal})`}
               </Text>
             </>
           )}

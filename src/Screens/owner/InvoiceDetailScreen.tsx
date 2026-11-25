@@ -15,7 +15,8 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header, CustomDialog } from '../../components/common';
 import { useApp, InvoiceItem, DeliveryBoyItem } from '../../context/AppContext';
 import { pdfService } from '../../services/pdf.service';
-import billingService, { BackendInvoice } from '../../services/billing.service';
+import billingService, { BackendInvoice, InvoiceAuditLogEntry } from '../../services/billing.service';
+import { BillReviewModal, BillReviewItem } from '../../components/billing/BillReviewModal';
 import { colors, typography, radius, spacing, shadows } from '../../theme';
 
 export default function InvoiceDetailScreen({ route, navigation }: any) {
@@ -59,6 +60,7 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
         deliveryStatus: isPaidStatus ? 'Delivered' : 'Pending',
         items: (raw.items || []).map((it: any) => ({
           id: String(it.id),
+          product_id: it.product || it.product_id || null,
           name: it.product_name,
           qty: it.quantity,
           price: parseFloat(it.unit_price) || 0,
@@ -95,6 +97,11 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
     },
   );
 
+  const [rawInvoiceData, setRawInvoiceData] = useState<BackendInvoice | null>(
+    invoice && invoice.invoice_number ? invoice : null
+  );
+  const [isEditBillVisible, setIsEditBillVisible] = useState<boolean>(false);
+
   const rawInvoiceId = invoice?.id || invoice?.invoice_number || route.params?.invoiceId;
 
   // Live fetch to prevent stale invoice status
@@ -103,6 +110,7 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
     try {
       const live: BackendInvoice = await billingService.getInvoiceDetail(rawInvoiceId);
       if (live) {
+        setRawInvoiceData(live);
         setCurrentOrder(mapBackendInvoiceToItem(live));
       }
     } catch (err) {
@@ -154,6 +162,45 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
       : delStatus === 'Out for delivery'
       ? 'In Transit (Sector 14, Near Metro)'
       : 'At Central Warehouse / Store Hub');
+
+  const handleSaveEditedBill = async (payload: {
+    items: Array<{ product_id: number | null; product_name: string; quantity: number; unit_price: string }>;
+    discount_amount: string;
+    notes: string;
+    due_date: string | null;
+    reason?: string;
+  }) => {
+    if (!rawInvoiceId) return;
+    const itemsPayload = payload.items.map(it => ({
+      product_id: it.product_id ? Number(it.product_id) : null,
+      product_name: it.product_name,
+      quantity: it.quantity,
+      unit_price: it.unit_price,
+    }));
+
+    const updated = await billingService.editBill(rawInvoiceId, {
+      items: itemsPayload,
+      discount_amount: payload.discount_amount,
+      notes: payload.notes,
+      due_date: payload.due_date,
+      reason: payload.reason,
+    });
+
+    setIsEditBillVisible(false);
+    if (updated) {
+      setRawInvoiceData(updated);
+      setCurrentOrder(mapBackendInvoiceToItem(updated));
+    } else {
+      fetchLiveInvoice();
+    }
+    setDialogConfig({
+      visible: true,
+      title: 'Bill Updated',
+      message: 'The bill has been edited successfully and customer ledger has been updated.',
+      type: 'success',
+      buttons: [{ text: 'OK', onPress: closeDialog }],
+    });
+  };
 
   const handleCallCustomer = () => {
     const phone = currentOrder.customerPhone || '+919876512345';
@@ -295,7 +342,19 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
       >
         {/* 1. Summary Card */}
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryCardSubtitle}>ORDER SUMMARY</Text>
+          <View style={styles.summaryTopRow}>
+            <Text style={styles.summaryCardSubtitle}>ORDER SUMMARY</Text>
+            {isAdmin && (
+              <TouchableOpacity
+                style={styles.editBillHeaderBtn}
+                onPress={() => setIsEditBillVisible(true)}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="create-outline" size={14} color="#8C331A" style={{ marginRight: 4 }} />
+                <Text style={styles.editBillHeaderBtnText}>Edit Bill</Text>
+              </TouchableOpacity>
+            )}
+          </View>
           <Text style={styles.totalAmountText}>{currentOrder.amount}</Text>
 
           <View style={styles.badgesContainer}>
@@ -680,7 +739,74 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
             </View>
           )}
         </View>
+
+        {/* 6. Invoice Edit Audit History (Part 4 requirement) */}
+        {rawInvoiceData?.audit_logs && rawInvoiceData.audit_logs.length > 0 && (
+          <View style={styles.sectionCard}>
+            <View style={styles.auditHeaderRow}>
+              <Ionicons name="time" size={16} color="#8C331A" style={{ marginRight: 6 }} />
+              <Text style={styles.sectionTitleLabel}>BILL AUDIT HISTORY</Text>
+            </View>
+            <Text style={styles.auditSubtitle}>
+              Immutable record of all modifications to this bill. Previous PDF records remain unchanged.
+            </Text>
+
+            {rawInvoiceData.audit_logs.map((log: InvoiceAuditLogEntry, idx: number) => (
+              <View key={log.id || idx} style={styles.auditLogRow}>
+                <View style={styles.auditLogDot} />
+                <View style={styles.auditLogContent}>
+                  <View style={styles.auditLogTop}>
+                    <Text style={styles.auditLogUser}>{log.edited_by_name || 'Owner'}</Text>
+                    <Text style={styles.auditLogTime}>
+                      {log.created_at ? new Date(log.created_at).toLocaleString() : 'Recently'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.auditTotalChangeRow}>
+                    <Text style={styles.auditPrevTotal}>₹{log.previous_total}</Text>
+                    <Ionicons name="arrow-forward" size={12} color="#8C331A" style={{ marginHorizontal: 6 }} />
+                    <Text style={styles.auditNextTotal}>₹{log.updated_total}</Text>
+                  </View>
+
+                  {Boolean(log.reason) && (
+                    <Text style={styles.auditReasonText}>
+                      Reason: <Text style={{ fontStyle: 'italic', color: '#374151' }}>"{log.reason}"</Text>
+                    </Text>
+                  )}
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
       </ScrollView>
+
+      {/* Bill Review / Edit Modal (Part 4) */}
+      <BillReviewModal
+        visible={isEditBillVisible}
+        onClose={() => setIsEditBillVisible(false)}
+        mode="edit_invoice"
+        invoiceId={rawInvoiceData?.id || (currentOrder?.id ? Number(currentOrder.id.replace(/[^0-9]/g, '')) : undefined)}
+        invoiceNumber={rawInvoiceData?.invoice_number || currentOrder.invoiceNo}
+        customerName={currentOrder.name}
+        customerPhone={currentOrder.customerPhone}
+        deliveryPartnerName={currentOrder.deliveryPartnerName}
+        deliveryDate={currentOrder.date}
+        initialItems={(currentOrder.items || []).map((it: any) => ({
+          id: it.id ? Number(it.id) : undefined,
+          product_id: it.product_id || null,
+          product_name: it.name,
+          quantity: it.qty,
+          unit_price: String(it.price || '0'),
+        }))}
+        initialDiscount={String(currentOrder.discountAmount || 0)}
+        initialNotes={currentOrder.notes || ''}
+        initialDueDate={rawInvoiceData?.due_date || null}
+        onSaveSuccess={() => {
+          setIsEditBillVisible(false);
+          fetchLiveInvoice();
+        }}
+        saveAction={handleSaveEditedBill}
+      />
 
       {/* CUSTOM DIALOG POPUP */}
       <CustomDialog
@@ -723,6 +849,27 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#8A7A70',
     letterSpacing: 0.8,
+  },
+  summaryTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+  },
+  editBillHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FDF2EC',
+    borderWidth: 1,
+    borderColor: '#E8D7CE',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  editBillHeaderBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#8C331A',
   },
   totalAmountText: {
     fontSize: 32,
@@ -1093,6 +1240,72 @@ const styles = StyleSheet.create({
   partnerItemStatus: {
     fontSize: 11,
     fontWeight: '600',
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  /* Audit History Styles */
+  auditHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  auditSubtitle: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginBottom: 12,
+    lineHeight: 16,
+  },
+  auditLogRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3EFEA',
+  },
+  auditLogDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#8C331A',
+    marginTop: 5,
+    marginRight: 10,
+  },
+  auditLogContent: {
+    flex: 1,
+  },
+  auditLogTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  auditLogUser: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1F2937',
+  },
+  auditLogTime: {
+    fontSize: 10,
+    color: '#9CA3AF',
+  },
+  auditTotalChangeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  auditPrevTotal: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6B7280',
+    textDecorationLine: 'line-through',
+  },
+  auditNextTotal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  auditReasonText: {
+    fontSize: 11,
     color: '#6B7280',
     marginTop: 2,
   },
