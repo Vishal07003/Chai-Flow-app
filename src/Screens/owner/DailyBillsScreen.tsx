@@ -9,12 +9,16 @@ import {
   ActivityIndicator,
   RefreshControl,
   Modal,
-  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { Header } from '../../components/common';
 import { useApp } from '../../context/AppContext';
-import orderService, { BackendOrder, OrderInvoicePreview } from '../../services/order.service';
+import orderService, {
+  BackendOrder,
+  OrderInvoicePreview,
+  DailyDeliverySchedule,
+} from '../../services/order.service';
 import billingService, { BackendInvoice } from '../../services/billing.service';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import AppToast from '../../utils/toast';
@@ -35,15 +39,16 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
   );
   const [showDatePickerModal, setShowDatePickerModal] = useState<boolean>(false);
 
-  // Active Tab
+  // Active Billing Tab
   const [activeTab, setActiveTab] = useState<BillingTab>('READY_TO_BILL');
 
-  // Search & Filters
+  // Search
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Data Loading
   const [orders, setOrders] = useState<BackendOrder[]>([]);
   const [invoices, setInvoices] = useState<BackendInvoice[]>([]);
+  const [schedules, setSchedules] = useState<DailyDeliverySchedule[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
@@ -67,18 +72,20 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
   }>({
     visible: false,
     title: '',
-    onConfirm: () => { },
+    onConfirm: () => {},
   });
 
-  // Fetch Daily Orders and Invoices
+  // Fetch Daily Orders, Invoices, and Schedules
   const fetchData = useCallback(async () => {
     try {
-      const [orderList, invList] = await Promise.all([
+      const [orderList, invList, scheduleList] = await Promise.all([
         orderService.getOrders().catch(() => []),
         billingService.getInvoices({ date: selectedDate }).catch(() => []),
+        orderService.getDailySchedules().catch(() => []),
       ]);
       setOrders(orderList || []);
       setInvoices(invList || []);
+      setSchedules(scheduleList || []);
     } catch (_err) {
       // Handled silently
     } finally {
@@ -96,11 +103,26 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
     return unsubscribe;
   }, [navigation, fetchData, refreshBackendData]);
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    fetchData();
-    refreshBackendData();
+    await Promise.all([fetchData(), refreshBackendData()]);
+    setRefreshing(false);
   }, [fetchData, refreshBackendData]);
+
+  // Toggle Schedule Pause / Resume directly on screen
+  const handleToggleSchedulePause = async (sched: DailyDeliverySchedule) => {
+    try {
+      const nextActive = !sched.is_active;
+      await orderService.updateDailySchedule(sched.id, { is_active: nextActive });
+      AppToast.success(
+        nextActive ? 'Schedule Resumed' : 'Schedule Paused',
+        `Schedule for ${sched.customer_name} is now ${nextActive ? 'Active' : 'Paused'}.`
+      );
+      fetchData();
+    } catch (err: any) {
+      AppToast.error('Action Failed', err?.message || 'Could not update status.');
+    }
+  };
 
   // Date partition helper
   const isDateMatching = (dateStr?: string) => {
@@ -124,49 +146,22 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
 
   // 2. Generated Bills: Invoices generated for this date
   const generatedInvoices = useMemo(() => {
-    // If backend invoices for the date are available, prioritize them; else use orders with invoices
     if (invoices.length > 0) return invoices;
-    // Fallback to contextInvoices matching date
     return contextInvoices.filter(i => isDateMatching(i.createdAt || i.date));
   }, [invoices, contextInvoices, selectedDate]);
 
   // 3. Pending Approval: STRICTLY orders with submitted delivery actuals awaiting Owner review/approval
-  // (In-progress deliveries without submitted delivery quantities remain in Orders)
   const pendingApprovalOrders = useMemo(() => {
     return dateOrders.filter(o => {
       const isDelivered = o.status === 'delivered';
       const hasInvoice = Boolean(o.has_invoice || o.invoice_number);
-      // Delivery partner submitted actuals (delivery_status === 'delivered') but Owner hasn't marked order status as 'delivered' or billed it
       const hasSubmittedActuals = o.delivery_status === 'delivered' && !isDelivered;
       return hasSubmittedActuals && !hasInvoice;
     });
   }, [dateOrders]);
 
-  // Summary Metrics
-  const summaryMetrics = useMemo(() => {
-    const totalApproved = readyToBillOrders.length + generatedInvoices.length;
-    const billsGenerated = generatedInvoices.length;
-    const billsRemaining = readyToBillOrders.length;
-
-    let totalAmount = 0;
-    generatedInvoices.forEach((inv: any) => {
-      const amt = parseFloat(inv.grand_total || inv.numericAmount || inv.amount?.replace(/[^0-9.]/g, '') || '0');
-      totalAmount += amt;
-    });
-    readyToBillOrders.forEach(ord => {
-      totalAmount += parseFloat(ord.total_amount || '0');
-    });
-
-    return {
-      totalApproved,
-      billsGenerated,
-      billsRemaining,
-      totalAmount,
-    };
-  }, [readyToBillOrders, generatedInvoices]);
-
   // Tab Item Lists Filtered by Search
-  const filteredList = useMemo(() => {
+  const filteredBillingList = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
 
     if (activeTab === 'READY_TO_BILL') {
@@ -188,7 +183,6 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
       });
     }
 
-    // PENDING_APPROVAL
     if (!q) return pendingApprovalOrders;
     return pendingApprovalOrders.filter(
       o =>
@@ -197,6 +191,18 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
         o.company_name?.toLowerCase().includes(q)
     );
   }, [activeTab, searchQuery, readyToBillOrders, generatedInvoices, pendingApprovalOrders]);
+
+  // Filtered schedules for direct management on Billing
+  const displayedSchedules = useMemo(() => {
+    if (!searchQuery.trim()) return schedules;
+    const q = searchQuery.toLowerCase().trim();
+    return schedules.filter(
+      s =>
+        (s.customer_name || '').toLowerCase().includes(q) ||
+        (s.delivery_partner_name || '').toLowerCase().includes(q) ||
+        (s.delivery_address || '').toLowerCase().includes(q)
+    );
+  }, [schedules, searchQuery]);
 
   // Invoice Generation Handlers
   const handleOpenInvoicePreview = async (order: BackendOrder) => {
@@ -264,31 +270,9 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
   }, [selectedDate]);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* 1. HEADER WITH DATE SELECTION */}
-      <View style={styles.topHeader}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.screenTitle}>Daily Bills</Text>
-          <TouchableOpacity
-            style={styles.dateSelectorBtn}
-            onPress={() => setShowDatePickerModal(true)}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="calendar-outline" size={14} color={colors.primary} style={{ marginRight: 4 }} />
-            <Text style={styles.dateSelectorText}>{formattedDisplayDate}</Text>
-            <Ionicons name="chevron-down" size={14} color={colors.primary} style={{ marginLeft: 2 }} />
-          </TouchableOpacity>
-        </View>
-
-        <TouchableOpacity
-          style={styles.newBillBtn}
-          onPress={() => navigation?.navigate('QuickBilling')}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="add" size={18} color={colors.white} style={{ marginRight: 3 }} />
-          <Text style={styles.newBillBtnText}>New Bill</Text>
-        </TouchableOpacity>
-      </View>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      {/* 1. Header (Shared header style matching Home and Customers) */}
+      <Header title="Billing" showNotification={true} />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -297,123 +281,261 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
         }
       >
-        {/* 2. COMPACT BILLING SUMMARY CARDS */}
-        <View style={styles.summaryGrid}>
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>TOTAL APPROVED</Text>
-            <Text style={styles.summaryValue}>{summaryMetrics.totalApproved}</Text>
-            <Text style={styles.summarySub}>Orders ready & billed</Text>
+        {/* 2. TWO PROMINENT ACTION CARDS (SIDE BY SIDE): DAILY SCHEDULE & DAILY BILLING */}
+        <View style={styles.actionCardsRow}>
+          {/* Card A: Daily Schedule */}
+          <View style={styles.prominentCard}>
+            <View style={[styles.cardIconBox, { backgroundColor: '#FDEBE4' }]}>
+              <Ionicons name="calendar" size={20} color="#8C331A" />
+            </View>
+            <Text style={styles.cardMainTitle}>Daily Schedule</Text>
+            <Text style={styles.cardMainSub}>Manage automated customer deliveries</Text>
+
+            <TouchableOpacity
+              style={styles.cardActionButton}
+              onPress={() => navigation?.navigate('CreateEditDailySchedule')}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="add" size={15} color="#FFFFFF" style={{ marginRight: 3 }} />
+              <Text style={styles.cardActionButtonText}>+ Add Schedule</Text>
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>BILLS GENERATED</Text>
-            <Text style={[styles.summaryValue, { color: colors.success }]}>{summaryMetrics.billsGenerated}</Text>
-            <Text style={styles.summarySub}>Invoiced & debited</Text>
-          </View>
+          {/* Card B: Daily Billing */}
+          <View style={styles.prominentCard}>
+            <View style={[styles.cardIconBox, { backgroundColor: '#ECFDF5' }]}>
+              <Ionicons name="receipt" size={20} color="#059669" />
+            </View>
+            <Text style={styles.cardMainTitle}>Daily Billing</Text>
+            <Text style={styles.cardMainSub}>Manage daily bills and approvals</Text>
 
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>BILLS REMAINING</Text>
-            <Text style={[styles.summaryValue, summaryMetrics.billsRemaining > 0 ? { color: colors.warning } : {}]}>
-              {summaryMetrics.billsRemaining}
-            </Text>
-            <Text style={styles.summarySub}>Awaiting invoice</Text>
-          </View>
-
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>TOTAL AMOUNT</Text>
-            <Text style={[styles.summaryValue, { color: colors.primary }]}>
-              ₹{summaryMetrics.totalAmount.toLocaleString('en-IN')}
-            </Text>
-            <Text style={styles.summarySub}>Commercial total</Text>
+            <TouchableOpacity
+              style={[styles.cardActionButton, { backgroundColor: '#059669' }]}
+              onPress={() => {
+                // Focus on ready to bill workflow or trigger instant daily bill
+                if (readyToBillOrders.length > 0) {
+                  setActiveTab('READY_TO_BILL');
+                  handleOpenInvoicePreview(readyToBillOrders[0]);
+                } else {
+                  setActiveTab('READY_TO_BILL');
+                  AppToast.info('Daily Bills', 'Select an approved delivered order below to generate bill.');
+                }
+              }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="add" size={15} color="#FFFFFF" style={{ marginRight: 3 }} />
+              <Text style={styles.cardActionButtonText}>+ Add Daily Bill</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
-        {/* 3. SEARCH INPUT */}
-        <View style={styles.searchBarWrapper}>
-          <Ionicons name="search-outline" size={17} color={colors.textSecondary} style={{ marginRight: 8 }} />
+        {/* 3. SHARED SEARCH INPUT */}
+        <View style={styles.searchBar}>
+          <Ionicons name="search-outline" size={17} color="#888" style={{ marginRight: 8 }} />
           <TextInput
+            placeholder="Search schedules or daily orders by customer/id..."
+            placeholderTextColor="#988E85"
             style={styles.searchInput}
-            placeholder="Search by customer name or order ID..."
-            placeholderTextColor={colors.textMuted}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            clearButtonMode="while-editing"
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Ionicons name="close-circle" size={17} color="#9CA3AF" />
             </TouchableOpacity>
           )}
         </View>
 
-        {/* 4. BILLING SECTIONS TABS */}
-        <View style={styles.tabsContainer}>
+        {/* 4. SECTION: DAILY SCHEDULE MANAGEMENT DIRECTLY ON SCREEN */}
+        <View style={styles.sectionHeaderRow}>
+          <View style={styles.sectionTitleCol}>
+            <Text style={styles.sectionHeading}>DAILY SCHEDULE</Text>
+            <Text style={styles.sectionSubheading}>
+              {displayedSchedules.length} active recurring customer route{displayedSchedules.length === 1 ? '' : 's'}
+            </Text>
+          </View>
+
           <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'READY_TO_BILL' && styles.tabButtonActive]}
+            style={styles.sectionActionPill}
+            onPress={() => navigation?.navigate('DailySchedule')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.sectionActionPillText}>View All ({schedules.length})</Text>
+            <Ionicons name="chevron-forward" size={13} color="#8C331A" />
+          </TouchableOpacity>
+        </View>
+
+        {displayedSchedules.length === 0 ? (
+          <View style={styles.emptyMiniCard}>
+            <Ionicons name="calendar-outline" size={28} color="#D1D5DB" style={{ marginBottom: 6 }} />
+            <Text style={styles.emptyMiniTitle}>No Daily Schedules</Text>
+            <Text style={styles.emptyMiniSub}>Tap "+ Add Schedule" above to configure automated routes.</Text>
+          </View>
+        ) : (
+          displayedSchedules.slice(0, 3).map(sched => {
+            const weekdaysMap = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            const daysLabel = sched.weekdays
+              ? sched.weekdays
+                  .split(',')
+                  .map(d => weekdaysMap[parseInt(d.trim(), 10)])
+                  .filter(Boolean)
+                  .join(', ')
+              : 'Everyday';
+            const timeDisplay = sched.delivery_time ? sched.delivery_time.substring(0, 5) : '10:00';
+
+            return (
+              <View key={sched.id} style={styles.managementCard}>
+                <View style={styles.cardHeaderTop}>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={styles.cardTitle} numberOfLines={1}>{sched.customer_name}</Text>
+                    <Text style={styles.cardSub} numberOfLines={1}>{sched.delivery_address || 'Store Route'}</Text>
+                  </View>
+                  <View style={[styles.statusBadge, sched.is_active ? styles.statusBadgeActive : styles.statusBadgePaused]}>
+                    <Text style={[styles.statusBadgeText, sched.is_active ? styles.statusBadgeTextActive : styles.statusBadgeTextPaused]}>
+                      {sched.is_active ? 'ACTIVE' : 'PAUSED'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Timing & Weekdays Strip */}
+                <View style={styles.inlineMetaStrip}>
+                  <Ionicons name="time-outline" size={13} color="#8C331A" style={{ marginRight: 4 }} />
+                  <Text style={styles.inlineMetaHighlight}>{timeDisplay}</Text>
+                  <Text style={styles.inlineMetaDivider}>•</Text>
+                  <Ionicons name="calendar-outline" size={12} color="#6B7280" style={{ marginRight: 4 }} />
+                  <Text style={styles.inlineMetaText}>{daysLabel}</Text>
+                </View>
+
+                <View style={styles.partnerRow}>
+                  <Ionicons name="bicycle-outline" size={14} color="#8C331A" style={{ marginRight: 5 }} />
+                  <Text style={styles.partnerText}>
+                    Fixed Partner: <Text style={styles.partnerTextBold}>{sched.delivery_partner_name}</Text>
+                  </Text>
+                </View>
+
+                {/* Schedule Actions */}
+                <View style={styles.managementActionRow}>
+                  <TouchableOpacity
+                    style={styles.miniActionBtn}
+                    onPress={() => navigation?.navigate('CreateEditDailySchedule', { schedule: sched })}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="create-outline" size={13} color="#8C331A" style={{ marginRight: 4 }} />
+                    <Text style={[styles.miniActionBtnText, { color: '#8C331A' }]}>Edit</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.miniActionBtn}
+                    onPress={() => handleToggleSchedulePause(sched)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={sched.is_active ? 'pause-circle-outline' : 'play-circle-outline'}
+                      size={13}
+                      color={sched.is_active ? '#D97706' : '#10B981'}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text
+                      style={[
+                        styles.miniActionBtnText,
+                        sched.is_active ? { color: '#D97706' } : { color: '#10B981' },
+                      ]}
+                    >
+                      {sched.is_active ? 'Pause' : 'Resume'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          })
+        )}
+
+        {/* 5. SECTION: DAILY BILLING MANAGEMENT DIRECTLY ON SCREEN */}
+        <View style={[styles.sectionHeaderRow, { marginTop: 20 }]}>
+          <View style={styles.sectionTitleCol}>
+            <Text style={styles.sectionHeading}>DAILY BILLING</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+              <TouchableOpacity
+                style={styles.dateChip}
+                onPress={() => setShowDatePickerModal(true)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="calendar-outline" size={12} color="#8C331A" style={{ marginRight: 4 }} />
+                <Text style={styles.dateChipText}>{formattedDisplayDate}</Text>
+                <Ionicons name="chevron-down" size={12} color="#8C331A" style={{ marginLeft: 2 }} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
+        {/* Compact Filters for Daily Billing: Ready to Bill / Generated / Pending Approval */}
+        <View style={styles.filterTabsRow}>
+          <TouchableOpacity
+            style={[styles.filterTab, activeTab === 'READY_TO_BILL' && styles.filterTabActive]}
             onPress={() => setActiveTab('READY_TO_BILL')}
             activeOpacity={0.7}
           >
-            <Text style={[styles.tabText, activeTab === 'READY_TO_BILL' && styles.tabTextActive]}>
+            <Text style={[styles.filterTabText, activeTab === 'READY_TO_BILL' && styles.filterTabTextActive]}>
               Ready to Bill ({readyToBillOrders.length})
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'GENERATED_BILLS' && styles.tabButtonActive]}
+            style={[styles.filterTab, activeTab === 'GENERATED_BILLS' && styles.filterTabActive]}
             onPress={() => setActiveTab('GENERATED_BILLS')}
             activeOpacity={0.7}
           >
-            <Text style={[styles.tabText, activeTab === 'GENERATED_BILLS' && styles.tabTextActive]}>
+            <Text style={[styles.filterTabText, activeTab === 'GENERATED_BILLS' && styles.filterTabTextActive]}>
               Generated ({generatedInvoices.length})
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'PENDING_APPROVAL' && styles.tabButtonActive]}
+            style={[styles.filterTab, activeTab === 'PENDING_APPROVAL' && styles.filterTabActive]}
             onPress={() => setActiveTab('PENDING_APPROVAL')}
             activeOpacity={0.7}
           >
-            <Text style={[styles.tabText, activeTab === 'PENDING_APPROVAL' && styles.tabTextActive]}>
+            <Text style={[styles.filterTabText, activeTab === 'PENDING_APPROVAL' && styles.filterTabTextActive]}>
               Pending Approval ({pendingApprovalOrders.length})
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* 5. LIST CONTENT */}
+        {/* Daily Bills Content */}
         {loading ? (
-          <ActivityIndicator size="large" color={colors.primary} style={{ marginVertical: 32 }} />
-        ) : filteredList.length === 0 ? (
+          <ActivityIndicator size="large" color="#8C331A" style={{ marginVertical: 32 }} />
+        ) : filteredBillingList.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Ionicons
               name={
                 activeTab === 'READY_TO_BILL'
                   ? 'checkmark-done-circle-outline'
                   : activeTab === 'GENERATED_BILLS'
-                    ? 'receipt-outline'
-                    : 'time-outline'
+                  ? 'receipt-outline'
+                  : 'time-outline'
               }
-              size={42}
-              color={colors.gray300}
+              size={36}
+              color="#D1D5DB"
               style={{ marginBottom: 8 }}
             />
             <Text style={styles.emptyTitle}>
               {activeTab === 'READY_TO_BILL'
                 ? 'No Orders Ready to Bill'
                 : activeTab === 'GENERATED_BILLS'
-                  ? 'No Generated Bills Yet'
-                  : 'No Orders Pending Approval'}
+                ? 'No Generated Bills Yet'
+                : 'No Orders Pending Approval'}
             </Text>
             <Text style={styles.emptySub}>
               {activeTab === 'READY_TO_BILL'
                 ? 'Orders delivered by partners will appear here for one-click invoice generation.'
                 : activeTab === 'GENERATED_BILLS'
-                  ? 'Issued invoices for this date will be listed here with receipts and PDF access.'
-                  : 'All orders for this date are approved or delivered.'}
+                ? 'Issued invoices for this date will appear here.'
+                : 'No pending partner delivery actuals.'}
             </Text>
           </View>
         ) : (
-          filteredList.map((item: any) => {
-            // Render Ready to Bill Order Card
+          filteredBillingList.map((item: any) => {
+            // TAB 1: Ready to Bill Card
             if (activeTab === 'READY_TO_BILL') {
               const order = item as BackendOrder;
               const itemsText = (order.items || [])
@@ -421,42 +543,44 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
                 .join(' • ');
 
               return (
-                <View key={order.id} style={styles.orderCard}>
-                  <View style={styles.cardHeaderRow}>
+                <View key={order.id} style={styles.managementCard}>
+                  <View style={styles.cardHeaderTop}>
                     <View>
                       <Text style={styles.cardIdText}>Order #{order.id}</Text>
-                      <Text style={styles.customerNameText}>{order.company_name || order.customer_name}</Text>
+                      <Text style={styles.cardTitle}>{order.company_name || order.customer_name}</Text>
                     </View>
-                    <View style={styles.approvedBadge}>
-                      <Ionicons name="checkmark-circle" size={13} color={colors.approved} style={{ marginRight: 3 }} />
-                      <Text style={styles.approvedBadgeText}>DELIVERED</Text>
+                    <View style={styles.deliveredBadge}>
+                      <Ionicons name="checkmark-circle" size={12} color="#059669" style={{ marginRight: 3 }} />
+                      <Text style={styles.deliveredBadgeText}>DELIVERED</Text>
                     </View>
                   </View>
 
-                  <Text style={styles.quantitiesSummary} numberOfLines={2}>
-                    {itemsText || 'Approved products delivered'}
+                  <Text style={styles.itemsSummaryText} numberOfLines={2}>
+                    {itemsText || 'Delivered products ready for invoicing'}
                   </Text>
 
-                  <View style={styles.cardFooterRow}>
+                  <View style={styles.billFooterRow}>
                     <View>
-                      <Text style={styles.billAmountLabel}>Billable Amount</Text>
-                      <Text style={styles.billAmountValue}>₹{parseFloat(order.total_amount || '0').toLocaleString('en-IN')}</Text>
+                      <Text style={styles.amountLabel}>Billable Amount</Text>
+                      <Text style={styles.amountValue}>
+                        ₹{parseFloat(order.total_amount || '0').toLocaleString('en-IN')}
+                      </Text>
                     </View>
 
                     <TouchableOpacity
-                      style={styles.generateInvoiceBtn}
+                      style={styles.primaryBillBtn}
                       onPress={() => handleOpenInvoicePreview(order)}
                       activeOpacity={0.85}
                     >
-                      <Ionicons name="receipt-outline" size={15} color={colors.white} style={{ marginRight: 5 }} />
-                      <Text style={styles.generateInvoiceBtnText}>Generate Invoice</Text>
+                      <Ionicons name="receipt-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.primaryBillBtnText}>Generate Invoice</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
               );
             }
 
-            // Render Generated Bills Card
+            // TAB 2: Generated Invoices Card
             if (activeTab === 'GENERATED_BILLS') {
               const invoice = item as BackendInvoice;
               const custName = invoice.customer_name || (invoice as any).name || 'Customer';
@@ -466,27 +590,27 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
               const isPaid = invoice.status === 'paid' || (invoice as any).status === 'PAID';
 
               return (
-                <View key={invoice.id} style={styles.orderCard}>
-                  <View style={styles.cardHeaderRow}>
+                <View key={invoice.id} style={styles.managementCard}>
+                  <View style={styles.cardHeaderTop}>
                     <View>
                       <Text style={styles.cardIdText}>{invNum}</Text>
-                      <Text style={styles.customerNameText}>{custName}</Text>
+                      <Text style={styles.cardTitle}>{custName}</Text>
                     </View>
-                    <View style={[styles.statusBadge, isPaid ? styles.statusBadgePaid : styles.statusBadgePending]}>
-                      <Text style={[styles.statusBadgeText, isPaid ? styles.statusBadgeTextPaid : styles.statusBadgeTextPending]}>
+                    <View style={[styles.statusBadge, isPaid ? styles.statusBadgeActive : styles.statusBadgePaused]}>
+                      <Text style={[styles.statusBadgeText, isPaid ? styles.statusBadgeTextActive : styles.statusBadgeTextPaused]}>
                         {isPaid ? 'PAID' : 'ISSUED'}
                       </Text>
                     </View>
                   </View>
 
-                  <Text style={styles.quantitiesSummary}>
+                  <Text style={styles.itemsSummaryText}>
                     {invoice.notes || `Daily Invoice debited to ${custName}`}
                   </Text>
 
-                  <View style={styles.cardFooterRow}>
+                  <View style={styles.billFooterRow}>
                     <View>
-                      <Text style={styles.billAmountLabel}>Invoiced Amount</Text>
-                      <Text style={styles.billAmountValue}>₹{cleanAmount.toLocaleString('en-IN')}</Text>
+                      <Text style={styles.amountLabel}>Invoiced Amount</Text>
+                      <Text style={styles.amountValue}>₹{cleanAmount.toLocaleString('en-IN')}</Text>
                     </View>
 
                     <TouchableOpacity
@@ -494,7 +618,7 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
                       onPress={() => navigation?.navigate('InvoiceDetail', { invoice })}
                       activeOpacity={0.7}
                     >
-                      <Ionicons name="eye-outline" size={15} color={colors.primary} style={{ marginRight: 4 }} />
+                      <Ionicons name="eye-outline" size={14} color="#8C331A" style={{ marginRight: 4 }} />
                       <Text style={styles.viewInvoiceBtnText}>View Invoice</Text>
                     </TouchableOpacity>
                   </View>
@@ -502,42 +626,44 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
               );
             }
 
-            // Render Pending Approval Order Card
+            // TAB 3: Pending Approval Order Card
             const order = item as BackendOrder;
             const itemsText = (order.items || [])
               .map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`)
               .join(' • ');
 
             return (
-              <View key={order.id} style={styles.orderCard}>
-                <View style={styles.cardHeaderRow}>
+              <View key={order.id} style={styles.managementCard}>
+                <View style={styles.cardHeaderTop}>
                   <View>
                     <Text style={styles.cardIdText}>Order #{order.id}</Text>
-                    <Text style={styles.customerNameText}>{order.company_name || order.customer_name}</Text>
+                    <Text style={styles.cardTitle}>{order.company_name || order.customer_name}</Text>
                   </View>
                   <View style={styles.pendingBadge}>
-                    <Ionicons name="time-outline" size={13} color={colors.warning} style={{ marginRight: 3 }} />
+                    <Ionicons name="time-outline" size={12} color="#D97706" style={{ marginRight: 3 }} />
                     <Text style={styles.pendingBadgeText}>{order.status.replace(/_/g, ' ').toUpperCase()}</Text>
                   </View>
                 </View>
 
-                <Text style={styles.quantitiesSummary} numberOfLines={2}>
-                  {itemsText || 'Order placed • Pending delivery & approval'}
+                <Text style={styles.itemsSummaryText} numberOfLines={2}>
+                  {itemsText || 'Order submitted • Pending Owner review & approval'}
                 </Text>
 
-                <View style={styles.cardFooterRow}>
+                <View style={styles.billFooterRow}>
                   <View>
-                    <Text style={styles.billAmountLabel}>Estimated Value</Text>
-                    <Text style={styles.billAmountValue}>₹{parseFloat(order.total_amount || '0').toLocaleString('en-IN')}</Text>
+                    <Text style={styles.amountLabel}>Estimated Value</Text>
+                    <Text style={styles.amountValue}>
+                      ₹{parseFloat(order.total_amount || '0').toLocaleString('en-IN')}
+                    </Text>
                   </View>
 
                   <TouchableOpacity
-                    style={styles.billNowBtn}
+                    style={styles.reviewApproveBtn}
                     onPress={() => navigation?.navigate('OrderDetails', { orderId: order.id, order })}
                     activeOpacity={0.7}
                   >
-                    <Ionicons name="checkmark-done-circle-outline" size={15} color={colors.white} style={{ marginRight: 4 }} />
-                    <Text style={styles.billNowBtnText}>Review & Approve</Text>
+                    <Ionicons name="checkmark-done-circle-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={styles.reviewApproveBtnText}>Review & Approve</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -546,7 +672,7 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
         )}
       </ScrollView>
 
-      {/* --- DATE PICKER QUICK MODAL --- */}
+      {/* Date Picker Modal */}
       <Modal visible={showDatePickerModal} transparent animationType="fade" onRequestClose={() => setShowDatePickerModal(false)}>
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowDatePickerModal(false)} />
@@ -557,105 +683,88 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
               { label: 'Yesterday', offset: -1 },
               { label: '2 Days Ago', offset: -2 },
               { label: '3 Days Ago', offset: -3 },
-            ].map(d => (
+            ].map(item => (
               <TouchableOpacity
-                key={d.label}
-                style={styles.datePickerOption}
-                onPress={() => handleDateSelect(d.offset)}
+                key={item.offset}
+                style={styles.dateOptionBtn}
+                onPress={() => handleDateSelect(item.offset)}
                 activeOpacity={0.7}
               >
-                <Text style={styles.datePickerOptionText}>{d.label}</Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                <Text style={styles.dateOptionText}>{item.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
         </View>
       </Modal>
 
-      {/* --- MANUAL INVOICE REVIEW MODAL --- */}
+      {/* Invoice Preview Modal */}
       <Modal visible={previewModalVisible} transparent animationType="slide" onRequestClose={() => setPreviewModalVisible(false)}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            <View style={styles.modalSheetHeader}>
+          <View style={styles.previewCard}>
+            <View style={styles.previewHeader}>
               <View>
-                <Text style={styles.modalSheetTitle}>Daily Invoice Review</Text>
-                <Text style={styles.modalSheetSubtitle}>
+                <Text style={styles.previewTitle}>Review Daily Invoice</Text>
+                <Text style={styles.previewSub}>
                   Order #{selectedOrder?.id} • {selectedOrder?.company_name || selectedOrder?.customer_name}
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => setPreviewModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close" size={22} color={colors.textSecondary} />
+              <TouchableOpacity onPress={() => setPreviewModalVisible(false)}>
+                <Ionicons name="close" size={22} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
             {previewLoading ? (
-              <View style={{ height: 180, justifyContent: 'center', alignItems: 'center' }}>
-                <ActivityIndicator size="large" color={colors.primary} />
-                <Text style={{ marginTop: 8, color: colors.textSecondary, fontSize: 12 }}>Resolving approved quantities...</Text>
-              </View>
+              <ActivityIndicator size="large" color="#8C331A" style={{ marginVertical: 30 }} />
             ) : invoicePreview ? (
-              <View>
-                <View style={styles.auditNotice}>
-                  <Ionicons name="shield-checkmark" size={15} color={colors.approved} style={{ marginRight: 6 }} />
-                  <Text style={styles.auditNoticeText}>Invoicing confirmed delivery actuals & resolved product rates.</Text>
-                </View>
-
-                <FlatList
-                  data={invoicePreview.items}
-                  keyExtractor={it => String(it.product_id)}
-                  style={{ maxHeight: 200, marginVertical: 8 }}
-                  renderItem={({ item: it }) => (
-                    <View style={styles.previewItemRow}>
+              <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+                <View style={styles.previewItemsTable}>
+                  {(invoicePreview.items || []).map((it, idx) => (
+                    <View key={idx} style={styles.previewItemRow}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.previewItemName}>{it.product_name}</Text>
-                        <Text style={styles.previewItemQty}>
-                          Delivered: {it.delivered_quantity} units @ ₹{it.effective_rate}/ea
+                        <Text style={styles.previewItemSub}>
+                          Delivered: {it.delivered_quantity} units @ ₹{it.effective_rate}
                         </Text>
                       </View>
                       <Text style={styles.previewItemTotal}>₹{it.line_total}</Text>
                     </View>
-                  )}
-                />
-
-                <View style={styles.modalTotalBox}>
-                  <View style={styles.modalTotalRow}>
-                    <Text style={styles.modalTotalLabel}>Subtotal</Text>
-                    <Text style={styles.modalTotalVal}>₹{invoicePreview.subtotal}</Text>
-                  </View>
-                  {parseFloat(invoicePreview.discount_total || '0') > 0 && (
-                    <View style={styles.modalTotalRow}>
-                      <Text style={[styles.modalTotalLabel, { color: colors.approved }]}>Approved Discount</Text>
-                      <Text style={[styles.modalTotalVal, { color: colors.approved }]}>-₹{invoicePreview.discount_total}</Text>
-                    </View>
-                  )}
-                  <View style={[styles.modalTotalRow, { borderTopWidth: 1, borderTopColor: colors.borderLight, paddingTop: 6, marginTop: 4 }]}>
-                    <Text style={styles.modalGrandLabel}>Final Invoiced Total</Text>
-                    <Text style={styles.modalGrandVal}>₹{invoicePreview.grand_total}</Text>
-                  </View>
+                  ))}
                 </View>
 
-                <TouchableOpacity
-                  style={styles.confirmIssueBtn}
-                  onPress={handleConfirmGenerateInvoice}
-                  disabled={generating}
-                  activeOpacity={0.85}
-                >
-                  {generating ? (
-                    <ActivityIndicator color={colors.white} />
-                  ) : (
-                    <>
-                      <Ionicons name="checkmark-circle" size={18} color={colors.white} style={{ marginRight: 6 }} />
-                      <Text style={styles.confirmIssueBtnText}>Confirm & Issue Invoice</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
+                <View style={styles.previewTotalsRow}>
+                  <Text style={styles.previewTotalsLabel}>Invoice Grand Total</Text>
+                  <Text style={styles.previewTotalsValue}>₹{invoicePreview.grand_total}</Text>
+                </View>
+              </ScrollView>
             ) : null}
+
+            <View style={styles.previewActions}>
+              <TouchableOpacity
+                style={styles.previewCancelBtn}
+                onPress={() => setPreviewModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.previewCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.previewConfirmBtn}
+                onPress={handleConfirmGenerateInvoice}
+                disabled={generating || previewLoading}
+                activeOpacity={0.85}
+              >
+                {generating ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.previewConfirmText}>Confirm & Issue</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
 
-      {/* --- CONFIRM DIALOG --- */}
+      {/* Confirmation Dialog */}
       <ConfirmDialog
         visible={confirmDialogConfig.visible}
         title={confirmDialogConfig.title}
@@ -674,482 +783,591 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
-  },
-  topHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.cardBackground,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  screenTitle: {
-    ...typography.heading1,
-    color: colors.textPrimary,
-  },
-  dateSelectorBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F7EFE9',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: '#F5C6B8',
-  },
-  dateSelectorText: {
-    ...typography.caption,
-    fontFamily: 'Inter-SemiBold',
-    color: colors.primary,
-    fontWeight: '700',
-  },
-  newBillBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.primary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 7,
-    borderRadius: radius.md,
-    ...shadows.sm,
-  },
-  newBillBtnText: {
-    ...typography.badge,
-    color: colors.white,
-    fontWeight: '700',
+    backgroundColor: '#FAF8F5',
   },
   scrollContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.xxl,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 40,
   },
 
-  /* Summary Grid */
-  summaryGrid: {
+  /* 2 Prominent Side-by-Side Action Cards */
+  actionCardsRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-    marginBottom: spacing.md,
+    gap: 12,
+    marginBottom: 16,
   },
-  summaryCard: {
-    width: '48.5%',
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.md,
-    padding: spacing.sm,
+  prominentCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
     borderWidth: 1,
-    borderColor: colors.border,
-    ...shadows.sm,
+    borderColor: '#EFEAE4',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+    justifyContent: 'space-between',
   },
-  summaryLabel: {
-    fontSize: 10,
+  cardIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  cardMainTitle: {
+    fontSize: 14,
     fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: colors.textMuted,
-    marginBottom: 2,
-    letterSpacing: 0.5,
+    color: '#1F2937',
   },
-  summaryValue: {
-    fontSize: 18,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '800',
-    color: colors.textPrimary,
-    marginBottom: 1,
-  },
-  summarySub: {
+  cardMainSub: {
     fontSize: 10,
-    color: colors.textSecondary,
+    fontFamily: 'Inter-Regular',
+    color: '#6B7280',
+    marginTop: 2,
+    lineHeight: 14,
+    minHeight: 28,
+  },
+  cardActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#8C331A',
+    paddingVertical: 7,
+    borderRadius: 8,
+    marginTop: 10,
+  },
+  cardActionButtonText: {
+    fontSize: 11,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 
   /* Search Bar */
-  searchBarWrapper: {
+  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
-    height: 40,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 44,
     borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.sm,
+    borderColor: '#EFEAE4',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
   },
   searchInput: {
     flex: 1,
-    ...typography.body,
     fontSize: 13,
-    color: colors.textPrimary,
+    fontFamily: 'Inter-Regular',
+    color: '#1F2937',
     padding: 0,
   },
 
-  /* Tabs */
-  tabsContainer: {
+  /* Section Header Rows */
+  sectionHeaderRow: {
     flexDirection: 'row',
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.md,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.md,
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 7,
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.sm,
+    marginBottom: 10,
   },
-  tabButtonActive: {
-    backgroundColor: colors.primary,
+  sectionTitleCol: {
+    flex: 1,
   },
-  tabText: {
-    ...typography.badge,
+  sectionHeading: {
     fontSize: 11,
-    color: colors.textSecondary,
-    fontWeight: '600',
+    fontFamily: 'Inter-Bold',
+    fontWeight: '800',
+    color: '#8C331A',
+    letterSpacing: 0.5,
   },
-  tabTextActive: {
-    color: colors.white,
+  sectionSubheading: {
+    fontSize: 11,
+    fontFamily: 'Inter-Regular',
+    color: '#6B7280',
+    marginTop: 1,
+  },
+  sectionActionPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  sectionActionPillText: {
+    fontSize: 11,
+    fontFamily: 'Inter-SemiBold',
+    color: '#8C331A',
     fontWeight: '700',
+    marginRight: 2,
+  },
+  dateChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#F5C6B8',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  dateChipText: {
+    fontSize: 11,
+    fontFamily: 'Inter-SemiBold',
+    fontWeight: '700',
+    color: '#8C331A',
   },
 
-  /* Cards */
-  orderCard: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
-    padding: spacing.md,
+  /* Management Card Styles */
+  managementCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: colors.border,
-    ...shadows.sm,
-    marginBottom: spacing.sm,
+    borderColor: '#EFEAE4',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  cardHeaderRow: {
+  cardHeaderTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   cardIdText: {
-    ...typography.caption,
-    fontFamily: 'Inter-SemiBold',
-    color: colors.textMuted,
+    fontSize: 10,
+    fontFamily: 'Inter-Bold',
+    color: '#9CA3AF',
+    marginBottom: 1,
   },
-  customerNameText: {
-    ...typography.body,
+  cardTitle: {
+    fontSize: 14,
     fontFamily: 'Inter-Bold',
     fontWeight: '700',
-    color: colors.textPrimary,
+    color: '#1F2937',
   },
-  approvedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.approvedBackground,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
-  },
-  approvedBadgeText: {
-    fontSize: 10,
-    fontFamily: 'Inter-Bold',
-    color: colors.approved,
-    fontWeight: '800',
-  },
-  pendingBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.warningBg,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
-  },
-  pendingBadgeText: {
-    fontSize: 10,
-    fontFamily: 'Inter-Bold',
-    color: colors.warning,
-    fontWeight: '800',
+  cardSub: {
+    fontSize: 11,
+    fontFamily: 'Inter-Regular',
+    color: '#6B7280',
+    marginTop: 1,
   },
   statusBadge: {
     paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: radius.sm,
+    borderRadius: 10,
   },
-  statusBadgePaid: {
-    backgroundColor: colors.approvedBackground,
+  statusBadgeActive: {
+    backgroundColor: '#ECFDF5',
   },
-  statusBadgePending: {
-    backgroundColor: '#FAF4ED',
-    borderWidth: 1,
-    borderColor: '#F5C6B8',
+  statusBadgePaused: {
+    backgroundColor: '#F3F4F6',
   },
   statusBadgeText: {
-    fontSize: 10,
+    fontSize: 9,
     fontFamily: 'Inter-Bold',
     fontWeight: '800',
   },
-  statusBadgeTextPaid: {
-    color: colors.approved,
+  statusBadgeTextActive: {
+    color: '#065F46',
   },
-  statusBadgeTextPending: {
-    color: colors.primary,
+  statusBadgeTextPaused: {
+    color: '#4B5563',
   },
-  quantitiesSummary: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginVertical: 4,
+  deliveredBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
   },
-  cardFooterRow: {
+  deliveredBadgeText: {
+    fontSize: 9,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  pendingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  pendingBadgeText: {
+    fontSize: 9,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  inlineMetaStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  inlineMetaHighlight: {
+    fontSize: 12,
+    fontFamily: 'Inter-Bold',
+    color: '#8C331A',
+    fontWeight: '700',
+  },
+  inlineMetaDivider: {
+    marginHorizontal: 6,
+    color: '#D1D5DB',
+  },
+  inlineMetaText: {
+    fontSize: 11,
+    fontFamily: 'Inter-Medium',
+    color: '#4B5563',
+  },
+  partnerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  partnerText: {
+    fontSize: 11,
+    fontFamily: 'Inter-Regular',
+    color: '#4B5563',
+  },
+  partnerTextBold: {
+    fontFamily: 'Inter-SemiBold',
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  managementActionRow: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: '#F3EFEA',
+    paddingTop: 8,
+    gap: 8,
+  },
+  miniActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  miniActionBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter-SemiBold',
+    fontWeight: '700',
+  },
+  itemsSummaryText: {
+    fontSize: 12,
+    fontFamily: 'Inter-Regular',
+    color: '#4B5563',
+    lineHeight: 16,
+    marginBottom: 8,
+  },
+  billFooterRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 4,
-    paddingTop: 6,
     borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
+    borderTopColor: '#F3EFEA',
+    paddingTop: 8,
   },
-  billAmountLabel: {
+  amountLabel: {
     fontSize: 10,
-    color: colors.textMuted,
+    fontFamily: 'Inter-Regular',
+    color: '#6B7280',
   },
-  billAmountValue: {
-    ...typography.body,
+  amountValue: {
+    fontSize: 14,
     fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: colors.textPrimary,
+    color: '#8C331A',
   },
-  generateInvoiceBtn: {
+  primaryBillBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.primary,
-    paddingHorizontal: spacing.sm,
+    backgroundColor: '#8C331A',
+    paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: radius.sm,
-    ...shadows.sm,
+    borderRadius: 8,
   },
-  generateInvoiceBtnText: {
-    ...typography.badge,
+  primaryBillBtnText: {
     fontSize: 11,
-    color: colors.white,
+    fontFamily: 'Inter-Bold',
     fontWeight: '700',
-  },
-  billNowBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.primary,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: radius.sm,
-    ...shadows.sm,
-  },
-  billNowBtnText: {
-    ...typography.badge,
-    fontSize: 11,
-    color: colors.white,
-    fontWeight: '700',
+    color: '#FFFFFF',
   },
   viewInvoiceBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FAF4ED',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: radius.sm,
+    backgroundColor: '#FAF8F5',
     borderWidth: 1,
-    borderColor: '#F5C6B8',
+    borderColor: '#EFEAE4',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
   viewInvoiceBtnText: {
-    ...typography.badge,
     fontSize: 11,
-    color: colors.primary,
+    fontFamily: 'Inter-SemiBold',
     fontWeight: '700',
+    color: '#8C331A',
   },
-  awaitingApprovalTag: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    backgroundColor: '#F9FAFB',
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
+  reviewApproveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D97706',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
-  awaitingApprovalText: {
-    fontSize: 10,
-    color: colors.textMuted,
-    fontStyle: 'italic',
+  reviewApproveBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 
-  /* Empty state */
-  emptyContainer: {
-    padding: spacing.xl,
+  /* Compact Filter Tabs for Daily Billing */
+  filterTabsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 10,
+  },
+  filterTab: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 8,
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+  },
+  filterTabActive: {
+    backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
+  },
+  filterTabText: {
+    fontSize: 10,
+    fontFamily: 'Inter-Medium',
+    color: '#6B7280',
+  },
+  filterTabTextActive: {
+    color: '#FFFFFF',
+    fontFamily: 'Inter-Bold',
+    fontWeight: '700',
+  },
+
+  /* Empty States */
+  emptyMiniCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-    marginTop: spacing.sm,
+    marginBottom: 10,
+  },
+  emptyMiniTitle: {
+    fontSize: 12,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '700',
+    color: '#4B5563',
+  },
+  emptyMiniSub: {
+    fontSize: 10,
+    fontFamily: 'Inter-Regular',
+    color: '#9CA3AF',
+    marginTop: 2,
+  },
+  emptyContainer: {
+    paddingVertical: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyTitle: {
-    ...typography.body,
+    fontSize: 14,
+    fontFamily: 'Inter-Bold',
     fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 4,
+    color: '#1F2937',
   },
   emptySub: {
-    ...typography.caption,
-    color: colors.textSecondary,
+    fontSize: 11,
+    fontFamily: 'Inter-Regular',
+    color: '#6B7280',
     textAlign: 'center',
-    lineHeight: 18,
+    marginTop: 3,
   },
 
-  /* Date Picker Modal */
+  /* Modals */
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: spacing.lg,
+    padding: 16,
   },
   datePickerCard: {
-    width: '100%',
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    ...shadows.lg,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    width: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
   },
   datePickerTitle: {
-    ...typography.heading2,
-    color: colors.textPrimary,
+    fontSize: 14,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    marginBottom: spacing.sm,
+    color: '#1F2937',
+    marginBottom: 12,
+    textAlign: 'center',
   },
-  datePickerOption: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
+  dateOptionBtn: {
+    paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
+    borderBottomColor: '#F3EFEA',
   },
-  datePickerOptionText: {
-    ...typography.body,
-    color: colors.textPrimary,
-    fontWeight: '600',
+  dateOptionText: {
+    fontSize: 13,
+    fontFamily: 'Inter-Medium',
+    color: '#1F2937',
+    textAlign: 'center',
   },
-
-  /* Invoice Review Modal */
-  modalSheet: {
+  previewCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
     width: '100%',
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    ...shadows.lg,
-    maxHeight: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
   },
-  modalSheetHeader: {
+  previewHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.sm,
-    paddingBottom: spacing.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
+    marginBottom: 12,
   },
-  modalSheetTitle: {
-    ...typography.heading2,
-    color: colors.textPrimary,
+  previewTitle: {
+    fontSize: 16,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
+    color: '#1F2937',
   },
-  modalSheetSubtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  auditNotice: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.approvedBackground,
-    padding: spacing.xs,
-    borderRadius: radius.sm,
-    marginBottom: spacing.xs,
-  },
-  auditNoticeText: {
-    ...typography.caption,
+  previewSub: {
     fontSize: 11,
-    color: colors.approved,
-    flex: 1,
+    fontFamily: 'Inter-Regular',
+    color: '#6B7280',
+    marginTop: 1,
+  },
+  previewItemsTable: {
+    borderTopWidth: 1,
+    borderTopColor: '#F3EFEA',
   },
   previewItemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
+    borderBottomColor: '#F3EFEA',
   },
   previewItemName: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textPrimary,
+    fontSize: 13,
+    fontFamily: 'Inter-Bold',
+    color: '#1F2937',
   },
-  previewItemQty: {
-    fontSize: 10,
-    color: colors.textSecondary,
+  previewItemSub: {
+    fontSize: 11,
+    fontFamily: 'Inter-Regular',
+    color: '#6B7280',
+    marginTop: 2,
   },
   previewItemTotal: {
-    ...typography.caption,
+    fontSize: 13,
     fontFamily: 'Inter-Bold',
     fontWeight: '700',
-    color: colors.textPrimary,
+    color: '#8C331A',
   },
-  modalTotalBox: {
-    backgroundColor: '#FAF8F5',
-    padding: spacing.sm,
-    borderRadius: radius.md,
-    marginVertical: spacing.xs,
-  },
-  modalTotalRow: {
+  previewTotalsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginVertical: 2,
+    paddingTop: 10,
+    marginTop: 6,
   },
-  modalTotalLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
-  modalTotalVal: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  modalGrandLabel: {
-    ...typography.body,
+  previewTotalsLabel: {
+    fontSize: 14,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: colors.textPrimary,
+    color: '#1F2937',
   },
-  modalGrandVal: {
-    ...typography.body,
+  previewTotalsValue: {
+    fontSize: 17,
+    fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: colors.primary,
+    color: '#8C331A',
   },
-  confirmIssueBtn: {
+  previewActions: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    paddingVertical: 12,
-    marginTop: spacing.xs,
-    ...shadows.sm,
+    gap: 8,
+    marginTop: 16,
   },
-  confirmIssueBtnText: {
-    ...typography.badge,
-    fontSize: 13,
-    color: colors.white,
-    fontWeight: '800',
+  previewCancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+  },
+  previewCancelText: {
+    fontSize: 12,
+    fontFamily: 'Inter-SemiBold',
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  previewConfirmBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#8C331A',
+    alignItems: 'center',
+  },
+  previewConfirmText: {
+    fontSize: 12,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });
