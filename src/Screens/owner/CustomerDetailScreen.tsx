@@ -10,16 +10,20 @@ import {
   Linking,
   RefreshControl,
   Platform,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import billingService, { BackendInvoice, BillingCustomer } from '../../services/billing.service';
 import orderService, {
   BackendOrder,
+  DailyDeliverySchedule,
+  CreateDailySchedulePayload,
 } from '../../services/order.service';
 import { useApp } from '../../context/AppContext';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 import { CollectPaymentModal, type CollectPaymentFormData } from '../../components/payment';
+import { DailyScheduleModal } from '../../components/schedule';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import AppToast from '../../utils/toast';
 import { colors, typography, radius, spacing, shadows } from '../../theme';
@@ -58,6 +62,16 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
   // Recent Orders
   const [recentOrders, setRecentOrders] = useState<BackendOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
+
+  // Daily Delivery Schedule State
+  const [schedules, setSchedules] = useState<DailyDeliverySchedule[]>([]);
+  const [schedulesLoading, setSchedulesLoading] = useState<boolean>(false);
+  const [scheduleModalVisible, setScheduleModalVisible] = useState<boolean>(false);
+  const [editingSchedule, setEditingSchedule] = useState<DailyDeliverySchedule | null>(null);
+  const [cancellingDateSchedule, setCancellingDateSchedule] = useState<DailyDeliverySchedule | null>(null);
+  const [cancelDateInput, setCancelDateInput] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [cancelModalVisible, setCancelModalVisible] = useState<boolean>(false);
+  const [cancelReasonInput, setCancelReasonInput] = useState<string>('');
 
   // Modals & Action States
   const [editCustomerModalVisible, setEditCustomerModalVisible] = useState<boolean>(false);
@@ -139,18 +153,34 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     }
   }, [customerId]);
 
+  // 4. Fetch Daily Delivery Schedules
+  const fetchSchedules = useCallback(async () => {
+    if (!customerId) return;
+    try {
+      setSchedulesLoading(true);
+      const list = await orderService.getDailySchedules({ customer: customerId }).catch(() => []);
+      setSchedules(list || []);
+    } catch (_err) {
+      // Handled silently
+    } finally {
+      setSchedulesLoading(false);
+    }
+  }, [customerId]);
+
   // Initial and Focus-based Loading
   useEffect(() => {
     const unsubscribe = navigation.addListener?.('focus', () => {
       fetchCustomerData();
       fetchLedgerAndInvoices();
       fetchOrders();
+      fetchSchedules();
     });
     fetchCustomerData();
     fetchLedgerAndInvoices();
     fetchOrders();
+    fetchSchedules();
     return unsubscribe;
-  }, [navigation, fetchCustomerData, fetchLedgerAndInvoices, fetchOrders]);
+  }, [navigation, fetchCustomerData, fetchLedgerAndInvoices, fetchOrders, fetchSchedules]);
 
   // Pull to refresh
   const onRefresh = useCallback(() => {
@@ -159,8 +189,9 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
       fetchCustomerData(),
       fetchLedgerAndInvoices(),
       fetchOrders(),
+      fetchSchedules(),
     ]).finally(() => setRefreshing(false));
-  }, [fetchCustomerData, fetchLedgerAndInvoices, fetchOrders]);
+  }, [fetchCustomerData, fetchLedgerAndInvoices, fetchOrders, fetchSchedules]);
 
   // Edit Customer
   const handleEditCustomerSubmit = async (formData: AddCustomerFormData) => {
@@ -264,6 +295,55 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
       customer: customer || initialCustomer,
       prefilledItems,
     });
+  };
+
+  // Schedule Actions
+  const handleOpenCreateSchedule = () => {
+    setEditingSchedule(null);
+    setScheduleModalVisible(true);
+  };
+
+  const handleOpenEditSchedule = (sched: DailyDeliverySchedule) => {
+    setEditingSchedule(sched);
+    setScheduleModalVisible(true);
+  };
+
+  const handleSaveSchedule = async (payload: CreateDailySchedulePayload) => {
+    if (editingSchedule) {
+      await orderService.updateDailySchedule(editingSchedule.id, payload);
+      AppToast.success('Schedule Updated', 'Customer delivery schedule updated successfully.');
+    } else {
+      await orderService.createDailySchedule(payload);
+      AppToast.success('Schedule Created', 'Daily delivery schedule activated for this customer.');
+    }
+    fetchSchedules();
+  };
+
+  const handleOpenCancelDateModal = (sched: DailyDeliverySchedule) => {
+    setCancellingDateSchedule(sched);
+    setCancelDateInput(new Date().toISOString().split('T')[0]);
+    setCancelReasonInput('');
+    setCancelModalVisible(true);
+  };
+
+  const handleConfirmCancelDate = async () => {
+    if (!cancellingDateSchedule) return;
+    try {
+      const res = await orderService.cancelDateDelivery(
+        cancellingDateSchedule.id,
+        cancelDateInput,
+        cancelReasonInput.trim()
+      );
+      setCancelModalVisible(false);
+      fetchSchedules();
+      fetchOrders();
+      AppToast.info(
+        res.case === 'B' ? "Today's Delivery Cancelled" : 'Delivery Date Skipped',
+        res.message
+      );
+    } catch (err: any) {
+      AppToast.error('Cancellation Failed', err?.message || 'Could not cancel delivery for selected date.');
+    }
   };
 
   // Derived Values
@@ -427,7 +507,111 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
           </TouchableOpacity>
         </View>
 
-        {/* 5. RECENT ORDERS */}
+        {/* 5. DAILY DELIVERY SCHEDULE */}
+        <View style={styles.sectionContainer}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionHeaderLeft}>
+              <Ionicons name="time-outline" size={18} color={colors.primary} style={{ marginRight: 6 }} />
+              <Text style={styles.sectionTitle}>DAILY DELIVERY SCHEDULE</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.addTemplatePill}
+              onPress={handleOpenCreateSchedule}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="add" size={15} color={colors.primary} />
+              <Text style={styles.addTemplatePillText}>Create Schedule</Text>
+            </TouchableOpacity>
+          </View>
+
+          {schedulesLoading ? (
+            <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 16 }} />
+          ) : schedules.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Ionicons name="calendar-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
+              <Text style={styles.emptyCardTitle}>No Daily Delivery Schedule</Text>
+              <Text style={styles.emptyCardSub}>Configure automated daily orders, delivery time and dedicated partner.</Text>
+            </View>
+          ) : (
+            schedules.map(sched => {
+              const weekdaysMap = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+              const daysLabel = sched.weekdays
+                ? sched.weekdays
+                    .split(',')
+                    .map(d => weekdaysMap[parseInt(d.trim(), 10)])
+                    .filter(Boolean)
+                    .join(', ')
+                : 'Everyday';
+              const timeDisplay = sched.delivery_time ? sched.delivery_time.substring(0, 5) : '10:00';
+              const itemsList = (sched.items || []).map(i => `${i.quantity}x ${i.product_name}`).join(' • ');
+
+              return (
+                <View key={sched.id} style={styles.scheduleCard}>
+                  {/* Card Header */}
+                  <View style={styles.scheduleCardHeader}>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.scheduleTimeText}>{timeDisplay}</Text>
+                        <View style={[styles.statusTag, sched.is_active ? styles.statusTagActive : styles.statusTagPaused]}>
+                          <Text style={[styles.statusTagText, sched.is_active ? styles.statusTagTextActive : styles.statusTagTextPaused]}>
+                            {sched.is_active ? 'ACTIVE' : 'INACTIVE'}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.scheduleDaysText}>{daysLabel}</Text>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.scheduleEditBtn}
+                      onPress={() => handleOpenEditSchedule(sched)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.scheduleEditText}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Fixed Partner */}
+                  <View style={styles.schedulePartnerRow}>
+                    <Ionicons name="bicycle-outline" size={15} color={colors.primary} style={{ marginRight: 6 }} />
+                    <Text style={styles.schedulePartnerName} numberOfLines={1}>
+                      Fixed Partner: <Text style={{ fontWeight: '700', color: colors.textPrimary }}>{sched.delivery_partner_name}</Text>
+                    </Text>
+                  </View>
+
+                  {/* Products */}
+                  <View style={styles.scheduleItemsBox}>
+                    <Text style={styles.scheduleItemsText} numberOfLines={2}>
+                      {itemsList || 'No products configured'}
+                    </Text>
+                  </View>
+
+                  {/* Next Scheduled Delivery & Lead Time */}
+                  <View style={styles.scheduleFooterRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.scheduleNextLabel}>
+                        Next: {sched.next_scheduled_delivery || 'Not scheduled'}
+                      </Text>
+                      <Text style={styles.scheduleLeadLabel}>
+                        Alert Lead: {sched.notification_lead_time_minutes || 30} mins
+                      </Text>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.cancelDateBtn}
+                      onPress={() => handleOpenCancelDateModal(sched)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="close-circle-outline" size={13} color={colors.danger} style={{ marginRight: 4 }} />
+                      <Text style={styles.cancelDateBtnText}>Cancel Today</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
+
+        {/* 6. RECENT ORDERS */}
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeaderRow}>
             <View style={styles.sectionHeaderLeft}>
@@ -702,7 +886,79 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
         </View>
       </Modal>
 
-      {/* 5. Centralized Reusable Confirm Dialog */}
+      {/* 5. Daily Schedule Modal */}
+      <DailyScheduleModal
+        visible={scheduleModalVisible}
+        onClose={() => setScheduleModalVisible(false)}
+        onSubmit={handleSaveSchedule}
+        customerId={customerId || 0}
+        customerName={displayName}
+        customerAddress={displayAddress}
+        existingSchedule={editingSchedule}
+      />
+
+      {/* 6. Cancel Date Modal */}
+      <Modal visible={cancelModalVisible} transparent animationType="fade" onRequestClose={() => setCancelModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setCancelModalVisible(false)} />
+          <View style={styles.modalCenterBox}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalSheetTitle}>Cancel Delivery for Date</Text>
+                <Text style={styles.modalSheetSub}>{displayName} • Skip Date Exception</Text>
+              </View>
+              <TouchableOpacity onPress={() => setCancelModalVisible(false)}>
+                <Ionicons name="close" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ marginVertical: spacing.md }}>
+              <Text style={styles.inputSubLabel}>Select Date to Cancel (YYYY-MM-DD):</Text>
+              <TextInput
+                style={styles.cancelDateInput}
+                value={cancelDateInput}
+                onChangeText={setCancelDateInput}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={colors.textMuted}
+              />
+
+              <Text style={[styles.inputSubLabel, { marginTop: spacing.sm }]}>Reason for Cancellation:</Text>
+              <TextInput
+                style={[styles.cancelDateInput, { height: 48 }]}
+                value={cancelReasonInput}
+                onChangeText={setCancelReasonInput}
+                placeholder="e.g. Office closed for public holiday"
+                placeholderTextColor={colors.textMuted}
+                multiline
+              />
+
+              <Text style={styles.cancelNoticeNote}>
+                • If an order is already generated for this date, it will be marked cancelled and the partner notified.{'\n'}
+                • If not generated yet, the scheduler will skip this date.{'\n'}
+                • Future scheduled deliveries remain completely active.
+              </Text>
+            </View>
+
+            <View style={styles.cancelModalActions}>
+              <TouchableOpacity
+                style={styles.cancelModalCancelBtn}
+                onPress={() => setCancelModalVisible(false)}
+              >
+                <Text style={styles.cancelModalCancelText}>Back</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.cancelModalConfirmBtn}
+                onPress={handleConfirmCancelDate}
+              >
+                <Text style={styles.cancelModalConfirmText}>Confirm Cancellation</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 7. Centralized Reusable Confirm Dialog */}
       <ConfirmDialog
         visible={confirmDialogConfig.visible}
         title={confirmDialogConfig.title}
@@ -1008,61 +1264,34 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  /* Template Cards */
-  templateCard: {
+  /* Daily Schedule Styles */
+  scheduleCard: {
     backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
+    borderRadius: radius.md,
     padding: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
-    ...shadows.sm,
     marginBottom: spacing.sm,
   },
-  templateCardPaused: {
-    backgroundColor: '#FAF9F8',
-    borderColor: colors.gray200,
-    opacity: 0.85,
-  },
-  templateHeader: {
+  scheduleCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 4,
   },
-  templateHeaderTitleGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-  },
-  templateFreqTitle: {
-    ...typography.body,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  statusTag: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
-  },
-  statusTagActive: {
-    backgroundColor: colors.approvedBackground,
-  },
-  statusTagPaused: {
-    backgroundColor: '#F3F4F6',
-  },
-  statusTagText: {
-    fontSize: 10,
+  scheduleTimeText: {
+    fontSize: 16,
     fontFamily: 'Inter-Bold',
     fontWeight: '800',
+    color: colors.textPrimary,
   },
-  statusTagTextActive: {
-    color: colors.approved,
+  scheduleDaysText: {
+    ...typography.caption,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
+    marginTop: 2,
   },
-  statusTagTextPaused: {
-    color: colors.gray500,
-  },
-  templateEditBtn: {
+  scheduleEditBtn: {
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
     borderRadius: radius.sm,
@@ -1070,69 +1299,116 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#F5C6B8',
   },
-  templateEditText: {
-    ...typography.caption,
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.primary,
-  },
-  templatePartnerText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginBottom: spacing.xs,
-  },
-  templateItemsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginVertical: spacing.xs,
-  },
-  templateItemChip: {
-    backgroundColor: '#F8F6F4',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-  },
-  templateItemChipText: {
-    ...typography.caption,
-    fontSize: 11,
-    color: colors.textPrimary,
-    fontWeight: '500',
-  },
-  templateFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: spacing.xs,
-    paddingTop: spacing.xs,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
-  },
-  templateDeliveryAddress: {
-    ...typography.caption,
-    fontSize: 11,
-    color: colors.textMuted,
-    flex: 1,
-    marginRight: spacing.sm,
-  },
-  pauseBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.sm,
-    backgroundColor: colors.warningBg,
-  },
-  resumeBtn: {
-    backgroundColor: colors.approvedBackground,
-  },
-  pauseBtnText: {
+  scheduleEditText: {
     fontSize: 11,
     fontFamily: 'Inter-Bold',
     fontWeight: '700',
-    color: colors.warning,
+    color: colors.primary,
+  },
+  schedulePartnerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  schedulePartnerName: {
+    fontSize: 12,
+    fontFamily: 'Inter-Regular',
+    color: colors.textSecondary,
+  },
+  scheduleItemsBox: {
+    backgroundColor: colors.background,
+    padding: spacing.xs,
+    borderRadius: radius.sm,
+    marginVertical: spacing.xs,
+  },
+  scheduleItemsText: {
+    fontSize: 12,
+    fontFamily: 'Inter-Medium',
+    color: colors.textPrimary,
+    lineHeight: 18,
+  },
+  scheduleFooterRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+  },
+  scheduleNextLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter-SemiBold',
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  scheduleLeadLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter-Regular',
+    color: colors.textMuted,
+    marginTop: 1,
+  },
+  cancelDateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  cancelDateBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '700',
+    color: colors.danger,
+  },
+  cancelDateInput: {
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    fontSize: 13,
+    color: colors.textPrimary,
+    height: 38,
+    marginTop: 4,
+  },
+  cancelNoticeNote: {
+    fontSize: 11,
+    fontFamily: 'Inter-Regular',
+    color: colors.textSecondary,
+    lineHeight: 16,
+    marginTop: spacing.sm,
+  },
+  cancelModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  cancelModalCancelBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    backgroundColor: colors.background,
+  },
+  cancelModalCancelText: {
+    fontSize: 12,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
+  },
+  cancelModalConfirmBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    backgroundColor: colors.danger,
+  },
+  cancelModalConfirmText: {
+    fontSize: 12,
+    fontFamily: 'Inter-Bold',
+    color: colors.white,
+    fontWeight: '700',
   },
 
   /* Order Cards */
@@ -1401,5 +1677,33 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+  statusTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+  },
+  statusTagActive: {
+    backgroundColor: colors.approvedBackground,
+  },
+  statusTagPaused: {
+    backgroundColor: '#F3F4F6',
+  },
+  statusTagText: {
+    fontSize: 10,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '800',
+  },
+  statusTagTextActive: {
+    color: colors.approved,
+  },
+  statusTagTextPaused: {
+    color: colors.gray500,
+  },
+  inputSubLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
+    marginBottom: 4,
   },
 });

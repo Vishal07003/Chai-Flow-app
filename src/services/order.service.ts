@@ -20,6 +20,8 @@ export interface BackendOrder {
   status: 'pending' | 'accepted' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
   total_amount: string;
   delivery_address: string;
+  scheduled_delivery_date?: string | null;
+  scheduled_delivery_time?: string | null;
   notes?: string;
   delivery_partner_id?: number | null;
   delivery_partner_name?: string | null;
@@ -314,6 +316,101 @@ export const orderService = {
   ): Promise<GlobalRecurringNotificationSetting> {
     return apiClient.patch<GlobalRecurringNotificationSetting>('/orders/recurring-settings/1/', data);
   },
+
+  /**
+   * APPROVED FEATURE: Daily Delivery Schedule API Integration
+   */
+  async getDailySchedules(params?: { customer?: number | string; is_active?: boolean }): Promise<DailyDeliverySchedule[]> {
+    const query = new URLSearchParams();
+    if (params?.customer) query.append('customer', String(params.customer));
+    if (params?.is_active !== undefined) query.append('is_active', String(params.is_active));
+    const qs = query.toString();
+    return apiClient.get<DailyDeliverySchedule[]>(`/orders/schedules/${qs ? `?${qs}` : ''}`);
+  },
+
+  async createDailySchedule(data: CreateDailySchedulePayload): Promise<DailyDeliverySchedule> {
+    return apiClient.post<DailyDeliverySchedule>('/orders/schedules/', data);
+  },
+
+  async updateDailySchedule(id: number | string, data: Partial<CreateDailySchedulePayload>): Promise<DailyDeliverySchedule> {
+    return apiClient.patch<DailyDeliverySchedule>(`/orders/schedules/${id}/`, data);
+  },
+
+  async cancelDateDelivery(id: number | string, dateStr: string, reason?: string): Promise<{
+    case: 'A' | 'B';
+    status: string;
+    message: string;
+    order_id?: number;
+    cancelled_date?: string;
+  }> {
+    return apiClient.post(`/orders/schedules/${id}/cancel-date/`, { date: dateStr, reason });
+  },
+
+  async triggerScheduleRunNow(id: number | string, dateStr?: string): Promise<{
+    success?: boolean;
+    already_generated?: boolean;
+    message: string;
+    order: BackendOrder;
+  }> {
+    return apiClient.post(`/orders/schedules/${id}/generate-now/`, { date: dateStr });
+  },
 };
+
+export interface DailyDeliveryScheduleItem {
+  id: number;
+  product: number;
+  product_name: string;
+  product_price: string;
+  quantity: number;
+  unit_price: string;
+}
+
+export interface ScheduleCancellationException {
+  id: number;
+  cancelled_date: string;
+  reason: string;
+  created_at: string;
+}
+
+export interface DailyDeliverySchedule {
+  id: number;
+  customer_profile: number;
+  customer_name: string;
+  customer_phone?: string;
+  delivery_partner: number;
+  delivery_partner_name: string;
+  delivery_partner_phone?: string;
+  delivery_time: string; // HH:MM:SS
+  notification_lead_time_minutes: number;
+  weekdays: string; // e.g. "0,1,2,3,4"
+  delivery_address: string;
+  start_date: string;
+  end_date?: string | null;
+  is_active: boolean;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+  items: DailyDeliveryScheduleItem[];
+  cancellation_exceptions: ScheduleCancellationException[];
+  next_scheduled_delivery?: string | null;
+}
+
+export interface CreateDailySchedulePayload {
+  customer_id: number;
+  delivery_partner_id: number;
+  delivery_time: string;
+  notification_lead_time_minutes?: number;
+  weekdays: string;
+  delivery_address?: string;
+  start_date: string;
+  end_date?: string | null;
+  is_active?: boolean;
+  notes?: string;
+  items: Array<{
+    product_id: number;
+    quantity: number;
+    unit_price?: number | string;
+  }>;
+}
 
 export default orderService;

@@ -231,8 +231,21 @@ export default function OrdersScreen({ navigation }: any) {
         {/* Card Header: Order ID, Date/Time and Status Pill */}
         <View style={styles.cardHeader}>
           <View style={styles.orderIdGroup}>
-            <Text style={styles.orderIdText}>#{item.id}</Text>
-            <Text style={styles.dateTimeText}>{formatDateTime(item.created_at)}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.orderIdText}>#{item.id}</Text>
+              {(item.scheduled_delivery_date || item.scheduled_delivery_time) && (
+                <View style={{ backgroundColor: '#F3E8E2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 10, fontFamily: 'Inter-Bold', color: colors.primary, fontWeight: '700' }}>
+                    DAILY {item.scheduled_delivery_time ? item.scheduled_delivery_time.slice(0, 5) : ''}
+                  </Text>
+                </View>
+              )}
+            </View>
+            <Text style={styles.dateTimeText}>
+              {item.scheduled_delivery_date
+                ? `Delivery: ${item.scheduled_delivery_date} ${item.scheduled_delivery_time ? item.scheduled_delivery_time.slice(0, 5) : ''}`
+                : formatDateTime(item.created_at)}
+            </Text>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: badge.bg, borderColor: badge.border }]}>
             <Ionicons name={badge.icon as any} size={12} color={badge.text} style={{ marginRight: 4 }} />
