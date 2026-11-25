@@ -22,6 +22,8 @@ import ProductsScreen from '../Screens/owner/ProductsScreen';
 import DeliveryScreen from '../Screens/owner/DeliveryScreen';
 import OwnerDeliveryTrackingScreen from '../Screens/owner/DeliveryTrackingScreen';
 import RecurringOrderScreen from '../Screens/owner/RecurringOrderScreen';
+import DailyScheduleScreen from '../Screens/owner/DailyScheduleScreen';
+import CreateEditDailyScheduleScreen from '../Screens/owner/CreateEditDailyScheduleScreen';
 import ProfileDrawer from '../components/profile/ProfileDrawer';
 
 export type OwnerStackParamList = {
@@ -31,6 +33,8 @@ export type OwnerStackParamList = {
   CustomerDetail: { customerId?: string; customer?: any } | undefined;
   Invoices: undefined;
   DailyBills: undefined;
+  DailySchedule: undefined;
+  CreateEditDailySchedule: { schedule?: any; customer?: any; customerId?: any } | undefined;
   Orders: undefined;
   PendingPayments: undefined;
   CreateInvoice: { customer?: any; prefilledItems?: Array<{ product_id: number; product_name?: string; quantity: number }> } | undefined;
@@ -96,6 +100,8 @@ export default function OwnerNavigator() {
       <Stack.Screen name="CustomerDetail" component={CustomerDetailScreen} />
       <Stack.Screen name="Invoices" component={InvoicesScreen} />
       <Stack.Screen name="DailyBills" component={DailyBillsScreen} />
+      <Stack.Screen name="DailySchedule" component={DailyScheduleScreen} />
+      <Stack.Screen name="CreateEditDailySchedule" component={CreateEditDailyScheduleScreen} />
       <Stack.Screen name="PendingPayments" component={PendingPaymentsScreen} />
       <Stack.Screen name="CreateInvoice" component={QuickBillingScreen} />
       <Stack.Screen name="QuickBilling" component={QuickBillingScreen} />

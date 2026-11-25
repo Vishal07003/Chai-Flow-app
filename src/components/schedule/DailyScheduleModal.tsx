@@ -14,6 +14,8 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { colors, typography, radius, spacing, shadows } from '../../theme';
 import productService, { BackendProduct } from '../../services/product.service';
 import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
+import { customerService } from '../../services/customer.service';
+import { Customer } from '../../types/customer';
 import { DailyDeliverySchedule, CreateDailySchedulePayload } from '../../services/order.service';
 import AppToast from '../../utils/toast';
 
@@ -21,8 +23,8 @@ interface DailyScheduleModalProps {
   visible: boolean;
   onClose: () => void;
   onSubmit: (payload: CreateDailySchedulePayload) => Promise<void>;
-  customerId: number;
-  customerName: string;
+  customerId?: number | null;
+  customerName?: string;
   customerAddress?: string;
   existingSchedule?: DailyDeliverySchedule | null;
 }
@@ -41,15 +43,22 @@ export const DailyScheduleModal: React.FC<DailyScheduleModalProps> = ({
   visible,
   onClose,
   onSubmit,
-  customerId,
-  customerName,
+  customerId: initialCustomerId,
+  customerName: initialCustomerName,
   customerAddress = '',
   existingSchedule,
 }) => {
   const [products, setProducts] = useState<BackendProduct[]>([]);
   const [partners, setPartners] = useState<DeliveryPartnerProfile[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [loadingDatasets, setLoadingDatasets] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
+
+  // Customer Selection state
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(
+    initialCustomerId || (existingSchedule ? existingSchedule.customer_profile : null)
+  );
+  const [customerSearchQuery, setCustomerSearchQuery] = useState<string>('');
 
   // Form Fields
   const [selectedPartnerId, setSelectedPartnerId] = useState<number | null>(null);
@@ -71,12 +80,15 @@ export const DailyScheduleModal: React.FC<DailyScheduleModalProps> = ({
     Promise.all([
       productService.getProducts().catch(() => []),
       deliveryService.getDeliveryPartners().catch(() => []),
+      customerService.getCustomers().catch(() => []),
     ])
-      .then(([prods, parts]) => {
+      .then(([prods, parts, custs]) => {
         setProducts(prods || []);
         setPartners(parts || []);
+        setCustomers(custs || []);
 
         if (existingSchedule) {
+          setSelectedCustomerId(existingSchedule.customer_profile);
           setSelectedPartnerId(existingSchedule.delivery_partner);
           setDeliveryTime(existingSchedule.delivery_time.substring(0, 5) || '10:00');
           setLeadTime(String(existingSchedule.notification_lead_time_minutes || 30));
@@ -97,6 +109,7 @@ export const DailyScheduleModal: React.FC<DailyScheduleModalProps> = ({
           setQuantities(qMap);
         } else {
           // Defaults for new schedule
+          setSelectedCustomerId(initialCustomerId || (custs && custs.length > 0 ? Number(custs[0].id) : null));
           setSelectedPartnerId(parts && parts.length > 0 ? parts[0].id : null);
           setDeliveryTime('10:00');
           setLeadTime('30');
@@ -114,7 +127,21 @@ export const DailyScheduleModal: React.FC<DailyScheduleModalProps> = ({
         }
       })
       .finally(() => setLoadingDatasets(false));
-  }, [visible, existingSchedule, customerAddress]);
+  }, [visible, existingSchedule, customerAddress, initialCustomerId]);
+
+  // Derived current customer info
+  const activeCustomer = useMemo(() => {
+    if (!selectedCustomerId) return null;
+    return customers.find(c => Number(c.id) === Number(selectedCustomerId));
+  }, [customers, selectedCustomerId]);
+
+  const activeCustomerName = initialCustomerName || activeCustomer?.name || existingSchedule?.customer_name || 'Select Customer';
+
+  const filteredCustomerList = useMemo(() => {
+    if (!customerSearchQuery.trim()) return customers.slice(0, 8);
+    const q = customerSearchQuery.toLowerCase();
+    return customers.filter(c => c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q))).slice(0, 8);
+  }, [customers, customerSearchQuery]);
 
   const toggleDay = (day: number) => {
     if (selectedDays.includes(day)) {
@@ -143,6 +170,10 @@ export const DailyScheduleModal: React.FC<DailyScheduleModalProps> = ({
   };
 
   const handleSave = async () => {
+    if (!selectedCustomerId) {
+      AppToast.warning('Required Field', 'Please select a customer for this delivery schedule.');
+      return;
+    }
     if (!selectedPartnerId) {
       AppToast.warning('Required Field', 'Please assign a fixed Delivery Partner.');
       return;
@@ -165,7 +196,7 @@ export const DailyScheduleModal: React.FC<DailyScheduleModalProps> = ({
     }
 
     const payload: CreateDailySchedulePayload = {
-      customer_id: customerId,
+      customer_id: selectedCustomerId,
       delivery_partner_id: selectedPartnerId,
       delivery_time: `${deliveryTime}:00`,
       notification_lead_time_minutes: parseInt(leadTime || '30', 10) || 30,
@@ -202,11 +233,11 @@ export const DailyScheduleModal: React.FC<DailyScheduleModalProps> = ({
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
         <View style={styles.modalSheet}>
           <View style={styles.sheetHeader}>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.sheetTitle}>
                 {existingSchedule ? 'Edit Daily Delivery Schedule' : 'Create Daily Schedule'}
               </Text>
-              <Text style={styles.sheetSubtitle}>{customerName} • Dedicated Route</Text>
+              <Text style={styles.sheetSubtitle}>{activeCustomerName} • Dedicated Route</Text>
             </View>
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="close" size={22} color={colors.textSecondary} />
@@ -220,6 +251,60 @@ export const DailyScheduleModal: React.FC<DailyScheduleModalProps> = ({
             </View>
           ) : (
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+              {/* 0. Customer Selector (Shown when customerId is not pre-fixed or when creating new) */}
+              {!initialCustomerId && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionLabel}>CUSTOMER</Text>
+                  <Text style={styles.sectionHint}>Select the customer for this daily scheduled delivery.</Text>
+                  
+                  {/* Search box if list is large */}
+                  <View style={[styles.textInputBox, { marginBottom: 8 }]}>
+                    <Ionicons name="search-outline" size={16} color={colors.textMuted} style={{ marginRight: 6 }} />
+                    <TextInput
+                      style={styles.textInput}
+                      value={customerSearchQuery}
+                      onChangeText={setCustomerSearchQuery}
+                      placeholder="Search customer name or phone..."
+                      placeholderTextColor={colors.textMuted}
+                    />
+                    {customerSearchQuery.length > 0 && (
+                      <TouchableOpacity onPress={() => setCustomerSearchQuery('')}>
+                        <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
+                    {filteredCustomerList.map(c => {
+                      const isSelected = selectedCustomerId === Number(c.id);
+                      return (
+                        <TouchableOpacity
+                          key={c.id}
+                          style={[styles.partnerChip, isSelected && styles.partnerChipSelected]}
+                          onPress={() => {
+                            setSelectedCustomerId(Number(c.id));
+                            if (c.address && (!address || address === customerAddress)) {
+                              setAddress(c.address);
+                            }
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons
+                            name="person"
+                            size={13}
+                            color={isSelected ? colors.white : colors.primary}
+                            style={{ marginRight: 5 }}
+                          />
+                          <Text style={[styles.partnerChipText, isSelected && styles.partnerChipTextSelected]}>
+                            {c.name}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              )}
+
               {/* 1. Fixed Assigned Delivery Partner */}
               <View style={styles.section}>
                 <Text style={styles.sectionLabel}>FIXED DELIVERY PARTNER (ASSIGNED ONCE)</Text>

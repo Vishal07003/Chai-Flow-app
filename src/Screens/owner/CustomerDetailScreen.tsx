@@ -299,13 +299,18 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
 
   // Schedule Actions
   const handleOpenCreateSchedule = () => {
-    setEditingSchedule(null);
-    setScheduleModalVisible(true);
+    navigation.navigate('CreateEditDailySchedule', {
+      customerId,
+      customer: customer || initialCustomer,
+    });
   };
 
   const handleOpenEditSchedule = (sched: DailyDeliverySchedule) => {
-    setEditingSchedule(sched);
-    setScheduleModalVisible(true);
+    navigation.navigate('CreateEditDailySchedule', {
+      schedule: sched,
+      customerId,
+      customer: customer || initialCustomer,
+    });
   };
 
   const handleSaveSchedule = async (payload: CreateDailySchedulePayload) => {
