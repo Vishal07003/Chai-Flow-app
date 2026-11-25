@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { Header } from '../../components/common';
+import { Header, FloatingButton } from '../../components/common';
 import orderService, {
   DailyDeliverySchedule,
 } from '../../services/order.service';
@@ -241,15 +241,6 @@ export default function DailyScheduleScreen({ navigation }: DailyScheduleScreenP
                 </Text>
               </View>
             </View>
-
-            <TouchableOpacity
-              activeOpacity={0.85}
-              style={styles.primaryAddBtn}
-              onPress={() => navigation.navigate('CreateEditDailySchedule')}
-            >
-              <Ionicons name="add" size={18} color="#FFFFFF" style={{ marginRight: 3 }} />
-              <Text style={styles.primaryAddBtnText}>Add Schedule</Text>
-            </TouchableOpacity>
           </View>
 
           <View style={styles.heroDivider} />
@@ -292,14 +283,6 @@ export default function DailyScheduleScreen({ navigation }: DailyScheduleScreenP
                 ? `No ${activeFilter.toLowerCase()} delivery schedules`
                 : 'Configure automated recurring daily deliveries with fixed partners.'}
             </Text>
-            <TouchableOpacity
-              style={styles.emptyAddBtn}
-              onPress={() => navigation.navigate('CreateEditDailySchedule')}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="add" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.emptyAddBtnText}>Create First Schedule</Text>
-            </TouchableOpacity>
           </View>
         ) : (
           filteredSchedules.map(sched => {
@@ -473,6 +456,12 @@ export default function DailyScheduleScreen({ navigation }: DailyScheduleScreenP
           })
         )}
       </KeyboardAwareScrollView>
+
+      {/* Floating Action Button (FAB) for Add Schedule */}
+      <FloatingButton
+        iconName="add"
+        onPress={() => navigation.navigate('CreateEditDailySchedule')}
+      />
 
       {/* Date-Specific Cancellation Dialog */}
       <Modal

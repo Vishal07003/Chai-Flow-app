@@ -124,59 +124,31 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
         }
       >
-        {/* INDEX 0: TOP TWO COMPACT ACTION CARDS (SIDE BY SIDE: 2 COLUMNS) */}
+        {/* INDEX 0: TOP TWO COMPACT ACTION CARDS (SIDE BY SIDE: 2 FULL-CARD BUTTONS) */}
         <View style={styles.actionCardsRow}>
-          {/* Card A: Daily Schedule (Brown / Chai theme) */}
-          <View style={styles.compactActionCard}>
-            <View style={styles.cardHeaderArea}>
-              <View style={[styles.compactIconBox, { backgroundColor: '#FDEBE4' }]}>
-                <Ionicons name="calendar" size={17} color="#8C331A" />
-              </View>
-              <View style={styles.countBadgeBrown}>
-                <Text style={styles.countBadgeBrownText}>{activeSchedulesCount} Active</Text>
-              </View>
+          {/* Card 1: Daily Schedule (Entire card navigates to DailySchedule) */}
+          <TouchableOpacity
+            style={styles.compactActionCard}
+            onPress={() => navigation?.navigate('DailySchedule')}
+            activeOpacity={0.75}
+          >
+            <View style={styles.compactIconBox}>
+              <Ionicons name="calendar-outline" size={24} color="#8C331A" />
             </View>
+            <Text style={styles.compactCardTitle} numberOfLines={1}>Daily Schedule</Text>
+          </TouchableOpacity>
 
-            <View style={styles.cardTextArea}>
-              <Text style={styles.compactCardTitle} numberOfLines={1}>Daily Schedule</Text>
-              <Text style={styles.compactCardSub} numberOfLines={2}>Automated customer delivery routes</Text>
+          {/* Card 2: Quick Billing (Entire card navigates to QuickBilling) */}
+          <TouchableOpacity
+            style={styles.compactActionCard}
+            onPress={() => navigation?.navigate('QuickBilling')}
+            activeOpacity={0.75}
+          >
+            <View style={styles.compactIconBox}>
+              <Ionicons name="receipt-outline" size={24} color="#8C331A" />
             </View>
-
-            <TouchableOpacity
-              style={styles.compactActionButtonBrown}
-              onPress={() => navigation?.navigate('CreateEditDailySchedule')}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="add" size={14} color="#FFFFFF" style={{ marginRight: 2 }} />
-              <Text style={styles.compactActionBtnText}> Add Schedule</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Card B: Quick Billing (Replaces old Daily Billing card) */}
-          <View style={styles.compactActionCard}>
-            <View style={styles.cardHeaderArea}>
-              <View style={[styles.compactIconBox, { backgroundColor: '#FDEBE4' }]}>
-                <Ionicons name="flash-outline" size={17} color="#8C331A" />
-              </View>
-              <View style={styles.countBadgeBrown}>
-                <Text style={styles.countBadgeBrownText}>Instant</Text>
-              </View>
-            </View>
-
-            <View style={styles.cardTextArea}>
-              <Text style={styles.compactCardTitle} numberOfLines={1}>Quick Billing</Text>
-              <Text style={styles.compactCardSub} numberOfLines={2}>Instant counter orders & cash billing</Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.compactActionButtonBrown}
-              onPress={() => navigation?.navigate('QuickBilling')}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="flash" size={13} color="#FFFFFF" style={{ marginRight: 3 }} />
-              <Text style={styles.compactActionBtnText}>Quick Billing</Text>
-            </TouchableOpacity>
-          </View>
+            <Text style={styles.compactCardTitle} numberOfLines={1}>Quick Billing</Text>
+          </TouchableOpacity>
         </View>
 
         {/* INDEX 1: STICKY SEARCH BAR (Sticks under Header on scroll) */}
@@ -378,7 +350,7 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
 
-  /* Two Compact Side-by-Side Action Cards (150-160px height) */
+  /* Two Compact Side-by-Side Action Cards (Full-Card Buttons) */
   actionCardsRow: {
     flexDirection: 'row',
     gap: 12,
@@ -388,7 +360,7 @@ const styles = StyleSheet.create({
   },
   compactActionCard: {
     flex: 1,
-    height: 154,
+    height: 96,
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 12,
@@ -399,62 +371,24 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 3,
     elevation: 2,
-    justifyContent: 'space-between',
-  },
-  cardHeaderArea: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  compactIconBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  countBadgeBrown: {
+  compactIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     backgroundColor: '#FDEBE4',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  countBadgeBrownText: {
-    fontSize: 9,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '800',
-    color: '#8C331A',
-  },
-  cardTextArea: {
-    marginTop: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
   },
   compactCardTitle: {
     fontSize: 13,
     fontFamily: 'Inter-Bold',
-    fontWeight: '800',
-    color: '#1F2937',
-  },
-  compactCardSub: {
-    fontSize: 10,
-    fontFamily: 'Inter-Regular',
-    color: '#6B7280',
-    marginTop: 2,
-    lineHeight: 14,
-  },
-  compactActionButtonBrown: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#8C331A',
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginTop: 4,
-  },
-  compactActionBtnText: {
-    fontSize: 11,
-    fontFamily: 'Inter-Bold',
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: '#1F2937',
+    textAlign: 'center',
   },
 
   /* Sticky Search Bar Container */
