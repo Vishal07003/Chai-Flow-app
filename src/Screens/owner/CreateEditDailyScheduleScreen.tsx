@@ -82,9 +82,10 @@ export default function CreateEditDailyScheduleScreen({
   const [customUnitPrices, setCustomUnitPrices] = useState<{ [productId: string]: string }>({});
   // Ordered product ids
   const [addedOrder, setAddedOrder] = useState<string[]>([]);
-  // Search and select product modal
+  // Search and select product modal (middle popup with multi-select)
   const [showProductModal, setShowProductModal] = useState<boolean>(false);
   const [productSearch, setProductSearch] = useState<string>('');
+  const [modalSelectedProductIds, setModalSelectedProductIds] = useState<string[]>([]);
   const [discount, setDiscount] = useState<string>('');
 
   // Schedule Settings
@@ -296,19 +297,56 @@ export default function CreateEditDailyScheduleScreen({
   }, [lineItems]);
 
   // Cart Management
-  const handleAddProductToCart = (prod: BackendProduct) => {
-    const pIdStr = String(prod.id);
-    if (!addedOrder.includes(pIdStr)) {
-      setAddedOrder(prev => [...prev, pIdStr]);
-      setCartQuantities(prev => ({ ...prev, [pIdStr]: '1' }));
-      setCustomUnitPrices(prev => ({ ...prev, [pIdStr]: String(parseFloat(prod.price) || 0) }));
-    } else {
-      // Increment
+  const handleOpenProductModal = () => {
+    setProductSearch('');
+    // Initialize modal selected ids with what is already in cart or empty
+    setModalSelectedProductIds([...addedOrder]);
+    setShowProductModal(true);
+  };
+
+  const handleToggleProductInModal = (prodIdStr: string) => {
+    setModalSelectedProductIds(prev => {
+      if (prev.includes(prodIdStr)) {
+        return prev.filter(id => id !== prodIdStr);
+      } else {
+        return [...prev, prodIdStr];
+      }
+    });
+  };
+
+  const handleConfirmModalProducts = () => {
+    // Add all newly selected products to cart
+    modalSelectedProductIds.forEach(pIdStr => {
+      const prod = catalogProducts.find(p => String(p.id) === pIdStr);
+      if (!addedOrder.includes(pIdStr)) {
+        setAddedOrder(prev => (prev.includes(pIdStr) ? prev : [...prev, pIdStr]));
+        setCartQuantities(prev => ({
+          ...prev,
+          [pIdStr]: prev[pIdStr] || '1',
+        }));
+        setCustomUnitPrices(prev => ({
+          ...prev,
+          [pIdStr]: prev[pIdStr] || String(parseFloat(prod?.price || '0') || 0),
+        }));
+      }
+    });
+
+    // If an existing product was unselected in the modal, remove it
+    const removedIds = addedOrder.filter(id => !modalSelectedProductIds.includes(id));
+    if (removedIds.length > 0) {
+      setAddedOrder(prev => prev.filter(id => modalSelectedProductIds.includes(id)));
       setCartQuantities(prev => {
-        const cur = parseInt(prev[pIdStr] || '0', 10) || 0;
-        return { ...prev, [pIdStr]: String(cur + 1) };
+        const copy = { ...prev };
+        removedIds.forEach(id => delete copy[id]);
+        return copy;
+      });
+      setCustomUnitPrices(prev => {
+        const copy = { ...prev };
+        removedIds.forEach(id => delete copy[id]);
+        return copy;
       });
     }
+
     setShowProductModal(false);
   };
 
@@ -596,10 +634,7 @@ export default function CreateEditDailyScheduleScreen({
               <Text style={styles.cardHeaderTitle}>4. PRODUCTS & COMMERCIAL PRICING</Text>
               <TouchableOpacity
                 style={styles.addProductBtn}
-                onPress={() => {
-                  setProductSearch('');
-                  setShowProductModal(true);
-                }}
+                onPress={handleOpenProductModal}
                 activeOpacity={0.8}
               >
                 <Ionicons name="add" size={15} color="#FFFFFF" style={{ marginRight: 3 }} />
@@ -882,27 +917,33 @@ export default function CreateEditDailyScheduleScreen({
         onSubmit={handleCreateCustomerSubmit}
       />
 
-      {/* Product Selection Modal */}
+      {/* Product Selection Modal (Centered Middle Popup with Keyboard Awareness and Multi-Select) */}
       <Modal
         visible={showProductModal}
-        animationType="slide"
+        animationType="fade"
         transparent={true}
         onRequestClose={() => setShowProductModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalSheetBox}>
-            <View style={styles.modalSheetHeader}>
-              <View>
-                <Text style={styles.modalSheetTitle}>Select Product</Text>
-                <Text style={styles.modalSheetSub}>Choose from shop catalog for this schedule</Text>
+        <View style={styles.middleModalOverlay}>
+          <View style={styles.middleModalCard}>
+            {/* Header */}
+            <View style={styles.middleModalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.middleModalTitle}>Add Products</Text>
+                <Text style={styles.middleModalSub}>
+                  Select one or multiple items for this daily schedule
+                </Text>
               </View>
-              <TouchableOpacity onPress={() => setShowProductModal(false)}>
+              <TouchableOpacity
+                onPress={() => setShowProductModal(false)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
                 <Ionicons name="close" size={22} color="#4B5563" />
               </TouchableOpacity>
             </View>
 
-            {/* Search Input */}
-            <View style={styles.modalSearchWrap}>
+            {/* Keyboard-Aware Search Input */}
+            <View style={styles.middleModalSearchWrap}>
               <Ionicons name="search-outline" size={17} color="#888" style={{ marginRight: 8 }} />
               <TextInput
                 style={styles.modalSearchInput}
@@ -910,6 +951,7 @@ export default function CreateEditDailyScheduleScreen({
                 placeholderTextColor="#9CA3AF"
                 value={productSearch}
                 onChangeText={setProductSearch}
+                clearButtonMode="while-editing"
               />
               {productSearch.length > 0 && (
                 <TouchableOpacity onPress={() => setProductSearch('')}>
@@ -918,45 +960,93 @@ export default function CreateEditDailyScheduleScreen({
               )}
             </View>
 
-            {/* Products List */}
+            {/* Products List with Multi-Select Checkboxes */}
             <FlatList
               data={filteredCatalog}
               keyExtractor={item => String(item.id)}
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 20 }}
+              keyboardShouldPersistTaps="handled"
+              style={styles.productListScrollView}
+              contentContainerStyle={{ paddingBottom: 10 }}
               renderItem={({ item }) => {
-                const inCart = addedOrder.includes(String(item.id));
+                const idStr = String(item.id);
+                const isSelected = modalSelectedProductIds.includes(idStr);
+
                 return (
                   <TouchableOpacity
-                    style={[styles.productOptionRow, inCart && styles.productOptionRowSelected]}
-                    onPress={() => handleAddProductToCart(item)}
+                    style={[styles.productOptionRow, isSelected && styles.productOptionRowSelected]}
+                    onPress={() => handleToggleProductInModal(idStr)}
                     activeOpacity={0.7}
                   >
-                    <View style={styles.productIconBox}>
-                      <Ionicons name="cafe" size={18} color="#8C331A" />
+                    <View
+                      style={[
+                        styles.productCheckbox,
+                        isSelected && styles.productCheckboxSelected,
+                      ]}
+                    >
+                      {isSelected ? (
+                        <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                      ) : null}
                     </View>
+
+                    <View style={styles.productIconBox}>
+                      <Ionicons name="cafe" size={16} color="#8C331A" />
+                    </View>
+
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <Text style={styles.productOptionName}>{item.name}</Text>
                       <Text style={styles.productOptionSub}>
-                        Standard: ₹{parseFloat(item.price).toFixed(2)} {item.unit ? `• per ${item.unit}` : ''}
+                        Standard: ₹{parseFloat(item.price).toFixed(2)}{' '}
+                        {item.unit ? `• per ${item.unit}` : ''}
                       </Text>
                     </View>
-                    {inCart ? (
-                      <View style={styles.inCartBadge}>
-                        <Text style={styles.inCartBadgeText}>Selected</Text>
-                      </View>
-                    ) : (
-                      <Ionicons name="add-circle" size={24} color="#8C331A" />
-                    )}
+
+                    <Text
+                      style={[
+                        styles.productOptionPriceTag,
+                        isSelected && { color: '#8C331A', fontWeight: '800' },
+                      ]}
+                    >
+                      ₹{parseFloat(item.price).toFixed(2)}
+                    </Text>
                   </TouchableOpacity>
                 );
               }}
               ListEmptyComponent={
                 <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-                  <Text style={{ color: '#6B7280', fontSize: 13 }}>No products found.</Text>
+                  <Ionicons name="search-outline" size={28} color="#D1D5DB" style={{ marginBottom: 6 }} />
+                  <Text style={{ color: '#6B7280', fontSize: 13, fontFamily: 'Inter-Medium' }}>
+                    No products found matching "{productSearch}".
+                  </Text>
                 </View>
               }
             />
+
+            {/* Middle Popup Footer with Selection Count and Confirm Action */}
+            <View style={styles.middleModalFooter}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.selectedCountText}>
+                  {modalSelectedProductIds.length} item{modalSelectedProductIds.length === 1 ? '' : 's'} selected
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.cancelModalBtn}
+                onPress={() => setShowProductModal(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.cancelModalBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.confirmModalBtn}
+                onPress={handleConfirmModalProducts}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="checkmark" size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
+                <Text style={styles.confirmModalBtnText}>Done</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1477,9 +1567,30 @@ const styles = StyleSheet.create({
   productOptionRowSelected: {
     backgroundColor: '#FDEBE4',
   },
+  productCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  productCheckboxSelected: {
+    backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
+  },
+  productOptionPriceTag: {
+    fontSize: 12,
+    fontFamily: 'Inter-SemiBold',
+    color: '#4B5563',
+    marginLeft: 6,
+  },
   productIconBox: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: 8,
     backgroundColor: '#FDEBE4',
     alignItems: 'center',
@@ -1505,6 +1616,101 @@ const styles = StyleSheet.create({
   },
   inCartBadgeText: {
     fontSize: 10,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  /* Middle Popup Styles */
+  middleModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 24,
+  },
+  middleModalCard: {
+    width: '100%',
+    maxHeight: '85%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  middleModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  middleModalTitle: {
+    fontSize: 16,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '800',
+    color: '#1F2937',
+  },
+  middleModalSub: {
+    fontSize: 11,
+    fontFamily: 'Inter-Regular',
+    color: '#6B7280',
+    marginTop: 1,
+  },
+  middleModalSearchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    height: 42,
+    marginBottom: 10,
+  },
+  productListScrollView: {
+    maxHeight: 340,
+  },
+  middleModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#F3EFEA',
+    paddingTop: 12,
+    marginTop: 6,
+    gap: 8,
+  },
+  selectedCountText: {
+    fontSize: 12,
+    fontFamily: 'Inter-SemiBold',
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  cancelModalBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  cancelModalBtnText: {
+    fontSize: 12,
+    fontFamily: 'Inter-SemiBold',
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  confirmModalBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#8C331A',
+  },
+  confirmModalBtnText: {
+    fontSize: 12,
     fontFamily: 'Inter-Bold',
     fontWeight: '700',
     color: '#FFFFFF',
