@@ -35,6 +35,20 @@ export default function TimePickerModal({
   const [minute, setMinute] = useState<number>(Math.floor(initMin / 5) * 5);
   const [period, setPeriod] = useState<'AM' | 'PM'>(isPM ? 'PM' : 'AM');
 
+  // Synchronize when visible or initialTime changes
+  React.useEffect(() => {
+    if (visible && initialTime) {
+      const p = initialTime.split(':');
+      let h = parseInt(p[0] || '6', 10);
+      const m = parseInt(p[1] || '0', 10);
+      const pm = h >= 12;
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      setHour12(h12);
+      setMinute(Math.floor(m / 5) * 5);
+      setPeriod(pm ? 'PM' : 'AM');
+    }
+  }, [visible, initialTime]);
+
   const hoursList = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
   const minutesList = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 

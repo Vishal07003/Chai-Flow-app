@@ -22,7 +22,7 @@ import billingService, { BillingCustomer } from '../../services/billing.service'
 import orderService from '../../services/order.service';
 import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
 import draftService, { DraftInvoice } from '../../services/draft.service';
-import { CustomDialog, ConfirmDialog, DeliveryPartnerDropdown } from '../../components/common';
+import { CustomDialog, ConfirmDialog, DeliveryPartnerDropdown, TimePickerModal } from '../../components/common';
 import CalendarPickerModal from '../../components/common/CalendarPickerModal';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 import { colors, typography, radius, spacing, shadows } from '../../theme';
@@ -100,14 +100,34 @@ export default function QuickBillingScreen({ route, navigation }: any) {
   // New Customer Modal
   const [showAddCustomerModal, setShowAddCustomerModal] = useState<boolean>(false);
 
+  // Helper: Format 24-hour time "HH:MM" or "HH:MM:SS" into 12-hour "hh:mm AM/PM"
+  const formatTime12H = (time24?: string): string => {
+    if (!time24) return '';
+    const parts = time24.split(':');
+    if (parts.length < 2) return time24;
+    let h = parseInt(parts[0], 10);
+    const m = parts[1].padStart(2, '0');
+    if (isNaN(h)) return time24;
+    const period = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${String(h12).padStart(2, '0')}:${m} ${period}`;
+  };
+
+  const getInitialCurrentTime24 = (): string => {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(Math.floor(now.getMinutes() / 5) * 5).padStart(2, '0');
+    return `${h}:${m}`;
+  };
+
   // Delivery Details (Used in Order Mode)
   const [deliveryAddress, setDeliveryAddress] = useState<string>('');
   const [selectedPartnerId, setSelectedPartnerId] = useState<number | null>(null);
   const [orderNotes, setOrderNotes] = useState<string>('');
   const [deliveryDate, setDeliveryDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [deliveryTime, setDeliveryTime] = useState<string>(
-    new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
-  );
+  const [deliveryTime, setDeliveryTime] = useState<string>(getInitialCurrentTime24());
+  const [showOrderDatePicker, setShowOrderDatePicker] = useState<boolean>(false);
+  const [showOrderTimePicker, setShowOrderTimePicker] = useState<boolean>(false);
   const [partners, setPartners] = useState<DeliveryPartnerProfile[]>([]);
   const [loadingPartners, setLoadingPartners] = useState<boolean>(false);
 
@@ -1352,33 +1372,42 @@ export default function QuickBillingScreen({ route, navigation }: any) {
                 <Text style={styles.deliverySectionTitle}>Delivery Address & Notes</Text>
               </View>
 
-              {/* Delivery Timing: Date & Time */}
-              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+              {/* Delivery Timing: Date & Time in a Single Row */}
+              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 14 }}>
+                {/* Delivery Date Picker Button */}
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.orderFieldLabel}>DELIVERY DATE (YYYY-MM-DD)</Text>
-                  <View style={styles.draftInputBox}>
-                    <Ionicons name="calendar-outline" size={18} color="#8C331A" style={{ marginRight: 8 }} />
-                    <TextInput
-                      style={[styles.draftInputField, { paddingVertical: 8 }]}
-                      placeholder="YYYY-MM-DD"
-                      placeholderTextColor="#9CA3AF"
-                      value={deliveryDate}
-                      onChangeText={setDeliveryDate}
-                    />
-                  </View>
+                  <Text style={styles.orderFieldLabel}>DELIVERY DATE</Text>
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={() => setShowOrderDatePicker(true)}
+                    style={styles.pickerSelectorBox}
+                    accessibilityRole="button"
+                    accessibilityLabel="Select delivery date"
+                  >
+                    <Ionicons name="calendar" size={18} color="#8C331A" style={{ marginRight: 8 }} />
+                    <Text style={styles.pickerSelectorText}>
+                      {deliveryDate || 'Select Date'}
+                    </Text>
+                    <Ionicons name="chevron-down" size={14} color="#8C331A" style={{ marginLeft: 'auto' }} />
+                  </TouchableOpacity>
                 </View>
+
+                {/* Delivery Time Picker Button */}
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.orderFieldLabel}>DELIVERY TIME (HH:MM)</Text>
-                  <View style={styles.draftInputBox}>
-                    <Ionicons name="time-outline" size={18} color="#8C331A" style={{ marginRight: 8 }} />
-                    <TextInput
-                      style={[styles.draftInputField, { paddingVertical: 8 }]}
-                      placeholder="HH:MM"
-                      placeholderTextColor="#9CA3AF"
-                      value={deliveryTime}
-                      onChangeText={setDeliveryTime}
-                    />
-                  </View>
+                  <Text style={styles.orderFieldLabel}>DELIVERY TIME</Text>
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={() => setShowOrderTimePicker(true)}
+                    style={styles.pickerSelectorBox}
+                    accessibilityRole="button"
+                    accessibilityLabel="Select delivery time"
+                  >
+                    <Ionicons name="time" size={18} color="#8C331A" style={{ marginRight: 8 }} />
+                    <Text style={styles.pickerSelectorText}>
+                      {formatTime12H(deliveryTime) || 'Select Time'}
+                    </Text>
+                    <Ionicons name="chevron-down" size={14} color="#8C331A" style={{ marginLeft: 'auto' }} />
+                  </TouchableOpacity>
                 </View>
               </View>
 
@@ -1602,7 +1631,7 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         onClose={closeDialog}
       />
 
-      {/* PAYMENT DUE DATE CALENDAR PICKER */}
+      {/* PAYMENT DUE DATE CALENDAR PICKER (DRAFT MODE) */}
       <CalendarPickerModal
         visible={showDatePicker}
         title="Select Payment Due Date"
@@ -1611,6 +1640,32 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         onSelectDate={(dateString: string) => {
           setDueDate(dateString);
           setShowDatePicker(false);
+        }}
+      />
+
+      {/* DELIVERY DATE CALENDAR PICKER (ORDER MODE) */}
+      <CalendarPickerModal
+        visible={showOrderDatePicker}
+        title="Select Delivery Date"
+        initialDate={deliveryDate.trim() || undefined}
+        onClose={() => setShowOrderDatePicker(false)}
+        onSelectDate={(dateString: string) => {
+          setDeliveryDate(dateString);
+          setShowOrderDatePicker(false);
+        }}
+      />
+
+      {/* DELIVERY TIME PICKER (ORDER MODE: 12-HOUR FORMAT WITH AM/PM) */}
+      <TimePickerModal
+        visible={showOrderTimePicker}
+        title="Select Delivery Time"
+        initialTime={deliveryTime.trim().length === 5 ? `${deliveryTime.trim()}:00` : deliveryTime.trim()}
+        onClose={() => setShowOrderTimePicker(false)}
+        onSelectTime={(timeString: string) => {
+          // timeString is returned as "HH:MM:00" in 24-hour format
+          const formattedHHMM = timeString.substring(0, 5);
+          setDeliveryTime(formattedHHMM);
+          setShowOrderTimePicker(false);
         }}
       />
     </SafeAreaView>
@@ -2427,6 +2482,23 @@ const styles = StyleSheet.create({
     color: '#DC2626',
     fontWeight: '900',
     marginTop: 1,
+  },
+
+  pickerSelectorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E8D7CE',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    minHeight: 44,
+  },
+  pickerSelectorText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1F2937',
   },
 
   fixedBottomDock: {
