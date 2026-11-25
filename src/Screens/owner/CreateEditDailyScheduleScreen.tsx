@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Platform,
   Alert,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
@@ -821,21 +822,28 @@ export default function CreateEditDailyScheduleScreen({
         </KeyboardAwareScrollView>
       )}
 
-      {/* Customer Selection Modal (Searchable dropdown like QuickBilling) */}
+      {/* Customer Selection Modal (Centered Keyboard-Aware Dialog) */}
       <Modal
         visible={showCustomerModal}
-        animationType="slide"
+        animationType="fade"
         transparent={true}
         onRequestClose={() => setShowCustomerModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalSheetBox}>
-            <View style={styles.modalSheetHeader}>
-              <View>
-                <Text style={styles.modalSheetTitle}>Select Customer</Text>
-                <Text style={styles.modalSheetSub}>Choose existing customer or add new account</Text>
+        <KeyboardAvoidingView
+          style={styles.centeredModalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 20}
+        >
+          <View style={styles.centeredModalCard}>
+            <View style={styles.centeredModalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.centeredModalTitle}>Select Customer</Text>
+                <Text style={styles.centeredModalSub}>Choose existing customer or add new account</Text>
               </View>
-              <TouchableOpacity onPress={() => setShowCustomerModal(false)}>
+              <TouchableOpacity
+                onPress={() => setShowCustomerModal(false)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
                 <Ionicons name="close" size={22} color="#4B5563" />
               </TouchableOpacity>
             </View>
@@ -878,7 +886,9 @@ export default function CreateEditDailyScheduleScreen({
                 data={customersList}
                 keyExtractor={item => String(item.id)}
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: 20 }}
+                keyboardShouldPersistTaps="handled"
+                style={styles.customerListScrollView}
+                contentContainerStyle={{ paddingBottom: 10 }}
                 renderItem={({ item }) => (
                   <TouchableOpacity
                     style={styles.customerOptionItem}
@@ -901,13 +911,15 @@ export default function CreateEditDailyScheduleScreen({
                 )}
                 ListEmptyComponent={
                   <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-                    <Text style={{ color: '#6B7280', fontSize: 13 }}>No customers found matching search.</Text>
+                    <Text style={{ color: '#6B7280', fontSize: 13, fontFamily: 'Inter-Medium' }}>
+                      No customers found matching search.
+                    </Text>
                   </View>
                 }
               />
             )}
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Add Customer Modal */}
@@ -959,6 +971,19 @@ export default function CreateEditDailyScheduleScreen({
                 </TouchableOpacity>
               )}
             </View>
+
+            {/* Quick Action to Create New Product via standard Products workflow */}
+            <TouchableOpacity
+              style={styles.modalAddProductBtn}
+              onPress={() => {
+                setShowProductModal(false);
+                navigation.navigate('Products', { openAddModal: true });
+              }}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add-circle-outline" size={16} color="#8C331A" style={{ marginRight: 6 }} />
+              <Text style={styles.modalAddProductBtnText}>+ Create New Product in Catalog</Text>
+            </TouchableOpacity>
 
             {/* Products List with Multi-Select Checkboxes */}
             <FlatList
@@ -1456,35 +1481,47 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
   },
-  modalOverlay: {
+  /* Centered Keyboard-Aware Customer Selection Dialog */
+  centeredModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 24,
   },
-  modalSheetBox: {
+  centeredModalCard: {
+    width: '100%',
+    maxHeight: '85%',
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    borderRadius: 18,
     padding: 16,
-    maxHeight: '82%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
   },
-  modalSheetHeader: {
+  centeredModalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  modalSheetTitle: {
-    fontSize: 17,
+  centeredModalTitle: {
+    fontSize: 16,
     fontFamily: 'Inter-Bold',
     fontWeight: '800',
     color: '#1F2937',
   },
-  modalSheetSub: {
+  centeredModalSub: {
     fontSize: 11,
     fontFamily: 'Inter-Regular',
     color: '#6B7280',
-    marginTop: 2,
+    marginTop: 1,
+  },
+  customerListScrollView: {
+    maxHeight: 340,
   },
   modalSearchWrap: {
     flexDirection: 'row',
@@ -1669,7 +1706,22 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 10,
     height: 42,
+    marginBottom: 8,
+  },
+  modalAddProductBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FDEBE4',
+    paddingVertical: 8,
+    borderRadius: 8,
     marginBottom: 10,
+  },
+  modalAddProductBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter-Bold',
+    fontWeight: '700',
+    color: '#8C331A',
   },
   productListScrollView: {
     maxHeight: 340,
