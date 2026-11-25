@@ -484,13 +484,16 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
                       return sum + price * qty;
                     }, 0);
 
+                    const timeStr = order.scheduled_delivery_time || order.delivery_time || (order.created_at ? order.created_at.substring(11, 16) : 'Delivered');
+                    const dateStr = order.scheduled_delivery_date || order.delivery_date || (order.created_at ? order.created_at.substring(0, 10) : '');
+
                     return (
                       <View key={order.id} style={styles.readyOrderCard}>
                         {/* Order Header */}
                         <View style={styles.readyCardHeader}>
                           <View style={{ flex: 1 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                              <Text style={styles.readyOrderNumber}>#{order.order_number}</Text>
+                              <Text style={styles.readyOrderNumber}>#{order.order_number || `ORD-${order.id}`}</Text>
                               <View style={styles.readyStatusBadge}>
                                 <Text style={styles.readyStatusText}>DELIVERED</Text>
                               </View>
@@ -515,8 +518,8 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
                           <View style={styles.readyMetaItem}>
                             <Ionicons name="time-outline" size={13} color="#6B7280" style={{ marginRight: 4 }} />
                             <Text style={styles.readyMetaText}>
-                              {order.delivery_time ? order.delivery_time.substring(0, 5) : 'Delivered'}
-                              {order.delivery_date ? ` on ${order.delivery_date}` : ''}
+                              {timeStr}
+                              {dateStr ? ` on ${dateStr}` : ''}
                             </Text>
                           </View>
                         </View>
@@ -842,8 +845,8 @@ export default function DailyBillsScreen({ navigation }: DailyBillsScreenProps) 
           orderId={selectedOrderForBill.id}
           customerName={selectedOrderForBill.customer_name || 'Customer'}
           deliveryPartnerName={selectedOrderForBill.delivery_partner_name || undefined}
-          deliveryDate={selectedOrderForBill.delivery_date || selectedOrderForBill.scheduled_delivery_date || undefined}
-          deliveryTime={selectedOrderForBill.delivery_time || selectedOrderForBill.scheduled_delivery_time || undefined}
+          deliveryDate={selectedOrderForBill.scheduled_delivery_date || selectedOrderForBill.delivery_date || undefined}
+          deliveryTime={selectedOrderForBill.scheduled_delivery_time || selectedOrderForBill.delivery_time || undefined}
           initialItems={billReviewInitialItems}
           initialDiscount={String(selectedOrderForBill.discount_amount || '0')}
           initialNotes={selectedOrderForBill.notes || ''}
