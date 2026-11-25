@@ -15,7 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { Header, DeliveryPartnerDropdown } from '../../components/common';
+import { Header, DeliveryPartnerDropdown, AppDatePicker, AppTimePicker } from '../../components/common';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 import { useApp } from '../../context/AppContext';
 import billingService, { BillingCustomer } from '../../services/billing.service';
@@ -546,18 +546,13 @@ export default function CreateEditDailyScheduleScreen({
             {/* Time & FCM Lead Time */}
             <View style={styles.dualInputRow}>
               <View style={{ flex: 1, marginRight: 8 }}>
-                <Text style={styles.inputFieldLabel}>Target Time (24H HH:MM)</Text>
-                <View style={styles.textInputBox}>
-                  <Ionicons name="time-outline" size={16} color="#8C331A" style={{ marginRight: 6 }} />
-                  <TextInput
-                    style={styles.textInputField}
-                    value={deliveryTime}
-                    onChangeText={setDeliveryTime}
-                    placeholder="10:00"
-                    placeholderTextColor="#9CA3AF"
-                    maxLength={5}
-                  />
-                </View>
+                <AppTimePicker
+                  label="Target Time"
+                  value={deliveryTime}
+                  onChange={setDeliveryTime}
+                  placeholder="Select Time"
+                  outputFormat="HH:MM"
+                />
               </View>
 
               <View style={{ flex: 1 }}>
@@ -600,31 +595,24 @@ export default function CreateEditDailyScheduleScreen({
             {/* Start and Optional End Dates */}
             <View style={[styles.dualInputRow, { marginTop: 12 }]}>
               <View style={{ flex: 1, marginRight: 8 }}>
-                <Text style={styles.inputFieldLabel}>Start Date (YYYY-MM-DD)</Text>
-                <View style={styles.textInputBox}>
-                  <Ionicons name="calendar-outline" size={16} color="#6B7280" style={{ marginRight: 6 }} />
-                  <TextInput
-                    style={styles.textInputField}
-                    value={startDate}
-                    onChangeText={setStartDate}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#9CA3AF"
-                  />
-                </View>
+                <AppDatePicker
+                  label="Start Date"
+                  value={startDate}
+                  onChange={setStartDate}
+                  placeholder="Select Date"
+                  maxDate={endDate || undefined}
+                />
               </View>
 
               <View style={{ flex: 1 }}>
-                <Text style={styles.inputFieldLabel}>End Date (Optional)</Text>
-                <View style={styles.textInputBox}>
-                  <Ionicons name="calendar-outline" size={16} color="#6B7280" style={{ marginRight: 6 }} />
-                  <TextInput
-                    style={styles.textInputField}
-                    value={endDate}
-                    onChangeText={setEndDate}
-                    placeholder="YYYY-MM-DD (Ongoing)"
-                    placeholderTextColor="#9CA3AF"
-                  />
-                </View>
+                <AppDatePicker
+                  label="End Date (Optional)"
+                  value={endDate}
+                  onChange={setEndDate}
+                  placeholder="Indefinite (Ongoing)"
+                  minDate={startDate || undefined}
+                  clearable={true}
+                />
               </View>
             </View>
           </View>

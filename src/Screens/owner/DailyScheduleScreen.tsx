@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { Header, FloatingButton } from '../../components/common';
+import { Header, FloatingButton, AppDatePicker } from '../../components/common';
 import orderService, {
   DailyDeliverySchedule,
 } from '../../services/order.service';
@@ -490,16 +490,14 @@ export default function DailyScheduleScreen({ navigation }: DailyScheduleScreenP
               Skip delivery for {cancellingSchedule?.customer_name} on a specific date. Future scheduled deliveries will remain active.
             </Text>
 
-            <Text style={styles.inputLabel}>TARGET DATE (YYYY-MM-DD)</Text>
-            <View style={styles.dateInputWrap}>
-              <TextInput
-                style={styles.modalTextInput}
-                value={cancelDateInput}
-                onChangeText={setCancelDateInput}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor="#9CA3AF"
-              />
-            </View>
+            <AppDatePicker
+              label="TARGET DATE"
+              value={cancelDateInput}
+              onChange={setCancelDateInput}
+              placeholder="Select Target Date"
+              modalTitle="Select Cancel Date"
+              style={{ marginBottom: 12 }}
+            />
 
             <Text style={styles.inputLabel}>REASON (OPTIONAL)</Text>
             <View style={styles.dateInputWrap}>

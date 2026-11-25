@@ -17,6 +17,7 @@ import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery
 import { customerService } from '../../services/customer.service';
 import { Customer } from '../../types/customer';
 import { DailyDeliverySchedule, CreateDailySchedulePayload } from '../../services/order.service';
+import { AppDatePicker, AppTimePicker } from '../common';
 import AppToast from '../../utils/toast';
 
 interface DailyScheduleModalProps {
@@ -339,18 +340,13 @@ export const DailyScheduleModal: React.FC<DailyScheduleModalProps> = ({
                 <Text style={styles.sectionLabel}>CUSTOMER DELIVERY TIME & NOTIFICATION LEAD</Text>
                 <View style={styles.row}>
                   <View style={{ flex: 1, marginRight: spacing.sm }}>
-                    <Text style={styles.inputSubLabel}>Delivery Time (HH:MM)</Text>
-                    <View style={styles.textInputBox}>
-                      <Ionicons name="time-outline" size={16} color={colors.textMuted} style={{ marginRight: 6 }} />
-                      <TextInput
-                        style={styles.textInput}
-                        value={deliveryTime}
-                        onChangeText={setDeliveryTime}
-                        placeholder="10:00"
-                        placeholderTextColor={colors.textMuted}
-                        maxLength={5}
-                      />
-                    </View>
+                    <AppTimePicker
+                      label="Delivery Time"
+                      value={deliveryTime}
+                      onChange={setDeliveryTime}
+                      placeholder="Select Time"
+                      outputFormat="HH:MM"
+                    />
                   </View>
 
                   <View style={{ flex: 1 }}>
@@ -433,28 +429,23 @@ export const DailyScheduleModal: React.FC<DailyScheduleModalProps> = ({
                 <Text style={styles.sectionLabel}>DATE RANGE & ACTIVE SWITCH</Text>
                 <View style={styles.row}>
                   <View style={{ flex: 1, marginRight: spacing.sm }}>
-                    <Text style={styles.inputSubLabel}>Start Date (YYYY-MM-DD)</Text>
-                    <View style={styles.textInputBox}>
-                      <TextInput
-                        style={styles.textInput}
-                        value={startDate}
-                        onChangeText={setStartDate}
-                        placeholder="YYYY-MM-DD"
-                        placeholderTextColor={colors.textMuted}
-                      />
-                    </View>
+                    <AppDatePicker
+                      label="Start Date"
+                      value={startDate}
+                      onChange={setStartDate}
+                      placeholder="Select Date"
+                      maxDate={endDate || undefined}
+                    />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.inputSubLabel}>End Date (Optional)</Text>
-                    <View style={styles.textInputBox}>
-                      <TextInput
-                        style={styles.textInput}
-                        value={endDate}
-                        onChangeText={setEndDate}
-                        placeholder="Indefinite"
-                        placeholderTextColor={colors.textMuted}
-                      />
-                    </View>
+                    <AppDatePicker
+                      label="End Date (Optional)"
+                      value={endDate}
+                      onChange={setEndDate}
+                      placeholder="Indefinite"
+                      minDate={startDate || undefined}
+                      clearable={true}
+                    />
                   </View>
                 </View>
 

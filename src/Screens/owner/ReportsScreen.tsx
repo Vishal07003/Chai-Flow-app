@@ -18,7 +18,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import Header from '../../components/common/Header';
 import { ReportsExportDialog } from '../../components/ReportsExportDialog';
 import { ReportsPagination } from '../../components/ReportsPagination';
-import CalendarPickerModal from '../../components/common/CalendarPickerModal';
+import { CalendarPickerModal, AppDatePicker } from '../../components/common';
 import {
   reportsService,
   ReportType,
@@ -1375,22 +1375,24 @@ export default function ReportsScreen({ navigation }: any) {
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Custom Date Range</Text>
-            <Text style={styles.modalSub}>Enter date boundaries in YYYY-MM-DD format</Text>
+            <Text style={styles.modalSub}>Select date boundaries for the report</Text>
 
-            <Text style={styles.inputLabel}>From Date</Text>
-            <TextInput
-              style={styles.dateInput}
-              placeholder="e.g. 2026-11-01"
+            <AppDatePicker
+              label="From Date"
               value={customFrom}
-              onChangeText={setCustomFrom}
+              onChange={setCustomFrom}
+              placeholder="Select From Date"
+              maxDate={customTo || undefined}
+              style={{ marginBottom: 10 }}
             />
 
-            <Text style={styles.inputLabel}>To Date</Text>
-            <TextInput
-              style={styles.dateInput}
-              placeholder="e.g. 2026-11-21"
+            <AppDatePicker
+              label="To Date"
               value={customTo}
-              onChangeText={setCustomTo}
+              onChange={setCustomTo}
+              placeholder="Select To Date"
+              minDate={customFrom || undefined}
+              style={{ marginBottom: 14 }}
             />
 
             <View style={styles.modalActions}>

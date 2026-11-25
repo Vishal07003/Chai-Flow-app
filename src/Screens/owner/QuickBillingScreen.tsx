@@ -22,8 +22,7 @@ import billingService, { BillingCustomer } from '../../services/billing.service'
 import orderService from '../../services/order.service';
 import deliveryService, { DeliveryPartnerProfile } from '../../services/delivery.service';
 import draftService, { DraftInvoice } from '../../services/draft.service';
-import { CustomDialog, ConfirmDialog, DeliveryPartnerDropdown, TimePickerModal } from '../../components/common';
-import CalendarPickerModal from '../../components/common/CalendarPickerModal';
+import { CustomDialog, ConfirmDialog, DeliveryPartnerDropdown, AppDatePicker, AppTimePicker } from '../../components/common';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 import { colors, typography, radius, spacing, shadows } from '../../theme';
 
@@ -1374,40 +1373,22 @@ export default function QuickBillingScreen({ route, navigation }: any) {
 
               {/* Delivery Timing: Date & Time in a Single Row */}
               <View style={{ flexDirection: 'row', gap: 12, marginBottom: 14 }}>
-                {/* Delivery Date Picker Button */}
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.orderFieldLabel}>DELIVERY DATE</Text>
-                  <TouchableOpacity
-                    activeOpacity={0.75}
-                    onPress={() => setShowOrderDatePicker(true)}
-                    style={styles.pickerSelectorBox}
-                    accessibilityRole="button"
-                    accessibilityLabel="Select delivery date"
-                  >
-                    <Ionicons name="calendar" size={18} color="#8C331A" style={{ marginRight: 8 }} />
-                    <Text style={styles.pickerSelectorText}>
-                      {deliveryDate || 'Select Date'}
-                    </Text>
-                    <Ionicons name="chevron-down" size={14} color="#8C331A" style={{ marginLeft: 'auto' }} />
-                  </TouchableOpacity>
+                  <AppDatePicker
+                    label="DELIVERY DATE"
+                    value={deliveryDate}
+                    onChange={setDeliveryDate}
+                    placeholder="Select Date"
+                  />
                 </View>
-
-                {/* Delivery Time Picker Button */}
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.orderFieldLabel}>DELIVERY TIME</Text>
-                  <TouchableOpacity
-                    activeOpacity={0.75}
-                    onPress={() => setShowOrderTimePicker(true)}
-                    style={styles.pickerSelectorBox}
-                    accessibilityRole="button"
-                    accessibilityLabel="Select delivery time"
-                  >
-                    <Ionicons name="time" size={18} color="#8C331A" style={{ marginRight: 8 }} />
-                    <Text style={styles.pickerSelectorText}>
-                      {formatTime12H(deliveryTime) || 'Select Time'}
-                    </Text>
-                    <Ionicons name="chevron-down" size={14} color="#8C331A" style={{ marginLeft: 'auto' }} />
-                  </TouchableOpacity>
+                  <AppTimePicker
+                    label="DELIVERY TIME"
+                    value={deliveryTime}
+                    onChange={setDeliveryTime}
+                    placeholder="Select Time"
+                    outputFormat="HH:MM"
+                  />
                 </View>
               </View>
 
@@ -1453,36 +1434,15 @@ export default function QuickBillingScreen({ route, navigation }: any) {
               </View>
 
               {/* Payment Due Date */}
-              <Text style={styles.orderFieldLabel}>PAYMENT DUE DATE (OPTIONAL - YYYY-MM-DD)</Text>
-              <View style={styles.draftInputBox}>
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  onPress={() => setShowDatePicker(true)}
-                  style={styles.calendarIconBtn}
-                >
-                  <Ionicons
-                    name="calendar-outline"
-                    size={20}
-                    color="#8C331A"
-                  />
-                </TouchableOpacity>
-                <TextInput
-                  style={styles.draftInputField}
-                  placeholder="YYYY-MM-DD (e.g. 2026-12-01)"
-                  placeholderTextColor="#9CA3AF"
-                  value={dueDate}
-                  onChangeText={setDueDate}
-                />
-                {dueDate.length > 0 && (
-                  <TouchableOpacity
-                    activeOpacity={0.7}
-                    onPress={() => setDueDate('')}
-                    style={{ padding: 4 }}
-                  >
-                    <Ionicons name="close-circle" size={18} color="#9CA3AF" />
-                  </TouchableOpacity>
-                )}
-              </View>
+              <AppDatePicker
+                label="PAYMENT DUE DATE (OPTIONAL)"
+                value={dueDate}
+                onChange={setDueDate}
+                placeholder="Select Due Date"
+                clearable={true}
+                modalTitle="Select Payment Due Date"
+                style={{ marginBottom: 12 }}
+              />
 
               {/* Draft Notes */}
               <Text style={styles.orderFieldLabel}>DRAFT NOTES (OPTIONAL)</Text>
@@ -1629,44 +1589,6 @@ export default function QuickBillingScreen({ route, navigation }: any) {
         type={dialogConfig.type}
         buttons={dialogConfig.buttons}
         onClose={closeDialog}
-      />
-
-      {/* PAYMENT DUE DATE CALENDAR PICKER (DRAFT MODE) */}
-      <CalendarPickerModal
-        visible={showDatePicker}
-        title="Select Payment Due Date"
-        initialDate={dueDate.trim() || undefined}
-        onClose={() => setShowDatePicker(false)}
-        onSelectDate={(dateString: string) => {
-          setDueDate(dateString);
-          setShowDatePicker(false);
-        }}
-      />
-
-      {/* DELIVERY DATE CALENDAR PICKER (ORDER MODE) */}
-      <CalendarPickerModal
-        visible={showOrderDatePicker}
-        title="Select Delivery Date"
-        initialDate={deliveryDate.trim() || undefined}
-        onClose={() => setShowOrderDatePicker(false)}
-        onSelectDate={(dateString: string) => {
-          setDeliveryDate(dateString);
-          setShowOrderDatePicker(false);
-        }}
-      />
-
-      {/* DELIVERY TIME PICKER (ORDER MODE: 12-HOUR FORMAT WITH AM/PM) */}
-      <TimePickerModal
-        visible={showOrderTimePicker}
-        title="Select Delivery Time"
-        initialTime={deliveryTime.trim().length === 5 ? `${deliveryTime.trim()}:00` : deliveryTime.trim()}
-        onClose={() => setShowOrderTimePicker(false)}
-        onSelectTime={(timeString: string) => {
-          // timeString is returned as "HH:MM:00" in 24-hour format
-          const formattedHHMM = timeString.substring(0, 5);
-          setDeliveryTime(formattedHHMM);
-          setShowOrderTimePicker(false);
-        }}
       />
     </SafeAreaView>
   );
