@@ -72,6 +72,18 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
     }
   }, []);
 
+  const handleTriggerSync = useCallback(async () => {
+    try {
+      setIsSyncing(true);
+      await offlineDeliveryService.syncQueue();
+      await fetchDeliveries();
+    } catch (err) {
+      console.log('Automatic sync error:', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [fetchDeliveries]);
+
   // Subscribe to offline queue changes and trigger sync on launch
   useEffect(() => {
     const unsubscribe = offlineDeliveryService.subscribe(queue => {
@@ -86,19 +98,7 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
     });
 
     return unsubscribe;
-  }, []);
-
-  const handleTriggerSync = useCallback(async () => {
-    try {
-      setIsSyncing(true);
-      await offlineDeliveryService.syncQueue();
-      await fetchDeliveries();
-    } catch (err) {
-      console.log('Automatic sync error:', err);
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [fetchDeliveries]);
+  }, [handleTriggerSync]);
 
   useEffect(() => {
     fetchDeliveries();
@@ -134,40 +134,44 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
         type: 'success',
       });
     } catch (err: any) {
-      console.log(`Direct status transition failed (${err?.message}). Enqueuing offline action.`);
-      // Enqueue offline action safely
-      const actionTypeMap: { [key: string]: any } = {
-        accepted: 'ACCEPT_TASK',
-        picked_up: 'PICKUP',
-        on_the_way: 'ON_THE_WAY',
-        failed: 'FAIL_DELIVERY',
-      };
+      const isOutage = offlineDeliveryService.isNetworkOutageError(err);
+      if (isOutage) {
+        console.log(`Direct status transition failed due to network outage (${err?.message}). Enqueuing offline action.`);
+        const actionTypeMap: { [key: string]: any } = {
+          accepted: 'ACCEPT_TASK',
+          picked_up: 'PICKUP',
+          on_the_way: 'ON_THE_WAY',
+          failed: 'FAIL_DELIVERY',
+        };
 
-      const actionType = actionTypeMap[targetStatus];
-      if (actionType) {
-        await offlineDeliveryService.enqueueAction(delivery.id, actionType, {
-          status: targetStatus,
-        });
+        const actionType = actionTypeMap[targetStatus];
+        if (actionType) {
+          await offlineDeliveryService.enqueueAction(delivery.id, actionType, {
+            status: targetStatus,
+          });
 
-        // Optimistically update local list display status while pending sync
-        setDeliveries(prev =>
-          prev.map(d => (d.id === delivery.id ? { ...d, status: targetStatus } : d))
-        );
+          // Optimistically update local list display status while pending sync
+          setDeliveries(prev =>
+            prev.map(d => (d.id === delivery.id ? { ...d, status: targetStatus } : d))
+          );
 
-        setCustomDialog({
-          visible: true,
-          title: 'Offline Mode: Action Saved',
-          description: `No network connection. '${targetStatus.toUpperCase()}' has been saved locally and will synchronize automatically when online.`,
-          type: 'info',
-        });
-      } else {
-        setCustomDialog({
-          visible: true,
-          title: 'Transition Error',
-          description: err?.message || 'Failed to update status.',
-          type: 'danger',
-        });
+          setCustomDialog({
+            visible: true,
+            title: 'Offline Mode: Action Saved',
+            description: `No network connection. '${targetStatus.toUpperCase()}' has been saved locally and will synchronize automatically when online.`,
+            type: 'info',
+          });
+          return;
+        }
       }
+
+      // If it's a backend HTTP error (400, 401, 403, 404, 500), display server message directly
+      setCustomDialog({
+        visible: true,
+        title: 'Status Update Error',
+        description: err?.message || 'Failed to update status on server.',
+        type: 'danger',
+      });
     } finally {
       setActionInProgress(false);
     }
@@ -292,12 +296,51 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
         type: 'success',
       });
     } catch (err: any) {
-      setCustomDialog({
-        visible: true,
-        title: 'Submission Error',
-        description: err?.message || 'Failed to complete delivery.',
-        type: 'danger',
-      });
+      const isOutage = offlineDeliveryService.isNetworkOutageError(err);
+      if (isOutage) {
+        console.log(`Direct delivery completion failed due to network outage (${err?.message}). Enqueuing offline action.`);
+
+        // Build payload for offline queue
+        const itemsPayload = items.map(it => {
+          const raw = deliveredQuantities[it.product];
+          const deliveredQty = parseQtyValue(raw, it.quantity);
+          return {
+            product_id: it.product,
+            delivered_quantity: deliveredQty,
+            discrepancy_notes: discrepancyNotes.trim(),
+          };
+        });
+
+        await offlineDeliveryService.enqueueAction(selectedDelivery.id, 'SUBMIT_QUANTITIES', {
+          items: itemsPayload,
+          notes: discrepancyNotes.trim(),
+          status: 'delivered',
+        });
+
+        // Halt tracking
+        await locationTrackingService.stopTracking();
+
+        // Optimistically update local list display status while pending sync
+        setDeliveries(prev =>
+          prev.map(d => (d.id === selectedDelivery.id ? { ...d, status: 'delivered' } : d))
+        );
+
+        setRecordModalVisible(false);
+        setCustomDialog({
+          visible: true,
+          title: 'Offline: Delivery Recorded',
+          description:
+            'No network connection. Your delivered quantities and completion record have been saved locally. The delivery shows "Pending Sync" and will confirm with the server when connectivity returns.',
+          type: 'info',
+        });
+      } else {
+        setCustomDialog({
+          visible: true,
+          title: 'Delivery Error',
+          description: err?.message || 'Server rejected delivery completion.',
+          type: 'danger',
+        });
+      }
     } finally {
       setActionInProgress(false);
     }
@@ -315,7 +358,7 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
     const isDelivered = item.status === 'delivered';
     const isFailed = item.status === 'failed';
 
-    // Find pending offline actions for this delivery
+    // Find pending offline actions for this delivery (exclude SYNCED)
     const pendingAction = offlineQueue.find(
       a => String(a.deliveryId) === String(item.id) && a.syncStatus !== 'SYNCED'
     );

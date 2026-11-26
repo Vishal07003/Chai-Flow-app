@@ -91,6 +91,10 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
       const res = await offlineDeliveryService.getDeliverySyncStatus(deliveryIdParam);
       setSyncStatus(res.syncStatus);
       setPendingAction(res.latestAction);
+      // If sync status transitioned to null (meaning action was synced and cleaned up), refresh the delivery
+      if (!res.syncStatus && syncStatus) {
+        fetchDeliveryDetail();
+      }
     };
 
     checkSync();
@@ -98,7 +102,7 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
       checkSync();
     });
     return unsubscribe;
-  }, [deliveryIdParam]);
+  }, [deliveryIdParam, syncStatus, fetchDeliveryDetail]);
 
   const orderDetails = delivery?.order_details;
   const customerName =
@@ -301,38 +305,49 @@ export default function OrderDetailsScreen({ route, navigation }: any) {
         navigation.goBack();
       }, 1600);
     } catch (err: any) {
-      console.log(`Direct delivery completion failed (${err?.message}). Enqueuing offline action.`);
+      const isOutage = offlineDeliveryService.isNetworkOutageError(err);
+      if (isOutage) {
+        console.log(`Direct delivery completion failed due to network outage (${err?.message}). Enqueuing offline action.`);
 
-      // Build payload for offline queue
-      const itemsPayload = items.map(it => {
-        const raw = deliveredQuantities[it.product];
-        const deliveredQty = parseQtyValue(raw, it.quantity);
-        return {
-          product_id: it.product,
-          delivered_quantity: deliveredQty,
-          discrepancy_notes: discrepancyNotes.trim(),
-        };
-      });
+        // Build payload for offline queue
+        const itemsPayload = items.map(it => {
+          const raw = deliveredQuantities[it.product];
+          const deliveredQty = parseQtyValue(raw, it.quantity);
+          return {
+            product_id: it.product,
+            delivered_quantity: deliveredQty,
+            discrepancy_notes: discrepancyNotes.trim(),
+          };
+        });
 
-      await offlineDeliveryService.enqueueAction(delivery.id, 'SUBMIT_QUANTITIES', {
-        items: itemsPayload,
-        notes: discrepancyNotes.trim(),
-        status: 'delivered',
-      });
+        await offlineDeliveryService.enqueueAction(delivery.id, 'SUBMIT_QUANTITIES', {
+          items: itemsPayload,
+          notes: discrepancyNotes.trim(),
+          status: 'delivered',
+        });
 
-      // Stop location tracking
-      await locationTrackingService.stopTracking();
+        // Stop location tracking
+        await locationTrackingService.stopTracking();
 
-      setIsReconcileModalVisible(false);
-      setToastMessage('Saved Offline: Will Sync Automatically');
+        setIsReconcileModalVisible(false);
+        setToastMessage('Saved Offline: Will Sync Automatically');
 
-      setInfoDialog({
-        visible: true,
-        title: 'Offline: Delivery Recorded',
-        description:
-          'No network connection. Your delivered quantities and completion record have been saved locally. The delivery shows "Pending Sync" and will confirm with the server when connectivity returns.',
-        type: 'info',
-      });
+        setInfoDialog({
+          visible: true,
+          title: 'Offline: Delivery Recorded',
+          description:
+            'No network connection. Your delivered quantities and completion record have been saved locally. The delivery shows "Pending Sync" and will confirm with the server when connectivity returns.',
+          type: 'info',
+        });
+      } else {
+        // Explicit backend HTTP error (400, 401, 403, 404, 500)
+        setInfoDialog({
+          visible: true,
+          title: 'Completion Error',
+          description: err?.message || 'Server rejected delivery confirmation.',
+          type: 'warning',
+        });
+      }
     } finally {
       setIsSubmitting(false);
     }
