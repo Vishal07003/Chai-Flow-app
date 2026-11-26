@@ -169,7 +169,11 @@ class ApiClient {
                 .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
                 .join('; ')
             : `Request failed with status ${response.status}`);
-        throw new Error(errorMessage);
+        const httpError: any = new Error(errorMessage);
+        httpError.status = response.status;
+        httpError.statusCode = response.status;
+        httpError.data = responseData;
+        throw httpError;
       }
 
       return responseData as T;

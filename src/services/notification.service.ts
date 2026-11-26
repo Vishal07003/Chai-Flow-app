@@ -139,11 +139,17 @@ class NotificationService {
         params: { orderId: data.order_id },
       };
     }
+    if (notifType === 'delivery_completed') {
+      return {
+        screen: 'Orders',
+        params: { orderId: data.order_id, deliveryId: data.delivery_id },
+      };
+    }
     if (notifType === 'delivery_assigned') {
-      // Corrected to match registered screen name in DeliveryNavigator
       return {
         screen: 'OrderDetails',
         params: {
+          deliveryId: data.delivery_id,
           order: { id: data.order_id, delivery_id: data.delivery_id },
         },
       };

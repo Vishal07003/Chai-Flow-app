@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState, AppStateStatus } from 'react-native';
 import deliveryService, { BackendDelivery } from './delivery.service';
 import apiClient from './api';
-import { STORAGE_KEYS } from '../constants/api.config';
+import { STORAGE_KEYS, API_BASE_URL } from '../constants/api.config';
 
 export type OfflineActionType =
   | 'ACCEPT_TASK'
@@ -44,6 +45,74 @@ const syncListeners: Set<SyncListener> = new Set();
 
 class OfflineDeliveryService {
   private isSyncing = false;
+  private appStateSubscription: any = null;
+  private syncIntervalTimer: any = null;
+
+  constructor() {
+    this.initAppStateAndReachability();
+  }
+
+  /**
+   * Monitor AppState transitions (e.g. background to active foreground)
+   * to automatically attempt synchronizing pending offline actions.
+   */
+  private initAppStateAndReachability() {
+    try {
+      this.appStateSubscription = AppState.addEventListener(
+        'change',
+        (nextAppState: AppStateStatus) => {
+          if (nextAppState === 'active') {
+            console.log('[OfflineDeliveryService] App became active; checking pending queue...');
+            this.syncQueue().catch(err => {
+              console.log('[OfflineDeliveryService] Foreground auto-sync attempt finished:', err?.message || err);
+            });
+          }
+        }
+      );
+
+      // Periodic check if there are pending actions in queue
+      this.syncIntervalTimer = setInterval(() => {
+        this.getQueue().then(queue => {
+          const pending = queue.filter(a => a.syncStatus === 'PENDING_SYNC');
+          if (pending.length > 0 && !this.isSyncing) {
+            this.syncQueue().catch(() => {});
+          }
+        });
+      }, 30000);
+    } catch (err) {
+      console.log('[OfflineDeliveryService] Failed to initialize AppState listener:', err);
+    }
+  }
+
+  /**
+   * Helper to determine if an error is a genuine network/connectivity outage
+   * vs a server-side HTTP rejection (400, 401, 403, 404, 500, etc.)
+   */
+  isNetworkOutageError(error: any): boolean {
+    if (!error) return false;
+    const status = error.status || error.statusCode || error.response?.status;
+    // Explicit HTTP responses from the backend mean the device IS online and reaching the server
+    if (typeof status === 'number' && status >= 400 && status < 600) {
+      return false;
+    }
+    const msg = (error.message || '').toLowerCase();
+    if (
+      msg.includes('network request failed') ||
+      msg.includes('failed to fetch') ||
+      msg.includes('network error') ||
+      msg.includes('timed out') ||
+      msg.includes('timeout') ||
+      msg.includes('connection refused') ||
+      msg.includes('aborted')
+    ) {
+      return true;
+    }
+    // If no HTTP status is present and it is a TypeError (fetch network drop)
+    if (error.name === 'TypeError') {
+      return true;
+    }
+    return false;
+  }
 
   /**
    * Subscribe to queue changes
@@ -64,19 +133,37 @@ class OfflineDeliveryService {
   }
 
   /**
-   * Get currently active user profile from storage
+   * Get currently active user profile from storage with robust field checking
    */
   async getCurrentPartnerId(): Promise<string | number | null> {
     try {
       const stored = await AsyncStorage.getItem(STORAGE_KEYS.USER_PROFILE);
       if (stored) {
         const parsed = JSON.parse(stored);
-        return parsed.id || parsed.phone || null;
+        const pid = parsed.id || parsed.user_id || parsed.phone || parsed.username || null;
+        if (pid) return pid;
       }
     } catch {
       // Fallback
     }
     return null;
+  }
+
+  /**
+   * Check if action's partner matches current user
+   */
+  isPartnerMatch(actionPartnerId: string | number, currentPartnerId: string | number | null, userProfileRaw?: any): boolean {
+    if (!currentPartnerId) return true; // If no profile loaded yet, don't lock out
+    const actStr = String(actionPartnerId).toLowerCase();
+    const curStr = String(currentPartnerId).toLowerCase();
+    if (actStr === curStr || actStr === 'current_user') return true;
+
+    if (userProfileRaw) {
+      if (userProfileRaw.id && String(userProfileRaw.id) === actStr) return true;
+      if (userProfileRaw.phone && String(userProfileRaw.phone) === actStr) return true;
+      if (userProfileRaw.username && String(userProfileRaw.username).toLowerCase() === actStr) return true;
+    }
+    return false;
   }
 
   /**
@@ -162,6 +249,7 @@ class OfflineDeliveryService {
     if (existingIndex >= 0) {
       // Update payload of existing pending action
       queue[existingIndex].payload = payload;
+      queue[existingIndex].partnerId = partnerId;
       queue[existingIndex].createdAt = new Date().toISOString();
       await this.saveQueue(queue);
       return queue[existingIndex];
@@ -199,11 +287,13 @@ class OfflineDeliveryService {
       return { processed: 0, succeeded: 0, failed: 0, skipped: 0 };
     }
 
+    let userProfileRaw: any = null;
+    try {
+      const stored = await AsyncStorage.getItem(STORAGE_KEYS.USER_PROFILE);
+      if (stored) userProfileRaw = JSON.parse(stored);
+    } catch {}
+
     const currentPartnerId = await this.getCurrentPartnerId();
-    if (!currentPartnerId) {
-      console.log('[OfflineDeliveryService] No authenticated partner, aborting sync.');
-      return { processed: 0, succeeded: 0, failed: 0, skipped: 0 };
-    }
 
     this.isSyncing = true;
     let processed = 0;
@@ -229,8 +319,8 @@ class OfflineDeliveryService {
         if (item.syncStatus === 'SYNCED') continue;
 
         // 2. Partner Isolation Security Rule:
-        // Never sync another user's action with the current JWT token
-        if (String(item.partnerId) !== String(currentPartnerId)) {
+        // Validate with robust profile matching
+        if (!this.isPartnerMatch(item.partnerId, currentPartnerId, userProfileRaw)) {
           console.warn(
             `[OfflineDeliveryService] Action owner #${item.partnerId} does not match current user #${currentPartnerId}. Quarantining as NEEDS_REVIEW.`
           );
@@ -259,18 +349,18 @@ class OfflineDeliveryService {
             currentDelivery = await deliveryService.getDeliveryById(item.deliveryId);
           } catch (fetchErr: any) {
             // Check HTTP status code
-            if (fetchErr?.status === 404) {
+            if (fetchErr?.status === 404 || fetchErr?.message?.includes('404')) {
               item.syncStatus = 'SYNC_FAILED';
               item.errorMessage = 'Delivery record no longer exists on server.';
               failed++;
               continue;
-            } else if (fetchErr?.status === 403) {
+            } else if (fetchErr?.status === 403 || fetchErr?.message?.includes('403')) {
               item.syncStatus = 'NEEDS_REVIEW';
               item.errorMessage = 'Permission denied for this delivery.';
               failed++;
               continue;
             } else {
-              // Network connectivity likely dropped again
+              // Network connectivity likely dropped
               throw fetchErr;
             }
           }
@@ -333,7 +423,7 @@ class OfflineDeliveryService {
                   item.payload.items
                 );
               }
-              // 2. Mark delivered on backend
+              // 2. Mark delivered on backend (or if already delivered, consider synced)
               if (currentDelivery?.status !== 'delivered') {
                 await deliveryService.updateStatus(
                   item.deliveryId,
@@ -372,15 +462,27 @@ class OfflineDeliveryService {
 
           // Differentiate network error vs 4xx validation rejection
           const statusCode = execErr?.status || execErr?.statusCode;
-          if (statusCode === 400 || statusCode === 409) {
+          const msg = execErr?.message || '';
+
+          if (statusCode === 400 || statusCode === 409 || msg.includes('400') || msg.includes('Invalid status')) {
+            // Check if backend already has this status or further
+            try {
+              const latest = await deliveryService.getDeliveryById(item.deliveryId);
+              if (latest && item.payload.status && latest.status === item.payload.status) {
+                item.syncStatus = 'SYNCED';
+                succeeded++;
+                continue;
+              }
+            } catch {}
+
             item.syncStatus = 'NEEDS_REVIEW';
-            item.errorMessage = execErr?.message || 'Server rejected status transition.';
+            item.errorMessage = msg || 'Server rejected status transition.';
             failed++;
-          } else if (statusCode === 403) {
+          } else if (statusCode === 403 || msg.includes('403') || msg.includes('permission')) {
             item.syncStatus = 'NEEDS_REVIEW';
             item.errorMessage = 'Delivery is no longer assigned to your account.';
             failed++;
-          } else if (statusCode === 404) {
+          } else if (statusCode === 404 || msg.includes('404')) {
             item.syncStatus = 'SYNC_FAILED';
             item.errorMessage = 'Delivery record not found on server.';
             failed++;
@@ -439,3 +541,4 @@ class OfflineDeliveryService {
 
 export const offlineDeliveryService = new OfflineDeliveryService();
 export default offlineDeliveryService;
+
