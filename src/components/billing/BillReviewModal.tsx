@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -8,13 +8,13 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   FlatList,
+  Dimensions,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { colors } from '../../theme';
-import { AppDatePicker } from '../common';
 import AppToast from '../../utils/toast';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { productService, BackendProduct } from '../../services/product.service';
@@ -70,16 +70,18 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
   initialItems,
   initialDiscount = '0',
   initialNotes = '',
-  initialDueDate = null,
   onSaveSuccess,
   saveAction,
 }) => {
   const [items, setItems] = useState<BillReviewItem[]>([]);
   const [discount, setDiscount] = useState<string>('0');
   const [notes, setNotes] = useState<string>('');
-  const [dueDate, setDueDate] = useState<string>('');
   const [editReason, setEditReason] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
+
+  // Keyboard height state for adaptive bottom sheet positioning
+  const [keyboardHeight, setKeyboardHeight] = useState<number>(0);
+  const scrollViewRef = useRef<ScrollView>(null);
 
   // Delete product confirmation state
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
@@ -90,18 +92,39 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
   const [loadingProducts, setLoadingProducts] = useState<boolean>(false);
   const [productSearch, setProductSearch] = useState<string>('');
 
+  // Track keyboard show/hide events to adapt bottom sheet height & position
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      e => {
+        setKeyboardHeight(e.endCoordinates.height);
+      }
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
+      }
+    );
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
   useEffect(() => {
     if (visible) {
       setItems(initialItems.map(it => ({ ...it })));
       setDiscount(initialDiscount || '0');
       setNotes(initialNotes || '');
-      setDueDate(initialDueDate || '');
       setEditReason('');
       setIsSaving(false);
       setDeleteIndex(null);
       setShowAddProductModal(false);
+      setKeyboardHeight(0);
     }
-  }, [visible, initialItems, initialDiscount, initialNotes, initialDueDate]);
+  }, [visible, initialItems, initialDiscount, initialNotes]);
 
   // Load catalog products when Add Product modal opens
   const handleOpenAddProduct = async () => {
@@ -121,7 +144,6 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
   };
 
   const handleSelectProduct = (product: BackendProduct) => {
-    // If product already in bill, prompt or increment
     const existingIndex = items.findIndex(it => it.product_id === product.id);
     if (existingIndex >= 0) {
       setItems(prev => {
@@ -246,7 +268,7 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
         items: payloadItems,
         discount_amount: String(discountAmount),
         notes: notes.trim(),
-        due_date: dueDate.trim() || null,
+        due_date: null, // Payment collection is handled via Collect Cash in Customer Profile
         reason: editReason.trim() || undefined,
       });
 
@@ -273,255 +295,267 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
 
   const itemToDelete = deleteIndex !== null ? items[deleteIndex] : null;
 
+  // Compute dynamic max height based on available screen space above keyboard
+  const screenHeight = Dimensions.get('window').height;
+  const isKeyboardOpen = keyboardHeight > 0;
+  const modalMaxHeight = isKeyboardOpen
+    ? Math.max(screenHeight - keyboardHeight - 20, 260)
+    : screenHeight * 0.90;
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.keyboardContainer}
-        >
-          <View style={styles.modalContainer}>
-            {/* Header */}
-            <View style={styles.modalHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>
-                  {mode === 'create_from_order' ? 'Review & Save Bill' : 'Edit Saved Bill'}
-                </Text>
-                <Text style={styles.modalSubtitle} numberOfLines={1}>
-                  {mode === 'create_from_order'
-                    ? `Order #${orderId} • ${customerName || 'Customer'}`
-                    : `Invoice #${invoiceNumber || invoiceId} • ${customerName || 'Customer'}`}
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={onClose}
-                style={styles.closeBtn}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="close" size={22} color="#6B7280" />
-              </TouchableOpacity>
+      <View
+        style={[
+          styles.modalOverlay,
+          isKeyboardOpen && {
+            justifyContent: 'flex-start',
+            paddingTop: 10,
+            paddingBottom: keyboardHeight,
+          },
+        ]}
+      >
+        <View style={[styles.modalContainer, { maxHeight: modalMaxHeight }]}>
+          {/* Header */}
+          <View style={styles.modalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modalTitle}>
+                {mode === 'create_from_order' ? 'Review & Save Bill' : 'Edit Saved Bill'}
+              </Text>
+              <Text style={styles.modalSubtitle} numberOfLines={1}>
+                {mode === 'create_from_order'
+                  ? `Order #${orderId} • ${customerName || 'Customer'}`
+                  : `Invoice #${invoiceNumber || invoiceId} • ${customerName || 'Customer'}`}
+              </Text>
             </View>
-
-            <ScrollView
-              style={styles.modalBody}
-              contentContainerStyle={styles.modalScrollContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              {/* Delivery Metadata (Read Only Info) */}
-              <View style={styles.metaInfoCard}>
-                <View style={styles.metaRow}>
-                  <Ionicons name="bicycle-outline" size={14} color="#8C331A" style={{ marginRight: 6 }} />
-                  <Text style={styles.metaLabel}>Delivery Partner:</Text>
-                  <Text style={styles.metaValue} numberOfLines={1}>{deliveryPartnerName || 'Assigned Driver'}</Text>
-                </View>
-                {(deliveryDate || deliveryTime) && (
-                  <View style={[styles.metaRow, { marginTop: 4 }]}>
-                    <Ionicons name="time-outline" size={14} color="#8C331A" style={{ marginRight: 6 }} />
-                    <Text style={styles.metaLabel}>Delivered At:</Text>
-                    <Text style={styles.metaValue}>
-                      {deliveryDate || ''} {deliveryTime || ''}
-                    </Text>
-                  </View>
-                )}
-              </View>
+              <Ionicons name="close" size={22} color="#6B7280" />
+            </TouchableOpacity>
+          </View>
 
-              {/* Quantity discrepancy banner if delivered > ordered */}
-              {itemsWithExcessDelivered.length > 0 && (
-                <View style={styles.warningBanner}>
-                  <Ionicons name="warning-outline" size={16} color="#D97706" style={{ marginRight: 6 }} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.warningTitle}>Quantity Notice</Text>
-                    <Text style={styles.warningSubtitle}>
-                      Delivered quantity exceeds ordered quantity on {itemsWithExcessDelivered.map(i => i.product_name).join(', ')}. Review before saving.
-                    </Text>
-                  </View>
+          <ScrollView
+            ref={scrollViewRef}
+            style={styles.modalBody}
+            contentContainerStyle={styles.modalScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={true}
+          >
+            {/* Delivery Metadata (Read Only Info) */}
+            <View style={styles.metaInfoCard}>
+              <View style={styles.metaRow}>
+                <Ionicons name="bicycle-outline" size={14} color="#8C331A" style={{ marginRight: 6 }} />
+                <Text style={styles.metaLabel}>Delivery Partner:</Text>
+                <Text style={styles.metaValue} numberOfLines={1}>{deliveryPartnerName || 'Assigned Driver'}</Text>
+              </View>
+              {(deliveryDate || deliveryTime) && (
+                <View style={[styles.metaRow, { marginTop: 4 }]}>
+                  <Ionicons name="time-outline" size={14} color="#8C331A" style={{ marginRight: 6 }} />
+                  <Text style={styles.metaLabel}>Delivered At:</Text>
+                  <Text style={styles.metaValue}>
+                    {deliveryDate || ''} {deliveryTime || ''}
+                  </Text>
                 </View>
               )}
+            </View>
 
-              {/* Product Items Table Header */}
-              <View style={styles.tableHeaderRow}>
-                <Text style={[styles.tableHeaderCol, { flex: 2 }]}>PRODUCT</Text>
-                <Text style={[styles.tableHeaderCol, { flex: 1, textAlign: 'center' }]}>QTY</Text>
-                <Text style={[styles.tableHeaderCol, { flex: 1.2, textAlign: 'center' }]}>RATE (₹)</Text>
-                <Text style={[styles.tableHeaderCol, { flex: 1.2, textAlign: 'right' }]}>TOTAL</Text>
-                <View style={{ width: 28 }} />
+            {/* Quantity discrepancy banner if delivered > ordered */}
+            {itemsWithExcessDelivered.length > 0 && (
+              <View style={styles.warningBanner}>
+                <Ionicons name="warning-outline" size={16} color="#D97706" style={{ marginRight: 6 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.warningTitle}>Quantity Notice</Text>
+                  <Text style={styles.warningSubtitle}>
+                    Delivered quantity exceeds ordered quantity on {itemsWithExcessDelivered.map(i => i.product_name).join(', ')}. Review before saving.
+                  </Text>
+                </View>
               </View>
+            )}
 
-              {/* Editable Line Items */}
-              {items.map((item, index) => {
-                const lineTotal = ((item.quantity || 0) * (parseFloat(item.unit_price) || 0)).toFixed(0);
-                const isExcess = item.ordered_quantity !== undefined && item.quantity > item.ordered_quantity;
-                return (
-                  <View key={item.id || index} style={styles.itemRow}>
-                    <View style={{ flex: 2, marginRight: 6 }}>
-                      <Text style={styles.itemProductName} numberOfLines={2}>
-                        {item.product_name}
-                      </Text>
-                      {item.ordered_quantity !== undefined && (
-                        <Text style={[styles.itemDiscrepancyHint, isExcess && styles.excessHint]}>
-                          Ordered: {item.ordered_quantity} • Delivered: {item.quantity}
-                          {isExcess ? ' (Exceeds Ordered)' : ''}
-                        </Text>
-                      )}
-                    </View>
+            {/* Product Items Table Header */}
+            <View style={styles.tableHeaderRow}>
+              <Text style={[styles.tableHeaderCol, { flex: 2 }]}>PRODUCT</Text>
+              <Text style={[styles.tableHeaderCol, { flex: 1, textAlign: 'center' }]}>QTY</Text>
+              <Text style={[styles.tableHeaderCol, { flex: 1.2, textAlign: 'center' }]}>RATE (₹)</Text>
+              <Text style={[styles.tableHeaderCol, { flex: 1.2, textAlign: 'right' }]}>TOTAL</Text>
+              <View style={{ width: 28 }} />
+            </View>
 
-                    {/* QTY Input */}
-                    <View style={{ flex: 1, alignItems: 'center' }}>
-                      <TextInput
-                        style={styles.cellInput}
-                        keyboardType="numeric"
-                        value={String(item.quantity)}
-                        onChangeText={t => handleQtyChange(index, t)}
-                      />
-                    </View>
-
-                    {/* Rate Input */}
-                    <View style={{ flex: 1.2, alignItems: 'center' }}>
-                      <TextInput
-                        style={styles.cellInput}
-                        keyboardType="decimal-pad"
-                        value={item.unit_price}
-                        onChangeText={t => handlePriceChange(index, t)}
-                      />
-                    </View>
-
-                    {/* Line Total */}
-                    <Text style={[styles.cellTotalText, { flex: 1.2, textAlign: 'right' }]}>
-                      ₹{lineTotal}
+            {/* Editable Line Items */}
+            {items.map((item, index) => {
+              const lineTotal = ((item.quantity || 0) * (parseFloat(item.unit_price) || 0)).toFixed(0);
+              const isExcess = item.ordered_quantity !== undefined && item.quantity > item.ordered_quantity;
+              return (
+                <View key={item.id || index} style={styles.itemRow}>
+                  <View style={{ flex: 2, marginRight: 6 }}>
+                    <Text style={styles.itemProductName} numberOfLines={2}>
+                      {item.product_name}
                     </Text>
-
-                    {/* Remove Item */}
-                    <TouchableOpacity
-                      onPress={() => requestRemoveItem(index)}
-                      style={styles.trashBtn}
-                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                    >
-                      <Ionicons name="trash-outline" size={16} color="#DC2626" />
-                    </TouchableOpacity>
+                    {item.ordered_quantity !== undefined && (
+                      <Text style={[styles.itemDiscrepancyHint, isExcess && styles.excessHint]}>
+                        Ordered: {item.ordered_quantity} • Delivered: {item.quantity}
+                        {isExcess ? ' (Exceeds Ordered)' : ''}
+                      </Text>
+                    )}
                   </View>
-                );
-              })}
 
-              {/* + Add Product Button */}
-              <TouchableOpacity
-                style={styles.addProductBtn}
-                onPress={handleOpenAddProduct}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="add-circle-outline" size={16} color="#8C331A" style={{ marginRight: 6 }} />
-                <Text style={styles.addProductBtnText}>+ Add Product</Text>
-              </TouchableOpacity>
+                  {/* QTY Input */}
+                  <View style={{ flex: 1, alignItems: 'center' }}>
+                    <TextInput
+                      style={styles.cellInput}
+                      keyboardType="numeric"
+                      value={String(item.quantity)}
+                      onChangeText={t => handleQtyChange(index, t)}
+                    />
+                  </View>
 
-              {/* Summary & Calculations Section */}
-              <View style={styles.calculationCard}>
-                <View style={styles.calcRow}>
-                  <Text style={styles.calcLabel}>Total Quantity:</Text>
-                  <Text style={styles.calcValue}>{totalQuantity} units</Text>
+                  {/* Rate Input */}
+                  <View style={{ flex: 1.2, alignItems: 'center' }}>
+                    <TextInput
+                      style={styles.cellInput}
+                      keyboardType="decimal-pad"
+                      value={item.unit_price}
+                      onChangeText={t => handlePriceChange(index, t)}
+                    />
+                  </View>
+
+                  {/* Line Total */}
+                  <Text style={[styles.cellTotalText, { flex: 1.2, textAlign: 'right' }]}>
+                    ₹{lineTotal}
+                  </Text>
+
+                  {/* Remove Item */}
+                  <TouchableOpacity
+                    onPress={() => requestRemoveItem(index)}
+                    style={styles.trashBtn}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                  </TouchableOpacity>
                 </View>
+              );
+            })}
 
-                <View style={styles.calcRow}>
-                  <Text style={styles.calcLabel}>Subtotal:</Text>
-                  <Text style={styles.calcValue}>₹{subtotal.toFixed(0)}</Text>
-                </View>
+            {/* + Add Product Button */}
+            <TouchableOpacity
+              style={styles.addProductBtn}
+              onPress={handleOpenAddProduct}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="add-circle-outline" size={16} color="#8C331A" style={{ marginRight: 6 }} />
+              <Text style={styles.addProductBtnText}>+ Add Product</Text>
+            </TouchableOpacity>
 
-                {/* Discount Input */}
-                <View style={styles.calcRow}>
-                  <Text style={styles.calcLabel}>Discount (₹):</Text>
-                  <TextInput
-                    style={styles.discountInput}
-                    keyboardType="numeric"
-                    value={discount}
-                    onChangeText={t => setDiscount(t.replace(/[^0-9.]/g, ''))}
-                    placeholder="0"
-                  />
-                </View>
-
-                <View style={styles.calcDivider} />
-
-                <View style={styles.calcRow}>
-                  <Text style={styles.grandTotalLabel}>Final Bill Amount:</Text>
-                  <Text style={styles.grandTotalValue}>₹{grandTotal.toFixed(0)}</Text>
-                </View>
+            {/* Summary & Calculations Section */}
+            <View style={styles.calculationCard}>
+              <View style={styles.calcRow}>
+                <Text style={styles.calcLabel}>Total Quantity:</Text>
+                <Text style={styles.calcValue}>{totalQuantity} units</Text>
               </View>
 
-              {/* Optional Due Date */}
-              <AppDatePicker
-                label="Payment Due Date (Optional)"
-                value={dueDate}
-                onChange={setDueDate}
-                placeholder="Select Due Date"
-                clearable={true}
-                style={{ marginBottom: 12 }}
-              />
+              <View style={styles.calcRow}>
+                <Text style={styles.calcLabel}>Subtotal:</Text>
+                <Text style={styles.calcValue}>₹{subtotal.toFixed(0)}</Text>
+              </View>
 
-              {/* Notes */}
-              <Text style={styles.fieldLabel}>ORDER & BILLING NOTES (OPTIONAL)</Text>
-              <View style={styles.notesBox}>
+              {/* Discount Input */}
+              <View style={styles.calcRow}>
+                <Text style={styles.calcLabel}>Discount (₹):</Text>
                 <TextInput
-                  style={styles.notesInput}
-                  placeholder="Remarks or customer requests..."
-                  placeholderTextColor="#9CA3AF"
-                  value={notes}
-                  onChangeText={setNotes}
-                  multiline
+                  style={styles.discountInput}
+                  keyboardType="numeric"
+                  value={discount}
+                  onChangeText={t => setDiscount(t.replace(/[^0-9.]/g, ''))}
+                  placeholder="0"
                 />
               </View>
 
-              {/* Audit Reason (Required when editing an existing saved bill) */}
-              {mode === 'edit_invoice' && (
-                <View style={{ marginTop: 12 }}>
-                  <Text style={[styles.fieldLabel, { color: '#DC2626' }]}>
-                    REASON FOR EDIT (AUDIT LOG) *
-                  </Text>
-                  <View style={[styles.notesBox, { borderColor: '#FECACA', backgroundColor: '#FEF2F2' }]}>
-                    <TextInput
-                      style={styles.notesInput}
-                      placeholder="e.g. Quantity discrepancy corrected, agreed client discount..."
-                      placeholderTextColor="#9CA3AF"
-                      value={editReason}
-                      onChangeText={setEditReason}
-                    />
-                  </View>
-                </View>
-              )}
+              <View style={styles.calcDivider} />
 
-              <View style={{ height: 24 }} />
-            </ScrollView>
-
-            {/* Modal Actions Footer */}
-            <View style={styles.modalFooter}>
-              <TouchableOpacity
-                style={styles.cancelActionBtn}
-                onPress={onClose}
-                disabled={isSaving}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.cancelActionText}>Cancel / Go Back</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.saveActionBtn, isSaving && { opacity: 0.7 }]}
-                onPress={handleSave}
-                disabled={isSaving}
-                activeOpacity={0.85}
-              >
-                {isSaving ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Ionicons name="checkmark-done" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.saveActionText}>
-                      {mode === 'create_from_order'
-                        ? `Save Bill (₹${grandTotal.toFixed(0)})`
-                        : `Save Edits (₹${grandTotal.toFixed(0)})`}
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
+              <View style={styles.calcRow}>
+                <Text style={styles.grandTotalLabel}>Final Bill Amount:</Text>
+                <Text style={styles.grandTotalValue}>₹{grandTotal.toFixed(0)}</Text>
+              </View>
             </View>
+
+            {/* Notes */}
+            <Text style={styles.fieldLabel}>ORDER & BILLING NOTES (OPTIONAL)</Text>
+            <View style={styles.notesBox}>
+              <TextInput
+                style={styles.notesInput}
+                placeholder="Remarks or customer requests..."
+                placeholderTextColor="#9CA3AF"
+                value={notes}
+                onChangeText={setNotes}
+                multiline
+                onFocus={() => {
+                  setTimeout(() => {
+                    scrollViewRef.current?.scrollToEnd({ animated: true });
+                  }, 100);
+                }}
+              />
+            </View>
+
+            {/* Audit Reason (Required when editing an existing saved bill) */}
+            {mode === 'edit_invoice' && (
+              <View style={{ marginTop: 12 }}>
+                <Text style={[styles.fieldLabel, { color: '#DC2626' }]}>
+                  REASON FOR EDIT (AUDIT LOG) *
+                </Text>
+                <View style={[styles.notesBox, { borderColor: '#FECACA', backgroundColor: '#FEF2F2' }]}>
+                  <TextInput
+                    style={styles.notesInput}
+                    placeholder="e.g. Quantity discrepancy corrected, agreed client discount..."
+                    placeholderTextColor="#9CA3AF"
+                    value={editReason}
+                    onChangeText={setEditReason}
+                    onFocus={() => {
+                      setTimeout(() => {
+                        scrollViewRef.current?.scrollToEnd({ animated: true });
+                      }, 100);
+                    }}
+                  />
+                </View>
+              </View>
+            )}
+
+            <View style={{ height: 16 }} />
+          </ScrollView>
+
+          {/* Modal Actions Footer */}
+          <View style={styles.modalFooter}>
+            <TouchableOpacity
+              style={styles.cancelActionBtn}
+              onPress={onClose}
+              disabled={isSaving}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.cancelActionText}>Cancel / Go Back</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.saveActionBtn, isSaving && { opacity: 0.7 }]}
+              onPress={handleSave}
+              disabled={isSaving}
+              activeOpacity={0.85}
+            >
+              {isSaving ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark-done" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.saveActionText}>
+                    {mode === 'create_from_order'
+                      ? `Save Bill (₹${grandTotal.toFixed(0)})`
+                      : `Save Edits (₹${grandTotal.toFixed(0)})`}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
 
         {/* Product Delete Confirmation Dialog */}
         <ConfirmDialog
@@ -630,16 +664,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
   },
-  keyboardContainer: {
-    width: '100%',
-    maxHeight: '92%',
-  },
   modalContainer: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '100%',
+    width: '100%',
     display: 'flex',
+    flexDirection: 'column',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -669,9 +700,10 @@ const styles = StyleSheet.create({
   modalBody: {
     paddingHorizontal: 16,
     paddingTop: 12,
+    flexShrink: 1,
   },
   modalScrollContent: {
-    paddingBottom: 20,
+    paddingBottom: 24,
   },
   metaInfoCard: {
     backgroundColor: '#FDF2EC',
@@ -864,14 +896,14 @@ const styles = StyleSheet.create({
   notesInput: {
     fontSize: 12,
     color: '#1F2937',
-    minHeight: 36,
+    minHeight: 44,
   },
   modalFooter: {
     flexDirection: 'row',
     gap: 12,
     paddingHorizontal: 16,
     paddingTop: 10,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 14,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
     borderTopWidth: 1,
     borderTopColor: '#E8D7CE',
     backgroundColor: '#FFFFFF',
