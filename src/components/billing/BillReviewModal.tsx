@@ -5,14 +5,15 @@ import {
   Text,
   Modal,
   TouchableOpacity,
-  ScrollView,
   TextInput,
   ActivityIndicator,
   Keyboard,
   Platform,
   FlatList,
   Dimensions,
+  KeyboardAvoidingView,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { colors } from '../../theme';
 import AppToast from '../../utils/toast';
@@ -81,7 +82,7 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
 
   // Keyboard height state for adaptive bottom sheet positioning
   const [keyboardHeight, setKeyboardHeight] = useState<number>(0);
-  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollViewRef = useRef<any>(null);
 
   // Delete product confirmation state
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
@@ -298,23 +299,32 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
   // Compute dynamic max height based on available screen space above keyboard
   const screenHeight = Dimensions.get('window').height;
   const isKeyboardOpen = keyboardHeight > 0;
+  // Dynamic max height so bottom sheet adapts smoothly to available screen height above keyboard
   const modalMaxHeight = isKeyboardOpen
-    ? Math.max(screenHeight - keyboardHeight - 20, 260)
+    ? Math.max(screenHeight - keyboardHeight - 16, 260)
     : screenHeight * 0.90;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View
-        style={[
-          styles.modalOverlay,
-          isKeyboardOpen && {
-            justifyContent: 'flex-start',
-            paddingTop: 10,
-            paddingBottom: keyboardHeight,
-          },
-        ]}
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.modalOverlay}
       >
-        <View style={[styles.modalContainer, { maxHeight: modalMaxHeight }]}>
+        <View
+          style={[
+            styles.modalContainer,
+            {
+              maxHeight: modalMaxHeight,
+              ...(Platform.OS === 'android' && isKeyboardOpen ? { marginBottom: keyboardHeight } : {}),
+            },
+          ]}
+        >
           {/* Header */}
           <View style={styles.modalHeader}>
             <View style={{ flex: 1 }}>
@@ -336,12 +346,17 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
             </TouchableOpacity>
           </View>
 
-          <ScrollView
+          <KeyboardAwareScrollView
             ref={scrollViewRef}
             style={styles.modalBody}
             contentContainerStyle={styles.modalScrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={true}
+            enableOnAndroid={true}
+            enableAutomaticScroll={true}
+            extraHeight={140}
+            extraScrollHeight={100}
+            bounces={false}
           >
             {/* Delivery Metadata (Read Only Info) */}
             <View style={styles.metaInfoCard}>
@@ -522,7 +537,7 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
             )}
 
             <View style={{ height: 16 }} />
-          </ScrollView>
+          </KeyboardAwareScrollView>
 
           {/* Modal Actions Footer */}
           <View style={styles.modalFooter}>
@@ -653,7 +668,7 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
             </View>
           </View>
         </Modal>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
