@@ -56,7 +56,7 @@ export interface InvoiceItem {
   date?: string;
   createdAt?: string;
   isOverdue?: boolean;
-  status?: 'PENDING' | 'OVERDUE' | 'PAID';
+  status?: 'PENDING' | 'OVERDUE' | 'PAID' | 'PARTIALLY_PAID';
   items?: InvoiceLineItem[];
   subtotal?: number;
   discountAmount?: number;

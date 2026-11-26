@@ -42,9 +42,48 @@ export interface InvoiceAuditLogEntry {
   created_at: string;
 }
 
+export interface MonthlyInvoiceDateBlock {
+  date: string;
+  date_str: string;
+  daily_subtotal: string | number;
+  daily_total_quantity: number;
+  orders: Array<{
+    order_id: number;
+    order_number: string;
+    time_str: string;
+    order_subtotal: string | number;
+    order_total_qty: number;
+    items: Array<{
+      product_id: number | null;
+      product_name: string;
+      quantity: number;
+      unit_price: string | number;
+      line_amount: string | number;
+    }>;
+  }>;
+}
+
+export interface MonthlyInvoiceBreakdown {
+  invoice_id: number;
+  invoice_number: string;
+  billing_period: string;
+  billing_type: 'daily' | 'monthly';
+  customer_name: string;
+  customer_phone: string;
+  dates: MonthlyInvoiceDateBlock[];
+  subtotal: string | number;
+  discount_amount: string | number;
+  grand_total: string | number;
+  total_paid: string | number;
+  pending_amount: string | number;
+  payment_status: 'Paid' | 'Partially Paid' | 'Unpaid';
+}
+
 export interface BackendInvoice {
   id: number;
   invoice_number: string;
+  billing_type?: 'daily' | 'monthly';
+  billing_period?: string | null;
   order?: number | null;
   customer: number | null;
   customer_name: string;
@@ -213,6 +252,13 @@ export const billingService = {
    */
   async getInvoiceDetail(invoiceId: number | string): Promise<BackendInvoice> {
     return apiClient.get<BackendInvoice>(`/billing/invoices/${invoiceId}/`);
+  },
+
+  /**
+   * Get structured date-wise & order-wise breakdown for monthly invoice
+   */
+  async getInvoiceBreakdown(invoiceId: number | string): Promise<MonthlyInvoiceBreakdown> {
+    return apiClient.get<MonthlyInvoiceBreakdown>(`/billing/invoices/${invoiceId}/breakdown/`);
   },
 
   /**

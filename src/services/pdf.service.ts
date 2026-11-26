@@ -236,6 +236,65 @@ export const pdfService = {
 
     throw new Error('Native PDF printing is not available on this platform.');
   },
+
+  /**
+   * Downloads and saves monthly invoice Excel (.xlsx) file to device storage & public Downloads.
+   */
+  async downloadInvoiceExcel(
+    invoiceId: number | string,
+    invoiceNumber?: string,
+  ): Promise<{ filePath: string; filename: string; publicPath?: string }> {
+    const token = await apiClient.getAccessToken();
+    const cleanNum = (invoiceNumber || `Invoice_${invoiceId}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `ChaiFlow_Monthly_${cleanNum}.xlsx`;
+
+    const targetDir = RNFS.DocumentDirectoryPath;
+    const filePath = `${targetDir}/${filename}`;
+
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const downloadUrl = `${API_BASE_URL}/billing/invoices/${invoiceId}/excel/`;
+
+    const downloadResult = await RNFS.downloadFile({
+      fromUrl: downloadUrl,
+      toFile: filePath,
+      headers,
+    }).promise;
+
+    if (downloadResult.statusCode !== 200) {
+      if (await RNFS.exists(filePath)) {
+        await RNFS.unlink(filePath).catch(() => {});
+      }
+      throw new Error(`Failed to download invoice Excel (Status ${downloadResult.statusCode})`);
+    }
+
+    const fileExists = await RNFS.exists(filePath);
+    if (!fileExists) {
+      throw new Error('Downloaded invoice Excel file was not found on device storage.');
+    }
+
+    const stat = await RNFS.stat(filePath);
+    if (stat.size <= 0) {
+      await RNFS.unlink(filePath).catch(() => {});
+      throw new Error('Downloaded invoice Excel is empty (0 bytes).');
+    }
+
+    let publicPath = filePath;
+    if (Platform.OS === 'android' && NativePdfModule?.saveToPublicDownloads) {
+      try {
+        publicPath = await NativePdfModule.saveToPublicDownloads(filePath, filename);
+      } catch (err) {
+        console.warn('[Excel Download] MediaStore save warning:', err);
+      }
+    }
+
+    return { filePath, filename, publicPath };
+  },
 };
 
 export default pdfService;
