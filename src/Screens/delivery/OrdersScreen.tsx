@@ -4,364 +4,245 @@ import {
   View,
   Text,
   FlatList,
-  ScrollView,
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
-  Modal,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
-  TouchableWithoutFeedback,
-  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
-import { EmptyState } from '../../components/common';
+import SearchBar from '../../components/common/SearchBar';
+import { EmptyState, PaginationControl } from '../../components/common';
 import ConfirmDialog from '../../components/ConfirmDialog';
-import deliveryService, { BackendDelivery } from '../../services/delivery.service';
-import locationTrackingService from '../../services/location.service';
-import offlineDeliveryService, { QueuedDeliveryAction, SyncStatus } from '../../services/offlineDelivery.service';
+import deliveryService, { BackendDelivery, PaginatedResponse } from '../../services/delivery.service';
 import { colors, typography, radius, spacing, shadows } from '../../theme';
 
-const tabs = ['ALL', 'ASSIGNED', 'ACCEPTED', 'PICKED_UP', 'ON_THE_WAY', 'DELIVERED'];
+// Exactly 5 filter tabs as specified: Today | All | Pending | Picked Up | Delivered
+type DeliveryTabFilter = 'TODAY' | 'ALL' | 'PENDING' | 'PICKED_UP' | 'DELIVERED';
+
+const FILTER_TABS: { key: DeliveryTabFilter; label: string }[] = [
+  { key: 'TODAY', label: 'Today' },
+  { key: 'ALL', label: 'All' },
+  { key: 'PENDING', label: 'Pending' },
+  { key: 'PICKED_UP', label: 'Picked Up' },
+  { key: 'DELIVERED', label: 'Delivered' },
+];
+
+/**
+ * Returns YYYY-MM-DD string in device's local time zone
+ */
+function getLocalTodayDateString(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Extract order date string (scheduled_delivery_date or created_at slice)
+ */
+function getOrderDateString(item: BackendDelivery): string {
+  if (item.order_details?.scheduled_delivery_date) {
+    return String(item.order_details.scheduled_delivery_date);
+  }
+  if (item.order_details?.created_at) {
+    return String(item.order_details.created_at).slice(0, 10);
+  }
+  return '';
+}
 
 export default function DeliveryOrdersScreen({ navigation }: any) {
   const [deliveries, setDeliveries] = useState<BackendDelivery[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<string>('ALL');
-  const [offlineQueue, setOfflineQueue] = useState<QueuedDeliveryAction[]>([]);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // Discrepancy Recording & Delivery Completion Modal
-  const [selectedDelivery, setSelectedDelivery] = useState<BackendDelivery | null>(null);
-  const [recordModalVisible, setRecordModalVisible] = useState<boolean>(false);
-  const [deliveredQuantities, setDeliveredQuantities] = useState<{ [productId: number]: string }>({});
-  const [discrepancyNotes, setDiscrepancyNotes] = useState<string>('');
+  // Exact 5 tabs: Default to TODAY for quick operational focus
+  const [activeTab, setActiveTab] = useState<DeliveryTabFilter>('TODAY');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(20);
+
+  // Status Action Dialog (Strict: Pending -> Picked Up -> Delivered)
   const [actionInProgress, setActionInProgress] = useState<boolean>(false);
-
-  // Custom Reset Quantities Confirmation Dialog
-  const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
-
-  // Custom Info / Status Confirmation Dialog
-  const [customDialog, setCustomDialog] = useState<{
+  const [confirmAction, setConfirmAction] = useState<{
     visible: boolean;
     title: string;
     description: string;
-    type?: 'danger' | 'warning' | 'info' | 'success';
-    confirmLabel?: string;
-    cancelLabel?: string;
-    onConfirm?: () => void;
+    delivery: BackendDelivery | null;
+    targetStatus: 'picked_up' | 'delivered';
   }>({
     visible: false,
     title: '',
     description: '',
+    delivery: null,
+    targetStatus: 'picked_up',
   });
+
+  const [feedbackToast, setFeedbackToast] = useState<string>('');
 
   const fetchDeliveries = useCallback(async () => {
     try {
-      const data = await deliveryService.getDeliveries();
-      setDeliveries(data || []);
+      setLoading(true);
+      // Fetch deliveries for this delivery partner
+      const res = await deliveryService.getDeliveries();
+
+      let list: BackendDelivery[] = [];
+      if (res && 'results' in res) {
+        list = (res as PaginatedResponse<BackendDelivery>).results || [];
+      } else if (Array.isArray(res)) {
+        list = res;
+      }
+      setDeliveries(list);
     } catch (err: any) {
-      console.log('Error fetching assigned deliveries:', err);
+      console.log('Error fetching deliveries:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
-  const handleTriggerSync = useCallback(async () => {
-    try {
-      setIsSyncing(true);
-      await offlineDeliveryService.syncQueue();
-      await fetchDeliveries();
-    } catch (err) {
-      console.log('Automatic sync error:', err);
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [fetchDeliveries]);
-
-  // Subscribe to offline queue changes and trigger sync on launch
-  useEffect(() => {
-    const unsubscribe = offlineDeliveryService.subscribe(queue => {
-      setOfflineQueue([...queue]);
-    });
-
-    offlineDeliveryService.getQueue().then(queue => {
-      setOfflineQueue(queue);
-      if (queue.some(a => a.syncStatus === 'PENDING_SYNC')) {
-        handleTriggerSync();
-      }
-    });
-
-    return unsubscribe;
-  }, [handleTriggerSync]);
-
   useEffect(() => {
     fetchDeliveries();
   }, [fetchDeliveries]);
 
+  // Refresh whenever screen gains focus
+  useEffect(() => {
+    const unsubscribe = navigation.addListener?.('focus', () => {
+      fetchDeliveries();
+    });
+    return unsubscribe;
+  }, [navigation, fetchDeliveries]);
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    handleTriggerSync();
-  }, [handleTriggerSync]);
+    fetchDeliveries();
+  }, [fetchDeliveries]);
 
-  const filteredDeliveries = useMemo(() => {
-    if (activeTab === 'ALL') return deliveries;
-    return deliveries.filter(d => d.status.toUpperCase() === activeTab);
-  }, [deliveries, activeTab]);
+  const navigateToOrderDetails = (item: BackendDelivery) => {
+    navigation.navigate('OrderDetails', {
+      delivery: item,
+      deliveryId: item.id,
+      order: item.order_details,
+    });
+  };
 
-  const handleStatusTransition = async (delivery: BackendDelivery, targetStatus: BackendDelivery['status']) => {
+  const handleExecuteStatusUpdate = async () => {
+    const delivery = confirmAction.delivery;
+    const targetStatus = confirmAction.targetStatus;
+    if (!delivery) return;
+
     try {
       setActionInProgress(true);
       await deliveryService.updateStatus(delivery.id, targetStatus);
-
-      // Start/Stop location tracking depending on state: active during picked_up or on_the_way
-      if (targetStatus === 'picked_up' || targetStatus === 'on_the_way') {
-        await locationTrackingService.startTrackingForDelivery(delivery.id);
-      } else if (targetStatus === 'delivered' || targetStatus === 'failed') {
-        await locationTrackingService.stopTracking();
-      }
-
+      setConfirmAction(prev => ({ ...prev, visible: false, delivery: null }));
+      setFeedbackToast(
+        `Order #${delivery.order} marked as ${targetStatus === 'picked_up' ? 'Picked Up' : 'Delivered'}.`
+      );
+      setTimeout(() => setFeedbackToast(''), 3000);
       fetchDeliveries();
-      setCustomDialog({
-        visible: true,
-        title: 'Status Updated',
-        description: `Delivery #${delivery.order || delivery.id} is now '${targetStatus.toUpperCase()}'.`,
-        type: 'success',
-      });
     } catch (err: any) {
-      const isOutage = offlineDeliveryService.isNetworkOutageError(err);
-      if (isOutage) {
-        console.log(`Direct status transition failed due to network outage (${err?.message}). Enqueuing offline action.`);
-        const actionTypeMap: { [key: string]: any } = {
-          accepted: 'ACCEPT_TASK',
-          picked_up: 'PICKUP',
-          on_the_way: 'ON_THE_WAY',
-          failed: 'FAIL_DELIVERY',
-        };
-
-        const actionType = actionTypeMap[targetStatus];
-        if (actionType) {
-          await offlineDeliveryService.enqueueAction(delivery.id, actionType, {
-            status: targetStatus,
-          });
-
-          // Optimistically update local list display status while pending sync
-          setDeliveries(prev =>
-            prev.map(d => (d.id === delivery.id ? { ...d, status: targetStatus } : d))
-          );
-
-          setCustomDialog({
-            visible: true,
-            title: 'Offline Mode: Action Saved',
-            description: `No network connection. '${targetStatus.toUpperCase()}' has been saved locally and will synchronize automatically when online.`,
-            type: 'info',
-          });
-          return;
-        }
-      }
-
-      // If it's a backend HTTP error (400, 401, 403, 404, 500), display server message directly
-      setCustomDialog({
-        visible: true,
-        title: 'Status Update Error',
-        description: err?.message || 'Failed to update status on server.',
-        type: 'danger',
-      });
+      setConfirmAction(prev => ({ ...prev, visible: false, delivery: null }));
+      setFeedbackToast(err?.message || 'Failed to update delivery status.');
+      setTimeout(() => setFeedbackToast(''), 3000);
     } finally {
       setActionInProgress(false);
     }
   };
 
-  const parseQtyValue = (raw: string | undefined, defaultVal: number = 0): number => {
-    if (raw === undefined || raw === null || raw.trim() === '') return defaultVal;
-    const clean = raw.replace(/[^0-9]/g, '');
-    const num = parseInt(clean, 10);
-    return isNaN(num) ? defaultVal : Math.max(0, num);
-  };
+  const localToday = useMemo(() => getLocalTodayDateString(), []);
 
-  const openCompletionModal = (delivery: BackendDelivery) => {
-    setSelectedDelivery(delivery);
-    const initialQty: { [productId: number]: string } = {};
-    if (delivery.order_details?.items) {
-      delivery.order_details.items.forEach(it => {
-        initialQty[it.product] = String(it.quantity);
-      });
-    }
-    setDeliveredQuantities(initialQty);
-    setDiscrepancyNotes('');
-    setRecordModalVisible(true);
-  };
+  // Filter and sort items according to the active tab, search, and date-order rule
+  const filteredAndSortedList = useMemo(() => {
+    // 1. Filter by Active Tab
+    const tabFiltered = deliveries.filter(item => {
+      const st = item.status.toLowerCase();
+      const itemDate = getOrderDateString(item);
+      const isToday = itemDate === localToday;
 
-  const handleQtyAdjust = (productId: number, delta: number) => {
-    setDeliveredQuantities(prev => {
-      const current = parseQtyValue(prev[productId], 0);
-      const nextVal = Math.max(0, current + delta);
-      return { ...prev, [productId]: String(nextVal) };
-    });
-  };
-
-  const handleManualQtyChange = (productId: number, text: string) => {
-    const sanitized = text.replace(/[^0-9]/g, '');
-    setDeliveredQuantities(prev => ({
-      ...prev,
-      [productId]: sanitized,
-    }));
-  };
-
-  const handleQtyBlur = (productId: number, originalQty: number) => {
-    setDeliveredQuantities(prev => {
-      const val = prev[productId];
-      if (val === undefined || val === '') {
-        return { ...prev, [productId]: String(originalQty) };
+      switch (activeTab) {
+        case 'TODAY':
+          return isToday;
+        case 'ALL':
+          return true;
+        case 'PENDING':
+          return st === 'assigned' || st === 'pending' || st === 'accepted';
+        case 'PICKED_UP':
+          return st === 'picked_up' || st === 'on_the_way';
+        case 'DELIVERED':
+          return st === 'delivered';
+        default:
+          return true;
       }
-      return prev;
-    });
-  };
-
-  const executeResetQuantities = () => {
-    setShowResetConfirm(false);
-    if (!selectedDelivery?.order_details?.items) return;
-    const resetMap: { [productId: number]: string } = {};
-    selectedDelivery.order_details.items.forEach(it => {
-      resetMap[it.product] = String(it.quantity);
-    });
-    setDeliveredQuantities(resetMap);
-    setDiscrepancyNotes('');
-  };
-
-  const handleResetQuantities = () => {
-    const items = selectedDelivery?.order_details?.items || [];
-    const hasEdits = items.some(it => {
-      const raw = deliveredQuantities[it.product];
-      const parsed = parseQtyValue(raw, it.quantity);
-      return parsed !== it.quantity;
     });
 
-    if (hasEdits) {
-      setShowResetConfirm(true);
-    } else {
-      executeResetQuantities();
-    }
-  };
+    // 2. Filter by Search Query (Order #, customer/company, delivery address)
+    const searchFiltered = tabFiltered.filter(item => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase().trim();
+      const oNum = String(item.order_details?.order_number || item.order).toLowerCase();
+      const cName = (
+        item.order_details?.customer_name ||
+        item.order_details?.company_name ||
+        ''
+      ).toLowerCase();
+      const addr = (item.order_details?.delivery_address || '').toLowerCase();
+      return oNum.includes(q) || cName.includes(q) || addr.includes(q);
+    });
 
-  const handleConfirmDelivered = async () => {
-    if (!selectedDelivery) return;
+    // 3. Sorting: Today's orders ALWAYS appear first, followed by remaining orders sorted by delivery date (descending)
+    return [...searchFiltered].sort((a, b) => {
+      const aDate = getOrderDateString(a);
+      const bDate = getOrderDateString(b);
 
-    const items = selectedDelivery.order_details?.items || [];
-    for (const it of items) {
-      const raw = deliveredQuantities[it.product];
-      if (raw !== undefined && raw.trim() === '') {
-        setCustomDialog({
-          visible: true,
-          title: 'Incomplete Quantities',
-          description: `Please enter a valid delivered quantity for "${it.product_details?.name || 'Item'}".`,
-          type: 'warning',
-        });
-        return;
+      const aIsToday = aDate === localToday;
+      const bIsToday = bDate === localToday;
+
+      if (aIsToday && !bIsToday) return -1;
+      if (!aIsToday && bIsToday) return 1;
+
+      // Both today or both not today: sort descending by date / ID
+      if (aDate !== bDate) {
+        return bDate.localeCompare(aDate);
       }
-    }
+      return b.id - a.id;
+    });
+  }, [deliveries, activeTab, searchQuery, localToday]);
 
-    try {
-      setActionInProgress(true);
-      // 1. Record actual delivered quantities
-      const itemsPayload = items.map(it => {
-        const raw = deliveredQuantities[it.product];
-        const deliveredQty = parseQtyValue(raw, it.quantity);
-        return {
-          product_id: it.product,
-          delivered_quantity: deliveredQty,
-          discrepancy_notes: discrepancyNotes.trim(),
-        };
-      });
-
-      if (itemsPayload.length > 0) {
-        await deliveryService.recordDeliveredQuantities(selectedDelivery.id, itemsPayload);
-      }
-
-      // 2. Mark delivery as DELIVERED
-      await deliveryService.updateStatus(selectedDelivery.id, 'delivered', discrepancyNotes.trim());
-      await locationTrackingService.stopTracking();
-
-      setRecordModalVisible(false);
-      fetchDeliveries();
-      setCustomDialog({
-        visible: true,
-        title: 'Delivery Completed',
-        description: 'Actual delivered quantities recorded and tracking stopped.',
-        type: 'success',
-      });
-    } catch (err: any) {
-      const isOutage = offlineDeliveryService.isNetworkOutageError(err);
-      if (isOutage) {
-        console.log(`Direct delivery completion failed due to network outage (${err?.message}). Enqueuing offline action.`);
-
-        // Build payload for offline queue
-        const itemsPayload = items.map(it => {
-          const raw = deliveredQuantities[it.product];
-          const deliveredQty = parseQtyValue(raw, it.quantity);
-          return {
-            product_id: it.product,
-            delivered_quantity: deliveredQty,
-            discrepancy_notes: discrepancyNotes.trim(),
-          };
-        });
-
-        await offlineDeliveryService.enqueueAction(selectedDelivery.id, 'SUBMIT_QUANTITIES', {
-          items: itemsPayload,
-          notes: discrepancyNotes.trim(),
-          status: 'delivered',
-        });
-
-        // Halt tracking
-        await locationTrackingService.stopTracking();
-
-        // Optimistically update local list display status while pending sync
-        setDeliveries(prev =>
-          prev.map(d => (d.id === selectedDelivery.id ? { ...d, status: 'delivered' } : d))
-        );
-
-        setRecordModalVisible(false);
-        setCustomDialog({
-          visible: true,
-          title: 'Offline: Delivery Recorded',
-          description:
-            'No network connection. Your delivered quantities and completion record have been saved locally. The delivery shows "Pending Sync" and will confirm with the server when connectivity returns.',
-          type: 'info',
-        });
-      } else {
-        setCustomDialog({
-          visible: true,
-          title: 'Delivery Error',
-          description: err?.message || 'Server rejected delivery completion.',
-          type: 'danger',
-        });
-      }
-    } finally {
-      setActionInProgress(false);
-    }
-  };
-
-  const navigateToOrderDetails = (item: BackendDelivery) => {
-    navigation.navigate('OrderDetails', { delivery: item, deliveryId: item.id, order: item.order_details });
-  };
+  // Paginated window for the continuous single list
+  const totalRecords = filteredAndSortedList.length;
+  const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
+  const paginatedList = useMemo(() => {
+    const startIdx = (currentPage - 1) * pageSize;
+    return filteredAndSortedList.slice(startIdx, startIdx + pageSize);
+  }, [filteredAndSortedList, currentPage, pageSize]);
 
   const renderDeliveryCard = ({ item }: { item: BackendDelivery }) => {
-    const isAssigned = item.status === 'assigned';
-    const isAccepted = item.status === 'accepted';
-    const isPickedUp = item.status === 'picked_up';
-    const isOnTheWay = item.status === 'on_the_way';
-    const isDelivered = item.status === 'delivered';
-    const isFailed = item.status === 'failed';
+    const st = item.status.toLowerCase();
+    const isPending = st === 'assigned' || st === 'pending' || st === 'accepted';
+    const isPickedUp = st === 'picked_up' || st === 'on_the_way';
+    const isDelivered = st === 'delivered';
 
-    // Find pending offline actions for this delivery (exclude SYNCED)
-    const pendingAction = offlineQueue.find(
-      a => String(a.deliveryId) === String(item.id) && a.syncStatus !== 'SYNCED'
-    );
+    const itemDate = getOrderDateString(item);
+    const isToday = itemDate === localToday;
+
+    const orderNum = item.order_details?.order_number || `ORD-${item.order}`;
+    const customerName =
+      item.order_details?.customer_name || item.order_details?.company_name || 'Customer';
+    const address = item.order_details?.delivery_address || 'No address provided';
+
+    const schedDate = item.order_details?.scheduled_delivery_date || '';
+    const schedTime = item.order_details?.scheduled_delivery_time || '';
+    const dateTimeText =
+      schedDate && schedTime
+        ? `${schedDate} • ${schedTime}`
+        : schedDate
+        ? schedDate
+        : item.order_details?.created_at
+        ? new Date(item.order_details.created_at).toLocaleDateString('en-IN')
+        : 'Standard Delivery';
 
     return (
       <TouchableOpacity
@@ -369,124 +250,118 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
         activeOpacity={0.88}
         onPress={() => navigateToOrderDetails(item)}
       >
+        {/* Top: Order Number, Today Tag, and Status Pill */}
         <View style={styles.cardHeader}>
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={styles.orderTitle}>Order #{item.order}</Text>
-              {pendingAction && (
-                <View
-                  style={[
-                    styles.syncPill,
-                    pendingAction.syncStatus === 'SYNCING' && styles.syncingPill,
-                    pendingAction.syncStatus === 'NEEDS_REVIEW' && styles.needsReviewPill,
-                    pendingAction.syncStatus === 'SYNC_FAILED' && styles.syncFailedPill,
-                  ]}
-                >
-                  <Ionicons
-                    name={
-                      pendingAction.syncStatus === 'SYNCING'
-                        ? 'sync-outline'
-                        : pendingAction.syncStatus === 'NEEDS_REVIEW'
-                          ? 'alert-circle-outline'
-                          : 'cloud-offline-outline'
-                    }
-                    size={11}
-                    color={
-                      pendingAction.syncStatus === 'SYNCING'
-                        ? '#2563EB'
-                        : pendingAction.syncStatus === 'NEEDS_REVIEW'
-                          ? '#D97706'
-                          : '#DC2626'
-                    }
-                  />
-                  <Text
-                    style={[
-                      styles.syncPillText,
-                      pendingAction.syncStatus === 'SYNCING' && { color: '#2563EB' },
-                      pendingAction.syncStatus === 'NEEDS_REVIEW' && { color: '#D97706' },
-                      pendingAction.syncStatus === 'SYNC_FAILED' && { color: '#DC2626' },
-                    ]}
-                  >
-                    {pendingAction.syncStatus.replace(/_/g, ' ')}
-                  </Text>
-                </View>
-              )}
-            </View>
-            <Text style={styles.clientText}>
-              {item.order_details?.company_name || item.order_details?.customer_name || 'Counter Order'}
-            </Text>
+          <View style={styles.orderNumberRow}>
+            <Ionicons name="receipt-outline" size={15} color={colors.primary} />
+            <Text style={styles.orderNumberText}>{orderNum}</Text>
+            {isToday && (
+              <View style={styles.todayPill}>
+                <Text style={styles.todayPillText}>TODAY</Text>
+              </View>
+            )}
           </View>
-          <View style={[styles.statusPill, isDelivered && styles.deliveredPill, isFailed && styles.failedPill]}>
-            <Text style={[styles.statusText, isDelivered && styles.deliveredText, isFailed && styles.failedText]}>
-              {item.status.toUpperCase()}
+
+          <View
+            style={[
+              styles.statusPill,
+              isPending && styles.statusPending,
+              isPickedUp && styles.statusPickedUp,
+              isDelivered && styles.statusDelivered,
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusText,
+                isPending && styles.statusTextPending,
+                isPickedUp && styles.statusTextPickedUp,
+                isDelivered && styles.statusTextDelivered,
+              ]}
+            >
+              {isPending ? 'Pending' : isPickedUp ? 'Picked Up' : 'Delivered'}
             </Text>
           </View>
         </View>
 
+        {/* Customer and Delivery Address (Readable Text Only) */}
         <View style={styles.cardBody}>
-          <Text style={styles.addressLine}>
-            <Ionicons name="location-outline" size={14} color="#8E8278" />{' '}
-            {item.order_details?.delivery_address || 'Shop delivery'}
+          <Text style={styles.customerName} numberOfLines={1}>
+            {customerName}
           </Text>
-          <Text style={styles.itemsLine}>
-            {item.order_details?.items && item.order_details.items.length > 0
-              ? item.order_details.items.map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`).join(' • ')
-              : 'Delivery Package'}
-          </Text>
+
+          <View style={styles.metaRow}>
+            <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
+            <Text style={styles.addressText} numberOfLines={2}>
+              {address}
+            </Text>
+          </View>
+
+          <View style={styles.metaRow}>
+            <Ionicons name="time-outline" size={13} color={colors.textMuted} />
+            <Text style={styles.dateText}>{dateTimeText}</Text>
+          </View>
         </View>
 
         {/* Action Controls for Delivery Partner */}
-        <View style={styles.cardActions}>
-          {isAssigned && (
+        <View style={styles.cardFooter}>
+          {isPending && (
             <TouchableOpacity
-              style={[styles.actionBtn, { backgroundColor: '#059669' }]}
-              onPress={() => handleStatusTransition(item, 'accepted')}
-              disabled={actionInProgress}
+              style={[styles.transitionBtn, { backgroundColor: colors.primary }]}
+              onPress={() =>
+                setConfirmAction({
+                  visible: true,
+                  title: 'Mark as Picked Up?',
+                  description: `Confirm that you have picked up ${orderNum} from the store.`,
+                  delivery: item,
+                  targetStatus: 'picked_up',
+                })
+              }
+              activeOpacity={0.8}
             >
-              <Ionicons name="checkmark-circle-outline" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.actionBtnText}>Accept Task</Text>
-            </TouchableOpacity>
-          )}
-
-          {isAccepted && (
-            <TouchableOpacity
-              style={[styles.actionBtn, { backgroundColor: '#8C331A' }]}
-              onPress={() => handleStatusTransition(item, 'picked_up')}
-              disabled={actionInProgress}
-            >
-              <Ionicons name="cube-outline" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.actionBtnText}>Confirm Pickup</Text>
+              <Ionicons name="cube-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.transitionBtnText}>Mark Picked Up</Text>
             </TouchableOpacity>
           )}
 
           {isPickedUp && (
             <TouchableOpacity
-              style={[styles.actionBtn, { backgroundColor: '#2563EB' }]}
-              onPress={() => handleStatusTransition(item, 'on_the_way')}
-              disabled={actionInProgress}
+              style={[styles.transitionBtn, { backgroundColor: '#8C331A' }]}
+              onPress={() =>
+                setConfirmAction({
+                  visible: true,
+                  title: 'Mark as Delivered?',
+                  description: `Confirm that you have successfully delivered ${orderNum} to ${customerName}.`,
+                  delivery: item,
+                  targetStatus: 'delivered',
+                })
+              }
+              activeOpacity={0.8}
             >
-              <Ionicons name="navigate-outline" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.actionBtnText}>Start Trip (On The Way)</Text>
-            </TouchableOpacity>
-          )}
-
-          {isOnTheWay && (
-            <TouchableOpacity
-              style={[styles.actionBtn, { backgroundColor: '#059669' }]}
-              onPress={() => navigateToOrderDetails(item)}
-              disabled={actionInProgress}
-            >
-              <Ionicons name="receipt-outline" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.actionBtnText}>View Details / Deliver</Text>
+              <Ionicons
+                name="checkmark-done-circle-outline"
+                size={15}
+                color="#FFFFFF"
+                style={{ marginRight: 6 }}
+              />
+              <Text style={styles.transitionBtnText}>Mark Delivered</Text>
             </TouchableOpacity>
           )}
 
           {isDelivered && (
-            <View style={styles.completedNotice}>
-              <Ionicons name="checkmark-circle" size={16} color="#059669" style={{ marginRight: 4 }} />
-              <Text style={styles.completedNoticeText}>Fulfillment Completed</Text>
+            <View style={styles.deliveredNotice}>
+              <Ionicons name="checkmark-circle" size={15} color="#8C331A" style={{ marginRight: 4 }} />
+              <Text style={styles.deliveredNoticeText}>Delivered</Text>
             </View>
           )}
+
+          <TouchableOpacity
+            style={styles.detailsLink}
+            onPress={() => navigateToOrderDetails(item)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.detailsLinkText}>Order Details</Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+          </TouchableOpacity>
         </View>
       </TouchableOpacity>
     );
@@ -494,218 +369,114 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      {/* 1. Header: My Deliveries */}
       <DeliveryHeader title="My Deliveries" />
 
-      {/* Offline Action Banner if queued items exist */}
-      {offlineQueue.length > 0 && (
-        <View style={styles.offlineBanner}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
-            <Ionicons name="cloud-offline-outline" size={18} color="#92400E" />
-            <Text style={styles.offlineBannerText}>
-              {offlineQueue.length} action{offlineQueue.length > 1 ? 's' : ''} saved offline
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.syncNowBtn}
-            onPress={handleTriggerSync}
-            disabled={isSyncing}
-          >
-            {isSyncing ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <Text style={styles.syncNowBtnText}>Sync Now</Text>
-            )}
-          </TouchableOpacity>
+      {feedbackToast !== '' && (
+        <View style={styles.toast}>
+          <Ionicons name="information-circle-outline" size={18} color="#FFFFFF" />
+          <Text style={styles.toastText}>{feedbackToast}</Text>
         </View>
       )}
 
-      {/* Status Filter Tabs */}
-      <View style={styles.tabsContainer}>
-        <FlatList
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          data={tabs}
-          keyExtractor={t => t}
-          renderItem={({ item: tab }) => (
-            <TouchableOpacity
-              style={[styles.tabChip, activeTab === tab && styles.tabChipActive]}
-              onPress={() => setActiveTab(tab)}
-            >
-              <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-                {tab.replace(/_/g, ' ')}
-              </Text>
-            </TouchableOpacity>
-          )}
+      {/* 2. Search Bar */}
+      <View style={styles.searchHeader}>
+        <SearchBar
+          value={searchQuery}
+          onChangeText={text => {
+            setSearchQuery(text);
+            setCurrentPage(1);
+          }}
+          placeholder="Search by order #, customer, address..."
+          containerStyle={{ marginVertical: 0, marginBottom: 8 }}
         />
+
+        {/* 3. Filter Tabs directly below search: Today | All | Pending | Picked Up | Delivered */}
+        <View style={styles.tabsRow}>
+          {FILTER_TABS.map(tab => {
+            const isActive = activeTab === tab.key;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={[styles.tabPill, isActive && styles.tabPillActive]}
+                onPress={() => {
+                  setActiveTab(tab.key);
+                  setCurrentPage(1);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.tabPillText, isActive && styles.tabPillTextActive]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
 
-      {/* Main List */}
-      {loading ? (
+      {/* 4. Below Filters: ONE Continuous Order List */}
+      {loading && !refreshing ? (
         <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color="#059669" />
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading deliveries...</Text>
         </View>
-      ) : filteredDeliveries.length === 0 ? (
+      ) : paginatedList.length === 0 ? (
         <EmptyState
+          icon="bicycle-outline"
           title="No Deliveries Found"
-          subtitle="You have no assigned deliveries matching this status."
+          subtitle={
+            searchQuery
+              ? 'No orders matched your search criteria.'
+              : activeTab === 'TODAY'
+              ? 'You have no deliveries scheduled for today.'
+              : `No orders in ${FILTER_TABS.find(t => t.key === activeTab)?.label} status.`
+          }
         />
       ) : (
         <FlatList
-          data={filteredDeliveries}
+          data={paginatedList}
           keyExtractor={item => String(item.id)}
           renderItem={renderDeliveryCard}
           contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+            />
+          }
+          ListFooterComponent={
+            <PaginationControl
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalRecords={totalRecords}
+              pageSize={pageSize}
+              pageSizeOptions={[10, 20, 30]}
+              onPageChange={page => setCurrentPage(page)}
+              onPageSizeChange={size => {
+                setPageSize(size);
+                setCurrentPage(1);
+              }}
+              isLoading={loading}
+            />
           }
         />
       )}
 
-      {/* Record Actual Delivered Quantities Modal (Keyboard-Aware) */}
-      <Modal visible={recordModalVisible} transparent animationType="slide">
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.modalOverlay}>
-              <TouchableWithoutFeedback>
-                <View style={styles.modalSheet}>
-                  <View style={styles.modalHeader}>
-                    <Text style={styles.modalTitle}>Confirm Delivered Quantities</Text>
-                    <TouchableOpacity onPress={() => setRecordModalVisible(false)}>
-                      <Ionicons name="close" size={24} color="#2A2421" />
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.modalSubtitle}>
-                    Record the actual cups / flasks delivered for owner invoice verification.
-                  </Text>
-
-                  <ScrollView
-                    style={{ maxHeight: 300 }}
-                    showsVerticalScrollIndicator={false}
-                    keyboardShouldPersistTaps="handled"
-                  >
-                    {selectedDelivery?.order_details?.items?.map(it => {
-                      const orderedQty = it.quantity;
-                      const rawVal = deliveredQuantities[it.product];
-                      const deliveredQty = parseQtyValue(rawVal, orderedQty);
-                      const diff = deliveredQty - orderedQty;
-                      const displayVal = rawVal !== undefined ? rawVal : String(orderedQty);
-
-                      return (
-                        <View key={it.id} style={styles.qtyRow}>
-                          <View style={{ flex: 1, paddingRight: 8 }}>
-                            <Text style={styles.itemTitle}>{it.product_details?.name || 'Item'}</Text>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                              <Text style={styles.itemSub}>Ordered: {orderedQty}</Text>
-                              {diff < 0 ? (
-                                <View style={styles.diffPillPending}>
-                                  <Text style={styles.diffPillTextPending}>Pending: {Math.abs(diff)}</Text>
-                                </View>
-                              ) : diff > 0 ? (
-                                <View style={styles.diffPillExtra}>
-                                  <Text style={styles.diffPillTextExtra}>Extra: +{diff}</Text>
-                                </View>
-                              ) : (
-                                <View style={styles.diffPillExact}>
-                                  <Text style={styles.diffPillTextExact}>Exact Match</Text>
-                                </View>
-                              )}
-                            </View>
-                          </View>
-                          <View style={styles.stepper}>
-                            <TouchableOpacity style={styles.stepBtn} onPress={() => handleQtyAdjust(it.product, -1)}>
-                              <Text style={styles.stepBtnText}>−</Text>
-                            </TouchableOpacity>
-                            <TextInput
-                              style={styles.stepInput}
-                              value={displayVal}
-                              onChangeText={text => handleManualQtyChange(it.product, text)}
-                              onBlur={() => handleQtyBlur(it.product, orderedQty)}
-                              keyboardType="number-pad"
-                              maxLength={5}
-                              selectTextOnFocus
-                              returnKeyType="done"
-                              onSubmitEditing={Keyboard.dismiss}
-                              editable={!actionInProgress}
-                            />
-                            <TouchableOpacity style={styles.stepBtn} onPress={() => handleQtyAdjust(it.product, 1)}>
-                              <Text style={styles.stepBtnText}>+</Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </ScrollView>
-
-                  <TextInput
-                    style={styles.notesInput}
-                    placeholder="Discrepancy notes (e.g. 2 flasks spilled / client refused)"
-                    placeholderTextColor="#8E8278"
-                    value={discrepancyNotes}
-                    onChangeText={setDiscrepancyNotes}
-                    returnKeyType="done"
-                    onSubmitEditing={Keyboard.dismiss}
-                  />
-
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
-                    <TouchableOpacity
-                      style={styles.resetBtn}
-                      onPress={handleResetQuantities}
-                      disabled={actionInProgress}
-                    >
-                      <Ionicons name="refresh-outline" size={16} color="#DC2626" style={{ marginRight: 4 }} />
-                      <Text style={styles.resetBtnText}>Reset</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[styles.confirmDeliverBtn, { flex: 1, marginTop: 0 }]}
-                      onPress={handleConfirmDelivered}
-                      disabled={actionInProgress}
-                    >
-                      {actionInProgress ? (
-                        <ActivityIndicator color="#FFFFFF" />
-                      ) : (
-                        <Text style={styles.confirmDeliverBtnText}>Confirm Delivery</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </TouchableWithoutFeedback>
-            </View>
-          </TouchableWithoutFeedback>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* Shared Custom Reset Confirmation Center Popup */}
+      {/* Confirmation Dialog */}
       <ConfirmDialog
-        visible={showResetConfirm}
-        title="Reset Quantities?"
-        description="This will restore all delivered quantities to match the original ordered amounts."
-        confirmLabel="Reset"
+        visible={confirmAction.visible}
+        title={confirmAction.title}
+        description={confirmAction.description}
+        confirmLabel={
+          confirmAction.targetStatus === 'picked_up' ? 'Confirm Pick Up' : 'Confirm Delivered'
+        }
         cancelLabel="Cancel"
-        type="danger"
-        icon="refresh-outline"
-        onConfirm={executeResetQuantities}
-        onCancel={() => setShowResetConfirm(false)}
-      />
-
-      {/* Shared Custom Dialog for Feedback & Status Alerts */}
-      <ConfirmDialog
-        visible={customDialog.visible}
-        title={customDialog.title}
-        description={customDialog.description}
-        confirmLabel={customDialog.confirmLabel || 'OK'}
-        cancelLabel={customDialog.cancelLabel}
-        type={customDialog.type || 'info'}
-        onConfirm={() => {
-          if (customDialog.onConfirm) {
-            customDialog.onConfirm();
-          }
-          setCustomDialog(prev => ({ ...prev, visible: false }));
-        }}
-        onCancel={() => setCustomDialog(prev => ({ ...prev, visible: false }))}
+        type={confirmAction.targetStatus === 'picked_up' ? 'warning' : 'success'}
+        onConfirm={handleExecuteStatusUpdate}
+        onCancel={() => setConfirmAction(prev => ({ ...prev, visible: false, delivery: null }))}
+        loading={actionInProgress}
       />
     </SafeAreaView>
   );
@@ -714,336 +485,208 @@ export default function DeliveryOrdersScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAF8F5',
+    backgroundColor: '#F7F8FA',
   },
-  tabsContainer: {
+  toast: {
+    backgroundColor: '#253247',
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    marginVertical: 10,
+    paddingVertical: 10,
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: radius.md,
+    gap: 8,
+    ...shadows.sm,
   },
-  tabChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    marginRight: 8,
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-  },
-  tabChipActive: {
-    backgroundColor: '#059669',
-    borderColor: '#059669',
-  },
-  tabText: {
-    fontSize: 11,
-    color: '#8E8278',
-    fontWeight: '700',
-  },
-  tabTextActive: {
+  toastText: {
+    fontSize: 12,
     color: '#FFFFFF',
+    fontWeight: '500',
+    flex: 1,
+  },
+  searchHeader: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E8EDF2',
+  },
+  tabsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  tabPill: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: radius.md,
+    backgroundColor: '#F7F8FA',
+    borderWidth: 1,
+    borderColor: '#E8EDF2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabPillActive: {
+    backgroundColor: '#8C331A',
+    borderColor: '#8C331A',
+  },
+  tabPillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#718096',
+  },
+  tabPillTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   centerBox: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 32,
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 13,
+    color: '#718096',
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 80,
+    paddingTop: 12,
+    paddingBottom: 24,
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: radius.lg,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: '#E8EDF2',
+    ...shadows.sm,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    marginBottom: 6,
   },
-  orderTitle: {
-    fontSize: 13,
-    color: '#8E8278',
+  orderNumberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  orderNumberText: {
+    fontSize: 14,
     fontWeight: '700',
+    color: '#253247',
   },
-  clientText: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#2A2421',
-    marginTop: 2,
+  todayPill: {
+    backgroundColor: '#F7F8FA',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: '#E8EDF2',
   },
-  statusPill: {
-    backgroundColor: '#F5EBE6',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  statusText: {
-    fontSize: 10,
+  todayPillText: {
+    fontSize: 9,
     fontWeight: '800',
     color: '#8C331A',
   },
-  deliveredPill: {
-    backgroundColor: '#ECFDF5',
-  },
-  deliveredText: {
-    color: '#059669',
-  },
-  failedPill: {
-    backgroundColor: '#FEF2F2',
-  },
-  failedText: {
-    color: '#DC2626',
-  },
-  cardBody: {
-    marginVertical: 10,
-  },
-  addressLine: {
-    fontSize: 12,
-    color: '#8E8278',
-    marginBottom: 4,
-  },
-  itemsLine: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#2A2421',
-  },
-  cardActions: {
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#FAF8F5',
-  },
-  actionBtn: {
-    flexDirection: 'row',
-    height: 40,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  actionBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  completedNotice: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 6,
-  },
-  completedNoticeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#059669',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalSheet: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  modalTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#2A2421',
-  },
-  modalSubtitle: {
-    fontSize: 12,
-    color: '#8E8278',
-    marginTop: 4,
-    marginBottom: 14,
-  },
-  qtyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#FAF8F5',
-  },
-  itemTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#2A2421',
-  },
-  itemSub: {
-    fontSize: 11,
-    color: '#8E8278',
-    marginTop: 1,
-  },
-  stepper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  stepBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#FAF8F5',
+  statusPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: radius.full,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
-  stepBtnText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#059669',
-  },
-  stepVal: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#2A2421',
-    marginHorizontal: 12,
-    minWidth: 18,
-    textAlign: 'center',
-  },
-  stepInput: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#2A2421',
-    marginHorizontal: 6,
-    minWidth: 40,
-    height: 32,
-    textAlign: 'center',
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    borderRadius: 8,
-    paddingVertical: 0,
-    paddingHorizontal: 4,
-  },
-  diffPillPending: {
-    backgroundColor: '#FEF2F2',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  diffPillTextPending: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#DC2626',
-  },
-  diffPillExtra: {
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  diffPillTextExtra: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#2563EB',
-  },
-  diffPillExact: {
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  diffPillTextExact: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#6B7280',
-  },
-  resetBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-  },
-  resetBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#DC2626',
-  },
-  offlineBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  statusPending: {
     backgroundColor: '#FEF3C7',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#FDE68A',
+    borderColor: '#FDE68A',
   },
-  offlineBannerText: {
-    fontSize: 13,
+  statusPickedUp: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  statusDelivered: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  statusText: {
+    fontSize: 10,
     fontWeight: '700',
+  },
+  statusTextPending: {
     color: '#92400E',
   },
-  syncNowBtn: {
-    backgroundColor: '#D97706',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+  statusTextPickedUp: {
+    color: '#1D4ED8',
   },
-  syncNowBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  statusTextDelivered: {
+    color: '#047857',
   },
-  syncPill: {
+  cardBody: {
+    marginBottom: 10,
+  },
+  customerName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#253247',
+    marginBottom: 3,
+  },
+  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#FEF2F2',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+    gap: 6,
+    marginTop: 2,
   },
-  syncingPill: {
-    backgroundColor: '#EFF6FF',
+  addressText: {
+    fontSize: 12,
+    color: '#718096',
+    flex: 1,
   },
-  needsReviewPill: {
-    backgroundColor: '#FEF3C7',
+  dateText: {
+    fontSize: 11,
+    color: '#718096',
   },
-  syncFailedPill: {
-    backgroundColor: '#FEF2F2',
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F7F8FA',
   },
-  syncPillText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#DC2626',
-  },
-  notesInput: {
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#EFEAE4',
-    borderRadius: 10,
+  transitionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 12,
-    height: 44,
-    fontSize: 13,
-    color: '#2A2421',
-    marginTop: 12,
-    marginBottom: 16,
+    paddingVertical: 6,
+    borderRadius: radius.md,
   },
-  confirmDeliverBtn: {
-    backgroundColor: '#059669',
-    height: 46,
-    borderRadius: 12,
-    justifyContent: 'center',
+  transitionBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  deliveredNotice: {
+    flexDirection: 'row',
     alignItems: 'center',
   },
-  confirmDeliverBtnText: {
-    color: '#FFFFFF',
+  deliveredNoticeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#8C331A',
+  },
+  detailsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingVertical: 4,
+  },
+  detailsLinkText: {
+    fontSize: 12,
     fontWeight: '700',
-    fontSize: 14,
+    color: '#8C331A',
   },
 });
