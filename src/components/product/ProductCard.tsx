@@ -10,12 +10,16 @@ export type Product = ProductItem;
 type ProductCardProps = {
   product: Product;
   onEdit?: (product: Product) => void;
+  onQuickPriceEdit?: (product: Product) => void;
+  onToggleStatus?: (product: Product) => void;
   onDelete?: (product: Product) => void;
 };
 
 export default function ProductCard({
   product,
   onEdit,
+  onQuickPriceEdit,
+  onToggleStatus,
   onDelete,
 }: ProductCardProps) {
   const { deleteProduct } = useApp();
@@ -28,6 +32,7 @@ export default function ProductCard({
     unit = 'Pc',
     category = 'Tea',
     imageUrl,
+    is_available = true,
   } = product;
 
   const cleanPrice = price.startsWith('₹') ? price : `₹${price}`;
@@ -49,33 +54,31 @@ export default function ProductCard({
   return (
     <TouchableOpacity
       activeOpacity={0.8}
-      style={styles.card}
+      style={[styles.card, !is_available && styles.cardInactive]}
       onPress={() => onEdit?.(product)}
     >
-      <View style={styles.imageBox}>
-        {imageUrl ? (
-          <Image source={{ uri: imageUrl }} style={styles.image} resizeMode="cover" />
-        ) : (
-          <View style={styles.placeholderBox}>
-            <Ionicons name="fast-food-outline" size={20} color="#8C331A" />
-          </View>
-        )}
-      </View>
-
       <View style={styles.infoCol}>
         <View style={styles.headerLine}>
-          <Text style={styles.nameText} numberOfLines={1}>
+          <Text style={[styles.nameText, !is_available && styles.textInactive]} numberOfLines={1}>
             {name}
           </Text>
-          <View style={styles.categoryBadge}>
-            <Text style={styles.categoryBadgeText}>{category}</Text>
-          </View>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            style={[styles.statusBadge, is_available ? styles.statusBadgeActive : styles.statusBadgeInactive]}
+            onPress={(e) => {
+              e.stopPropagation();
+              onToggleStatus?.(product);
+            }}
+          >
+            <Text style={[styles.statusBadgeText, is_available ? styles.statusTextActive : styles.statusTextInactive]}>
+              {is_available ? 'Active' : 'Inactive'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.priceLine}>
-          <Text style={styles.priceText}>
+          <Text style={[styles.priceText, !is_available && styles.textInactive]}>
             {cleanPrice}
-            <Text style={styles.unitText}> / {unit}</Text>
           </Text>
         </View>
       </View>
@@ -96,16 +99,16 @@ export default function ProductCard({
           onPress={handleConfirmDelete}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Ionicons name="trash-outline" size={17} color="#DC2626" />
+          <Ionicons name="power-outline" size={17} color={is_available ? '#DC2626' : '#059669'} />
         </TouchableOpacity>
       </View>
 
       <ConfirmDialog
         visible={showDeleteConfirm}
-        title="Delete Product"
-        description={`Are you sure you want to delete "${name}"? Existing invoices and past orders will preserve historical price records.`}
+        title="Delete / Deactivate Product"
+        description={`Are you sure you want to remove "${name}"? If it has been used in previous orders or invoices, it will be safely deactivated without deleting historical records.`}
         type="danger"
-        confirmLabel="Delete Product"
+        confirmLabel="Remove Product"
         cancelLabel="Cancel"
         onConfirm={handleExecuteDelete}
         onCancel={() => setShowDeleteConfirm(false)}
@@ -120,7 +123,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     marginBottom: 8,
     borderWidth: 1,
     borderColor: '#EFEAE4',
@@ -129,6 +133,38 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 3,
     elevation: 1,
+  },
+  cardInactive: {
+    backgroundColor: '#F7F5F2',
+    opacity: 0.85,
+  },
+  textInactive: {
+    color: '#8E8278',
+  },
+  statusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  statusBadgeActive: {
+    backgroundColor: '#ECFDF5',
+  },
+  statusBadgeInactive: {
+    backgroundColor: '#FEF2F2',
+  },
+  statusBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  statusTextActive: {
+    color: '#059669',
+  },
+  statusTextInactive: {
+    color: '#DC2626',
+  },
+  priceTouchWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   imageBox: {
     width: 46,
