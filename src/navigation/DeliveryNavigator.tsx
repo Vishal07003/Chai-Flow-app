@@ -5,8 +5,6 @@ import BottomTabs from './BottomTabs';
 import HomeScreen from '../Screens/delivery/HomeScreen';
 import OrdersScreen from '../Screens/delivery/OrdersScreen';
 import OrderDetailsScreen from '../Screens/delivery/OrderDetailsScreen';
-import NavigationScreen from '../Screens/delivery/NavigationScreen';
-import TrackingScreen from '../Screens/delivery/TrackingScreen';
 import DeliveryHistoryScreen from '../Screens/delivery/HistoryScreen';
 import NotificationsScreen from '../Screens/delivery/NotificationsScreen';
 import ProfileScreen from '../Screens/delivery/ProfileScreen';
@@ -17,9 +15,7 @@ export type DeliveryStackParamList = {
   Home: undefined;
   MainTabs: undefined;
   Orders: undefined;
-  OrderDetails: { order?: any };
-  Navigation: undefined;
-  Tracking: undefined;
+  OrderDetails: { order?: any; delivery?: any; deliveryId?: number | string };
   History: undefined;
   Notifications: undefined;
   Profile: undefined;
@@ -71,8 +67,6 @@ export default function DeliveryNavigator() {
       <Stack.Screen name="Home" component={HomeScreen} />
       <Stack.Screen name="Orders" component={OrdersScreen} />
       <Stack.Screen name="OrderDetails" component={OrderDetailsScreen} />
-      <Stack.Screen name="Navigation" component={NavigationScreen} />
-      <Stack.Screen name="Tracking" component={TrackingScreen} />
       <Stack.Screen name="History" component={DeliveryHistoryScreen} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} />
       <Stack.Screen name="Profile" component={ProfileScreen} />
