@@ -5,11 +5,9 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
-  Modal,
   ActivityIndicator,
   Linking,
   RefreshControl,
-  Platform,
   TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,13 +16,12 @@ import billingService, { BackendInvoice, BillingCustomer } from '../../services/
 import orderService, {
   BackendOrder,
   DailyDeliverySchedule,
-  CreateDailySchedulePayload,
 } from '../../services/order.service';
 import { useApp } from '../../context/AppContext';
 import { AddCustomerModal, type AddCustomerFormData } from '../../components/customer';
 import { CollectPaymentModal, type CollectPaymentFormData } from '../../components/payment';
-import { DailyScheduleModal } from '../../components/schedule';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { BillingCycleDayModal } from '../../components/common';
 import AppToast from '../../utils/toast';
 import { colors, typography, radius, spacing, shadows } from '../../theme';
 
@@ -66,8 +63,6 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
   // Daily Delivery Schedule State
   const [schedules, setSchedules] = useState<DailyDeliverySchedule[]>([]);
   const [schedulesLoading, setSchedulesLoading] = useState<boolean>(false);
-  const [scheduleModalVisible, setScheduleModalVisible] = useState<boolean>(false);
-  const [editingSchedule, setEditingSchedule] = useState<DailyDeliverySchedule | null>(null);
 
   // 3-Tab Navigation State ('ORDERS' | 'SCHEDULE' | 'LEDGER')
   const [activeTab, setActiveTab] = useState<'ORDERS' | 'SCHEDULE' | 'LEDGER'>('ORDERS');
@@ -75,10 +70,9 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
 
   // Modals & Action States
   const [editCustomerModalVisible, setEditCustomerModalVisible] = useState<boolean>(false);
+  const [billingCycleModalVisible, setBillingCycleModalVisible] = useState<boolean>(false);
   const [collectModalVisible, setCollectModalVisible] = useState<boolean>(false);
-  const [collectAmount, setCollectAmount] = useState<string>('');
   const [submittingPayment, setSubmittingPayment] = useState<boolean>(false);
-  const [ledgerModalVisible, setLedgerModalVisible] = useState<boolean>(false);
 
   // Centralized Confirmation Dialog State
   const [confirmDialogConfig, setConfirmDialogConfig] = useState<{
@@ -98,39 +92,33 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
 
   // 1. Fetch Customer Detail & Summary
   const fetchCustomerData = useCallback(async () => {
-    if (!customerId) {
-      if (initialCustomer) {
-        setCustomer(initialCustomer);
-        setLoading(false);
-      }
-      return;
-    }
+    if (!customerId) return;
     try {
-      const [cust, summary] = await Promise.all([
+      setLoading(true);
+      const [custDetail, summary] = await Promise.all([
         billingService.getCustomerById(customerId).catch(() => null),
         billingService.getCustomerSummary(customerId).catch(() => null),
       ]);
-      if (cust) setCustomer(cust);
-      else if (initialCustomer) setCustomer(initialCustomer);
+      if (custDetail) setCustomer(custDetail);
       if (summary) setCustomerSummary(summary);
     } catch (_err) {
-      if (initialCustomer) setCustomer(initialCustomer);
+      // Handled silently
     } finally {
       setLoading(false);
     }
-  }, [customerId, initialCustomer]);
+  }, [customerId]);
 
-  // 2. Fetch Customer Invoices & Ledger
+  // 2. Fetch Customer Invoices & Ledger Overview
   const fetchLedgerAndInvoices = useCallback(async () => {
     if (!customerId) return;
     try {
       setLedgerLoading(true);
-      const [stmt, invList] = await Promise.all([
-        billingService.getCustomerLedger(customerId).catch(() => null),
+      const [invList, stmt] = await Promise.all([
         billingService.getCustomerInvoices(customerId).catch(() => []),
+        billingService.getCustomerLedger(customerId).catch(() => null),
       ]);
-      setLedgerStatement(stmt);
       setInvoices(invList || []);
+      setLedgerStatement(stmt);
     } catch (_err) {
       // Handled silently
     } finally {
@@ -138,13 +126,13 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     }
   }, [customerId]);
 
-  // 3. Fetch Recent Orders
+  // 3. Fetch Customer Orders
   const fetchOrders = useCallback(async () => {
     if (!customerId) return;
     try {
       setOrdersLoading(true);
-      const orderList = await orderService.getOrders({ customer: customerId }).catch(() => []);
-      setRecentOrders(orderList || []);
+      const list = await orderService.getOrders({ customer: customerId }).catch(() => []);
+      setRecentOrders(list || []);
     } catch (_err) {
       // Handled silently
     } finally {
@@ -192,6 +180,12 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     ]).finally(() => setRefreshing(false));
   }, [fetchCustomerData, fetchLedgerAndInvoices, fetchOrders, fetchSchedules]);
 
+  // Reset search when tab changes
+  const handleTabChange = (tab: 'ORDERS' | 'SCHEDULE' | 'LEDGER') => {
+    setActiveTab(tab);
+    setSearchQuery('');
+  };
+
   // Edit Customer
   const handleEditCustomerSubmit = async (formData: AddCustomerFormData) => {
     if (!customerId) return;
@@ -210,7 +204,28 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     }
   };
 
-  // Collect Payment with FIFO Allocation (Strictly Cash Only)
+  // Change Billing Cycle Day Handler
+  const handleSaveBillingCycleDay = async (newDay: number) => {
+    if (!customerId) return;
+    try {
+      const updated = await billingService.updateCustomer(customerId, {
+        billing_cycle_day: newDay,
+      });
+      setCustomer(prev => (prev ? { ...prev, billing_cycle_day: newDay, ...(updated || {}) } : updated));
+      setBillingCycleModalVisible(false);
+      await Promise.all([fetchCustomerData(), fetchLedgerAndInvoices()]);
+      refreshBackendData();
+      AppToast.success(
+        'Billing Day Updated',
+        `Cycle day set to ${newDay}${newDay === 1 ? 'st' : newDay === 2 ? 'nd' : newDay === 3 ? 'rd' : 'th'} of every month.`
+      );
+    } catch (err: any) {
+      AppToast.error('Update Failed', err?.message || 'Failed to update billing cycle day.');
+      throw err;
+    }
+  };
+
+  // Record Payment with FIFO Allocation (Strictly Cash Only)
   const handleConfirmCollectPayment = async (data: CollectPaymentFormData) => {
     if (!customerId) return;
     try {
@@ -229,14 +244,14 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
         `₹${res.amount_allocated} cash allocated via FIFO.${parseFloat(String(res.unallocated_credit)) > 0 ? ` Advance Credit: ₹${res.unallocated_credit}` : ''}`
       );
     } catch (err: any) {
-      AppToast.error('Failed to Collect Payment', err?.message || 'Please check connection.');
+      AppToast.error('Failed to Record Payment', err?.message || 'Please check connection.');
       throw err;
     } finally {
       setSubmittingPayment(false);
     }
   };
 
-  // Action 1: New Order -> Navigate directly to QuickBillingScreen in order mode with customer preselected
+  // Quick Action 1: New Order -> QuickBillingScreen in order mode
   const handleOpenNewOrder = () => {
     const custToPass = customer || initialCustomer || {
       id: customerId,
@@ -251,74 +266,69 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     });
   };
 
-  // Action 2: New Schedule
+  // Quick Action 2: New Schedule -> Open existing CreateEditDailyScheduleScreen in Create Mode
   const handleOpenCreateSchedule = () => {
+    const custToPass = customer || {
+      id: customerId,
+      name: displayName,
+      phone: displayPhone,
+      address: displayAddress,
+    };
     navigation.navigate('CreateEditDailySchedule', {
-      customerId,
-      customer: customer || initialCustomer,
+      customer: custToPass,
+      customerId: customerId,
     });
   };
 
-  // Action 3: Collect Cash Payment
+  // Quick Action 3: Record Payment
   const handleOpenCollectPayment = () => {
-    setCollectAmount(String(amountDue > 0 ? amountDue : ''));
     setCollectModalVisible(true);
   };
 
-  const handleOpenEditSchedule = (sched: DailyDeliverySchedule) => {
-    navigation.navigate('CreateEditDailySchedule', {
-      schedule: sched,
-      customerId,
-      customer: customer || initialCustomer,
+  // Navigate to Dedicated Full-Screen Customer Ledger
+  const handleOpenDedicatedLedger = () => {
+    navigation.navigate('CustomerLedger', {
+      customerId: customerId,
+      customer: customer || initialCustomer || { id: customerId, name: displayName, phone: displayPhone },
     });
   };
 
-  const handleSaveSchedule = async (payload: CreateDailySchedulePayload) => {
-    if (editingSchedule) {
-      await orderService.updateDailySchedule(editingSchedule.id, payload);
-      AppToast.success('Schedule Updated', 'Customer delivery schedule updated successfully.');
-    } else {
-      await orderService.createDailySchedule(payload);
-      AppToast.success('Schedule Created', 'Daily delivery schedule activated for this customer.');
-    }
-    fetchSchedules();
-  };
-
-  const handleToggleSchedulePause = async (sched: DailyDeliverySchedule) => {
+  const handleToggleScheduleActive = async (sched: DailyDeliverySchedule) => {
     try {
-      const nextActive = !sched.is_active;
-      await orderService.updateDailySchedule(sched.id, { is_active: nextActive });
-      AppToast.success(
-        nextActive ? 'Schedule Resumed' : 'Schedule Paused',
-        `Schedule is now ${nextActive ? 'Active' : 'Paused'}.`
+      await orderService.updateDailySchedule(sched.id, { is_active: !sched.is_active });
+      AppToast.info(
+        sched.is_active ? 'Schedule Paused' : 'Schedule Resumed',
+        `Schedule is now ${sched.is_active ? 'paused' : 'active'}.`
       );
       fetchSchedules();
+      refreshBackendData();
     } catch (err: any) {
-      AppToast.error('Action Failed', err?.message || 'Could not update status.');
+      AppToast.error('Error', err?.message || 'Could not toggle schedule status.');
     }
   };
 
   const handleOpenCancelDateModal = (sched: DailyDeliverySchedule) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const isAlreadyCancelled = (sched.cancellation_exceptions || []).some(
+      ex => ex.cancelled_date === todayStr
+    );
+
     setConfirmDialogConfig({
       visible: true,
-      title: "Cancel Today's Delivery?",
-      description: `Skip today's scheduled delivery for ${displayName}? Upcoming future deliveries will remain active.`,
-      confirmLabel: "Cancel Today",
-      cancelLabel: "Go Back",
-      type: "danger",
-      icon: "close-circle-outline",
+      title: 'Cancel Today?',
+      description: `Skip automated delivery generation for today (${todayStr})?`,
+      confirmLabel: 'Cancel for Today',
+      cancelLabel: 'Keep',
+      type: 'warning',
+      icon: 'close-circle-outline',
       onConfirm: async () => {
         try {
-          const today = new Date().toISOString().split('T')[0];
-          const res = await orderService.cancelDateDelivery(sched.id, today, 'Skipped by store owner');
+          await orderService.cancelDateDelivery(sched.id, todayStr, 'Owner cancellation');
+          AppToast.info('Cancelled', 'Delivery skipped for today.');
           fetchSchedules();
-          fetchOrders();
-          AppToast.info(
-            res.case === 'B' ? "Today's Delivery Cancelled" : 'Delivery Date Skipped',
-            res.message || 'Today delivery marked cancelled.'
-          );
+          refreshBackendData();
         } catch (err: any) {
-          AppToast.error('Cancellation Failed', err?.message || 'Could not cancel today.');
+          AppToast.error('Action Failed', err?.message || 'Could not update cancellation.');
         } finally {
           setConfirmDialogConfig(prev => ({ ...prev, visible: false }));
         }
@@ -326,25 +336,24 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     });
   };
 
-  // Filtered Orders for Tab 1 (Customer-specific already via customerId backend filter)
-  const filteredOrders = useMemo(() => {
+  // Filtered Orders for Tab 1
+  const filteredCustomerOrders = useMemo(() => {
+    if (!searchQuery.trim()) return recentOrders;
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return recentOrders;
-    return recentOrders.filter(ord => {
-      const matchId = String(ord.id).includes(q);
-      const matchStatus = (ord.status || '').toLowerCase().includes(q);
-      const matchDate = (ord.created_at || '').includes(q);
-      const matchProduct = (ord.items || []).some(it =>
-        (it.product_details?.name || '').toLowerCase().includes(q)
+    return recentOrders.filter(o => {
+      const matchId = String(o.id).includes(q);
+      const matchStatus = (o.status || '').toLowerCase().includes(q);
+      const matchItems = (o.items || []).some(
+        it => (it.product_details?.name || (it as any).product_name || '').toLowerCase().includes(q)
       );
-      return matchId || matchStatus || matchDate || matchProduct;
+      return matchId || matchStatus || matchItems;
     });
   }, [recentOrders, searchQuery]);
 
-  // Filtered Schedules for Tab 2 (Customer-specific)
+  // Filtered Schedules for Tab 2
   const filteredCustomerSchedules = useMemo(() => {
+    if (!searchQuery.trim()) return schedules;
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return schedules;
     return schedules.filter(sched => {
       const matchPartner = (sched.delivery_partner_name || '').toLowerCase().includes(q);
       const matchTime = (sched.delivery_time || '').includes(q);
@@ -356,18 +365,17 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
     });
   }, [schedules, searchQuery]);
 
-  // Filtered Transactions for Tab 3 (Customer Ledger)
-  const filteredTransactions = useMemo(() => {
-    const txs = ledgerStatement?.transactions || [];
+  // Filtered Invoices for Tab 3
+  const filteredInvoices = useMemo(() => {
+    if (!searchQuery.trim()) return invoices;
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return txs;
-    return txs.filter((tx: any) => {
-      const matchDesc = (tx.description || '').toLowerCase().includes(q);
-      const matchDate = (tx.date || '').includes(q);
-      const matchAmount = String(tx.debit || '').includes(q) || String(tx.credit || '').includes(q);
-      return matchDesc || matchDate || matchAmount;
+    return invoices.filter(inv => {
+      const matchNum = (inv.invoice_number || '').toLowerCase().includes(q);
+      const matchPeriod = (inv.billing_period || '').includes(q);
+      const matchStatus = (inv.status || '').toLowerCase().includes(q);
+      return matchNum || matchPeriod || matchStatus;
     });
-  }, [ledgerStatement?.transactions, searchQuery]);
+  }, [invoices, searchQuery]);
 
   // Derived Values
   const displayName = customer?.name || initialCustomer?.name || 'Customer';
@@ -385,7 +393,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
             onPress={() => navigation.goBack()}
             activeOpacity={0.7}
           >
-            <Ionicons name="arrow-back" size={22} color={colors.primary} />
+            <Ionicons name="arrow-back" size={20} color={colors.primary} />
           </TouchableOpacity>
           <Text style={styles.screenTitle}>Customer Profile</Text>
         </View>
@@ -398,7 +406,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* 1. TOP HEADER */}
+      {/* 1. TOP COMPACT HEADER */}
       <View style={styles.topHeader}>
         <View style={styles.topHeaderLeft}>
           <TouchableOpacity
@@ -406,7 +414,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
             onPress={() => navigation.goBack()}
             activeOpacity={0.7}
           >
-            <Ionicons name="arrow-back" size={22} color={colors.primary} />
+            <Ionicons name="arrow-back" size={20} color={colors.primary} />
           </TouchableOpacity>
           <Text style={styles.screenTitle}>Customer Profile</Text>
         </View>
@@ -416,7 +424,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
           onPress={() => setEditCustomerModalVisible(true)}
           activeOpacity={0.7}
         >
-          <Ionicons name="create-outline" size={18} color={colors.primary} style={{ marginRight: 4 }} />
+          <Ionicons name="create-outline" size={16} color={colors.primary} style={{ marginRight: 4 }} />
           <Text style={styles.editActionHeaderText}>Edit</Text>
         </TouchableOpacity>
       </View>
@@ -429,7 +437,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
         }
       >
-        {/* 2. CUSTOMER IDENTITY CARD */}
+        {/* 2. COMPACT CUSTOMER IDENTITY CARD */}
         <View style={styles.identityCard}>
           <View style={styles.identityTopRow}>
             <View style={styles.avatarBox}>
@@ -449,24 +457,40 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
                   onPress={() => Linking.openURL(`tel:${displayPhone}`).catch(() => {})}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="call" size={12} color={colors.primary} style={{ marginRight: 5 }} />
+                  <Ionicons name="call" size={11} color={colors.primary} style={{ marginRight: 4 }} />
                   <Text style={styles.phoneChipText}>{displayPhone}</Text>
                 </TouchableOpacity>
-              ) : (
-                <Text style={styles.noPhoneText}>No mobile number registered</Text>
-              )}
+              ) : null}
             </View>
           </View>
 
           <View style={styles.addressRow}>
-            <Ionicons name="location-outline" size={15} color={colors.textSecondary} style={{ marginRight: 6, marginTop: 1 }} />
+            <Ionicons name="location-outline" size={13} color={colors.textSecondary} style={{ marginRight: 5, marginTop: 1 }} />
             <Text style={styles.addressText} numberOfLines={2}>
               {displayAddress}
             </Text>
           </View>
+
+          {/* Billing Cycle Day Shortcut / Indicator */}
+          <View style={styles.cycleDayRow}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+              <Ionicons name="calendar-outline" size={13} color="#8C331A" style={{ marginRight: 5 }} />
+              <Text style={styles.cycleDayLabel}>
+                Billing Cycle: <Text style={styles.cycleDayValue}>Day {customer?.billing_cycle_day || 1} of every month</Text>
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.changeCycleBtn}
+              onPress={() => setBillingCycleModalVisible(true)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="create-outline" size={12} color="#8C331A" style={{ marginRight: 3 }} />
+              <Text style={styles.changeCycleBtnText}>Change</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        {/* 3. OVERVIEW METRICS CARDS */}
+        {/* 3. EXACTLY TWO SUMMARY CARDS: AMOUNT DUE & TOTAL ORDERS */}
         <View style={styles.overviewRow}>
           <View style={[styles.overviewMetricCard, amountDue > 0 && styles.overviewMetricDueCard]}>
             <View style={styles.overviewCardTop}>
@@ -474,7 +498,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
               <View style={[styles.overviewIconWrap, { backgroundColor: amountDue > 0 ? '#FEF2F2' : '#ECFDF5' }]}>
                 <Ionicons
                   name={amountDue > 0 ? 'alert-circle' : 'checkmark-circle'}
-                  size={16}
+                  size={14}
                   color={amountDue > 0 ? colors.danger : colors.success}
                 />
               </View>
@@ -491,7 +515,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
             <View style={styles.overviewCardTop}>
               <Text style={styles.overviewCardLabel}>TOTAL ORDERS</Text>
               <View style={[styles.overviewIconWrap, { backgroundColor: '#F5EFEA' }]}>
-                <Ionicons name="cart-outline" size={16} color={colors.primary} />
+                <Ionicons name="cart-outline" size={14} color={colors.primary} />
               </View>
             </View>
             <Text style={styles.overviewCardAmount}>{totalOrdersCount}</Text>
@@ -501,14 +525,14 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
           </View>
         </View>
 
-        {/* 4. MAIN ACTION BUTTONS: 1. New Order (Quick Billing), 2. New Schedule, 3. Collect Cash */}
+        {/* 4. EXACTLY THREE QUICK ACTIONS: 1. New Order, 2. New Schedule, 3. Record Payment */}
         <View style={styles.actionsBar}>
           <TouchableOpacity
             style={styles.primaryActionBtn}
             onPress={handleOpenNewOrder}
             activeOpacity={0.85}
           >
-            <Ionicons name="cart-outline" size={17} color={colors.white} style={{ marginRight: 5 }} />
+            <Ionicons name="cart-outline" size={15} color={colors.white} style={{ marginRight: 4 }} />
             <Text style={styles.primaryActionText}>New Order</Text>
           </TouchableOpacity>
 
@@ -517,7 +541,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
             onPress={handleOpenCreateSchedule}
             activeOpacity={0.7}
           >
-            <Ionicons name="calendar-outline" size={16} color={colors.primary} style={{ marginRight: 5 }} />
+            <Ionicons name="calendar-outline" size={15} color={colors.primary} style={{ marginRight: 4 }} />
             <Text style={styles.secondaryActionText}>New Schedule</Text>
           </TouchableOpacity>
 
@@ -526,23 +550,23 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
             onPress={handleOpenCollectPayment}
             activeOpacity={0.7}
           >
-            <Ionicons name="cash-outline" size={16} color={colors.primary} style={{ marginRight: 5 }} />
-            <Text style={styles.secondaryActionText}>Collect Cash</Text>
+            <Ionicons name="cash-outline" size={15} color={colors.primary} style={{ marginRight: 4 }} />
+            <Text style={styles.secondaryActionText}>Record Payment</Text>
           </TouchableOpacity>
         </View>
 
-        {/* 5. STICKY SEARCH BAR & SEGMENTED 3 TABS: Orders | Daily Schedule | Customer Ledger */}
+        {/* 5. STICKY SEARCH BAR & 3 TABS: Orders | Daily Schedule | Customer Ledger */}
         <View style={styles.stickySectionWrapper}>
           {/* Search Bar */}
           <View style={styles.searchBar}>
-            <Ionicons name="search-outline" size={17} color="#888" style={{ marginRight: 8 }} />
+            <Ionicons name="search-outline" size={16} color="#888" style={{ marginRight: 6 }} />
             <TextInput
               placeholder={
                 activeTab === 'ORDERS'
-                  ? "Search orders by ID, product, date, status..."
+                  ? "Search orders by ID, product, status..."
                   : activeTab === 'SCHEDULE'
-                  ? "Search schedule by partner, product, time..."
-                  : "Search ledger transactions by description, date..."
+                  ? "Search schedule by partner, time, product..."
+                  : "Search invoices by number, period..."
               }
               placeholderTextColor="#988E85"
               style={styles.searchInput}
@@ -560,7 +584,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
           <View style={styles.tabBarRow}>
             <TouchableOpacity
               style={[styles.segmentTab, activeTab === 'ORDERS' && styles.segmentTabActive]}
-              onPress={() => setActiveTab('ORDERS')}
+              onPress={() => handleTabChange('ORDERS')}
               activeOpacity={0.75}
             >
               <Ionicons
@@ -576,7 +600,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
 
             <TouchableOpacity
               style={[styles.segmentTab, activeTab === 'SCHEDULE' && styles.segmentTabActive]}
-              onPress={() => setActiveTab('SCHEDULE')}
+              onPress={() => handleTabChange('SCHEDULE')}
               activeOpacity={0.75}
             >
               <Ionicons
@@ -592,7 +616,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
 
             <TouchableOpacity
               style={[styles.segmentTab, activeTab === 'LEDGER' && styles.segmentTabActive]}
-              onPress={() => setActiveTab('LEDGER')}
+              onPress={() => handleTabChange('LEDGER')}
               activeOpacity={0.75}
             >
               <Ionicons
@@ -602,51 +626,40 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
                 style={{ marginRight: 4 }}
               />
               <Text style={[styles.segmentTabText, activeTab === 'LEDGER' && styles.segmentTabTextActive]}>
-                Customer Ledger
+                Ledger
               </Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* TAB 1: ORDERS (Customer-Specific Order History) */}
+        {/* TAB 1: ORDERS */}
         {activeTab === 'ORDERS' && (
           <View style={styles.tabContentContainer}>
-            <View style={styles.sectionHeaderRow}>
-              <View style={styles.sectionHeaderLeft}>
-                <Ionicons name="receipt-outline" size={16} color={colors.primary} style={{ marginRight: 6 }} />
-                <Text style={styles.sectionTitle}>
-                  CUSTOMER ORDERS ({filteredOrders.length})
-                </Text>
-              </View>
-            </View>
-
             {ordersLoading ? (
               <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
-            ) : filteredOrders.length === 0 ? (
+            ) : filteredCustomerOrders.length === 0 ? (
               <View style={styles.emptyCard}>
                 <Ionicons name="cart-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
-                <Text style={styles.emptyCardTitle}>No Customer Orders Found</Text>
+                <Text style={styles.emptyCardTitle}>No Orders Found</Text>
                 <Text style={styles.emptyCardSub}>
-                  {searchQuery ? `No orders matching "${searchQuery}"` : "Tap 'New Order' above to place an order for this customer."}
+                  {searchQuery ? `No orders matching "${searchQuery}"` : 'Customer has not placed any orders yet.'}
                 </Text>
               </View>
             ) : (
-              filteredOrders.map(order => {
-                const dateObj = new Date(order.created_at);
-                const orderDate = dateObj.toLocaleDateString('en-IN', {
+              filteredCustomerOrders.map(order => {
+                const orderDate = new Date(order.created_at).toLocaleDateString('en-IN', {
                   day: 'numeric',
                   month: 'short',
                   year: 'numeric',
                 });
-                const orderTime = dateObj.toLocaleTimeString('en-IN', {
+                const orderTime = new Date(order.created_at).toLocaleTimeString('en-IN', {
                   hour: '2-digit',
                   minute: '2-digit',
-                  hour12: true,
                 });
 
                 const itemsSummary = (order.items || [])
-                  .map(i => `${i.quantity}x ${i.product_details?.name || 'Item'}`)
-                  .join(' • ');
+                  .map(it => `${it.quantity}x ${it.product_details?.name || (it as any).product_name || 'Item'}`)
+                  .join(', ');
 
                 return (
                   <TouchableOpacity
@@ -708,14 +721,14 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
           </View>
         )}
 
-        {/* TAB 2: SCHEDULE (Customer-Specific Daily Schedule with 2x2 Buttons) */}
+        {/* TAB 2: DAILY SCHEDULE */}
         {activeTab === 'SCHEDULE' && (
           <View style={styles.tabContentContainer}>
             <View style={styles.sectionHeaderRow}>
               <View style={styles.sectionHeaderLeft}>
-                <Ionicons name="calendar-outline" size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                <Ionicons name="calendar-outline" size={15} color={colors.primary} style={{ marginRight: 6 }} />
                 <Text style={styles.sectionTitle}>
-                  CUSTOMER SCHEDULES ({filteredCustomerSchedules.length})
+                  SCHEDULES ({filteredCustomerSchedules.length})
                 </Text>
               </View>
               <TouchableOpacity
@@ -724,7 +737,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
                 activeOpacity={0.7}
               >
                 <Ionicons name="add" size={14} color={colors.primary} />
-                <Text style={styles.addTemplatePillText}>+ Add Schedule</Text>
+                <Text style={styles.addTemplatePillText}>+ Add</Text>
               </TouchableOpacity>
             </View>
 
@@ -735,7 +748,7 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
                 <Ionicons name="calendar-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
                 <Text style={styles.emptyCardTitle}>No Schedules Configured</Text>
                 <Text style={styles.emptyCardSub}>
-                  {searchQuery ? `No schedules matching "${searchQuery}"` : "Configure automated daily orders, delivery time and dedicated partner."}
+                  {searchQuery ? `No schedules matching "${searchQuery}"` : "Configure automated daily orders and delivery time."}
                 </Text>
               </View>
             ) : (
@@ -748,106 +761,73 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
                       .filter(Boolean)
                       .join(', ')
                   : 'Everyday';
-                const timeDisplay = sched.delivery_time ? sched.delivery_time.substring(0, 5) : '10:00';
-                const itemsList = (sched.items || []).map(i => `${i.quantity}x ${i.product_name}`).join(' • ');
 
-                // Calculate schedule total amount
-                const schedTotal = (sched.items || []).reduce((sum, item) => {
-                  const p = parseFloat(item.unit_price) || parseFloat(item.product_price) || 0;
-                  return sum + p * item.quantity;
-                }, 0);
+                const timeStr = sched.delivery_time ? sched.delivery_time.substring(0, 5) : '09:00';
+                const itemsList = (sched.items || []).map(i => `${i.quantity}x ${i.product_name}`).join(', ');
 
                 return (
-                  <View key={sched.id} style={styles.scheduleCard}>
-                    {/* Card Header */}
-                    <View style={styles.scheduleCardHeader}>
+                  <View key={sched.id} style={styles.schedCard}>
+                    <View style={styles.schedTopRow}>
                       <View style={{ flex: 1 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <Text style={styles.scheduleTimeText}>{timeDisplay}</Text>
-                          <View style={[styles.statusTag, sched.is_active ? styles.statusTagActive : styles.statusTagPaused]}>
-                            <Text style={[styles.statusTagText, sched.is_active ? styles.statusTagTextActive : styles.statusTagTextPaused]}>
+                          <Text style={styles.schedTitle}>{timeStr}</Text>
+                          <View style={[styles.schedBadge, sched.is_active ? styles.schedBadgeActive : styles.schedBadgeInactive]}>
+                            <Text style={[styles.schedBadgeText, sched.is_active ? styles.schedBadgeActiveText : styles.schedBadgeInactiveText]}>
                               {sched.is_active ? 'ACTIVE' : 'PAUSED'}
                             </Text>
                           </View>
                         </View>
-                        <Text style={styles.scheduleDaysText}>{daysLabel}</Text>
-                      </View>
-
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={styles.scheduleTotalLabel}>DAILY AMOUNT</Text>
-                        <Text style={styles.scheduleTotalAmount}>₹{schedTotal.toFixed(2)}</Text>
+                        <Text style={styles.schedDays}>{daysLabel}</Text>
                       </View>
                     </View>
 
-                    {/* Fixed Partner */}
-                    <View style={styles.schedulePartnerRow}>
-                      <Ionicons name="bicycle-outline" size={14} color={colors.primary} style={{ marginRight: 6 }} />
-                      <Text style={styles.schedulePartnerName} numberOfLines={1}>
-                        Fixed Partner: <Text style={{ fontWeight: '700', color: colors.textPrimary }}>{sched.delivery_partner_name}</Text>
-                      </Text>
-                    </View>
+                    <Text style={styles.schedItems} numberOfLines={2}>
+                      {itemsList || 'Daily tea order'}
+                    </Text>
 
-                    {/* Products */}
-                    <View style={styles.scheduleItemsBox}>
-                      <Text style={styles.scheduleItemsText} numberOfLines={2}>
-                        {itemsList || 'No products configured'}
-                      </Text>
-                    </View>
+                    <View style={styles.schedActionsRow}>
+                      <TouchableOpacity
+                        style={styles.schedActionMiniBtn}
+                        onPress={() => {
+                          const custToPass = customer || {
+                            id: customerId,
+                            name: displayName,
+                            phone: displayPhone,
+                            address: displayAddress,
+                          };
+                          navigation.navigate('CreateEditDailySchedule', {
+                            schedule: sched,
+                            customer: custToPass,
+                            customerId: customerId,
+                          });
+                        }}
+                      >
+                        <Ionicons name="create-outline" size={13} color="#8C331A" style={{ marginRight: 3 }} />
+                        <Text style={styles.schedActionMiniBtnText}>Edit</Text>
+                      </TouchableOpacity>
 
-                    {/* Next Scheduled Delivery & Lead Time */}
-                    <View style={styles.scheduleMetaRow}>
-                      <Text style={styles.scheduleNextLabel}>
-                        Next: {sched.next_scheduled_delivery || 'Not scheduled'}
-                      </Text>
-                      <Text style={styles.scheduleLeadLabel}>
-                        Alert Lead: {sched.notification_lead_time_minutes || 30} mins
-                      </Text>
-                    </View>
+                      <TouchableOpacity
+                        style={styles.schedActionMiniBtn}
+                        onPress={() => handleToggleScheduleActive(sched)}
+                      >
+                        <Ionicons
+                          name={sched.is_active ? 'pause-outline' : 'play-outline'}
+                          size={13}
+                          color={sched.is_active ? '#D97706' : '#10B981'}
+                          style={{ marginRight: 3 }}
+                        />
+                        <Text style={[styles.schedActionMiniBtnText, { color: sched.is_active ? '#D97706' : '#10B981' }]}>
+                          {sched.is_active ? 'Pause' : 'Resume'}
+                        </Text>
+                      </TouchableOpacity>
 
-                    {/* 2x2 Action Buttons: Prevents overflow on all phone sizes */}
-                    <View style={styles.actionsGrid}>
-                      <View style={styles.actionsGridRow}>
-                        <TouchableOpacity
-                          style={styles.actionGridBtn}
-                          onPress={() => handleOpenEditSchedule(sched)}
-                          activeOpacity={0.7}
-                        >
-                          <Ionicons name="create-outline" size={13} color="#8C331A" style={{ marginRight: 4 }} />
-                          <Text style={[styles.actionGridBtnText, { color: '#8C331A' }]}>Edit</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={styles.actionGridBtn}
-                          onPress={() => handleToggleSchedulePause(sched)}
-                          activeOpacity={0.7}
-                        >
-                          <Ionicons
-                            name={sched.is_active ? 'pause-circle-outline' : 'play-circle-outline'}
-                            size={13}
-                            color={sched.is_active ? '#D97706' : '#10B981'}
-                            style={{ marginRight: 4 }}
-                          />
-                          <Text
-                            style={[
-                              styles.actionGridBtnText,
-                              sched.is_active ? { color: '#D97706' } : { color: '#10B981' },
-                            ]}
-                          >
-                            {sched.is_active ? 'Pause' : 'Resume'}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-
-                      <View style={styles.actionsGridRow}>
-                        <TouchableOpacity
-                          style={[styles.actionGridBtn, styles.cancelActionBtn]}
-                          onPress={() => handleOpenCancelDateModal(sched)}
-                          activeOpacity={0.7}
-                        >
-                          <Ionicons name="close-circle-outline" size={13} color={colors.danger} style={{ marginRight: 4 }} />
-                          <Text style={[styles.actionGridBtnText, { color: colors.danger }]}>Cancel Today</Text>
-                        </TouchableOpacity>
-                      </View>
+                      <TouchableOpacity
+                        style={styles.schedActionMiniBtn}
+                        onPress={() => handleOpenCancelDateModal(sched)}
+                      >
+                        <Ionicons name="close-circle-outline" size={13} color={colors.danger} style={{ marginRight: 3 }} />
+                        <Text style={[styles.schedActionMiniBtnText, { color: colors.danger }]}>Skip Today</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
                 );
@@ -856,116 +836,65 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
           </View>
         )}
 
-        {/* TAB 3: CUSTOMER LEDGER (Statement, Summary & Transaction Timeline) */}
+        {/* TAB 3: COMPACT MONTHLY BILLING SUMMARY (WITH SINGLE "VIEW LEDGER" ACTION) */}
         {activeTab === 'LEDGER' && (
           <View style={styles.tabContentContainer}>
-            <View style={styles.sectionHeaderRow}>
-              <View style={styles.sectionHeaderLeft}>
-                <Ionicons name="book-outline" size={16} color={colors.primary} style={{ marginRight: 6 }} />
-                <Text style={styles.sectionTitle}>
-                  CUSTOMER LEDGER & PASSBOOK
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setLedgerModalVisible(true)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.viewAllLink}>Full View →</Text>
-              </TouchableOpacity>
-            </View>
-
-            {ledgerLoading ? (
-              <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
-            ) : ledgerStatement ? (
-              <View>
-                {/* Summary Card */}
-                <View style={styles.ledgerCard}>
-                  <View style={styles.ledgerGrid}>
-                    <View style={styles.ledgerCol}>
-                      <Text style={styles.ledgerColLabel}>OPENING BAL</Text>
-                      <Text style={styles.ledgerColValue}>
-                        ₹{parseFloat(ledgerStatement.summary?.opening_balance || '0').toLocaleString('en-IN')}
-                      </Text>
-                    </View>
-
-                    <View style={styles.ledgerCol}>
-                      <Text style={styles.ledgerColLabel}>INVOICED</Text>
-                      <Text style={[styles.ledgerColValue, { color: colors.danger }]}>
-                        +₹{parseFloat(ledgerStatement.summary?.total_debit || '0').toLocaleString('en-IN')}
-                      </Text>
-                    </View>
-
-                    <View style={styles.ledgerCol}>
-                      <Text style={styles.ledgerColLabel}>COLLECTIONS</Text>
-                      <Text style={[styles.ledgerColValue, { color: colors.success }]}>
-                        -₹{parseFloat(ledgerStatement.summary?.total_credit || '0').toLocaleString('en-IN')}
-                      </Text>
-                    </View>
-
-                    <View style={[styles.ledgerCol, { borderRightWidth: 0 }]}>
-                      <Text style={styles.ledgerColLabel}>AMOUNT DUE</Text>
-                      <Text style={[styles.ledgerColValue, { color: colors.primary, fontWeight: '800' }]}>
-                        ₹{parseFloat(ledgerStatement.summary?.closing_balance || '0').toLocaleString('en-IN')}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.ledgerCardFooter}>
-                    <Text style={styles.ledgerPeriodText}>
-                      Period: {ledgerStatement.period?.start_date ? new Date(ledgerStatement.period.start_date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : 'Current Month'}
+            <View style={styles.ledgerCompactCard}>
+              <View style={styles.ledgerCompactHeader}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.ledgerCompactTitle}>Monthly Billing Summary</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                    <Text style={styles.ledgerCompactPeriod}>
+                      Billing Cycle: Day {customer?.billing_cycle_day || 1} of every month
                     </Text>
                     <TouchableOpacity
-                      style={styles.collectMiniBtn}
-                      onPress={handleOpenCollectPayment}
+                      style={styles.changeCycleMiniLink}
+                      onPress={() => setBillingCycleModalVisible(true)}
                       activeOpacity={0.7}
                     >
-                      <Ionicons name="cash-outline" size={13} color={colors.white} style={{ marginRight: 4 }} />
-                      <Text style={styles.collectMiniBtnText}>Collect Cash</Text>
+                      <Text style={styles.changeCycleMiniLinkText}>• Change</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
 
-                {/* Inline Transactions List */}
-                <View style={styles.ledgerInlineTransactionsCard}>
-                  <Text style={styles.ledgerInlineHeader}>TRANSACTION HISTORY ({filteredTransactions.length})</Text>
-                  {filteredTransactions.length === 0 ? (
-                    <Text style={styles.emptyNote}>
-                      {searchQuery ? `No transactions matching "${searchQuery}"` : 'No transactions recorded for this customer.'}
-                    </Text>
-                  ) : (
-                    filteredTransactions.map((tx: any, idx: number) => {
-                      const isDebit = parseFloat(tx.debit) > 0;
-                      return (
-                        <View key={idx} style={styles.txRow}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.txDesc}>{tx.description}</Text>
-                            <Text style={styles.txDate}>{tx.date}</Text>
-                          </View>
-                          <View style={{ alignItems: 'flex-end' }}>
-                            <Text style={[styles.txAmount, isDebit ? { color: colors.danger } : { color: colors.success }]}>
-                              {isDebit ? `+₹${tx.debit}` : `-₹${tx.credit}`}
-                            </Text>
-                            <Text style={styles.txRunningBal}>Bal: ₹{tx.running_balance}</Text>
-                          </View>
-                        </View>
-                      );
-                    })
-                  )}
+                {/* Single View Ledger Action Button */}
+                <TouchableOpacity
+                  style={styles.viewLedgerPrimaryBtn}
+                  onPress={handleOpenDedicatedLedger}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.viewLedgerPrimaryBtnText}>View Ledger →</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.ledgerMetricsGrid}>
+                <View style={styles.ledgerMetricCol}>
+                  <Text style={styles.ledgerMetricLabel}>AMOUNT INVOICED</Text>
+                  <Text style={styles.ledgerMetricVal}>
+                    ₹{parseFloat(customerSummary?.total_billed || customer?.total_billed_amount || '0').toLocaleString('en-IN')}
+                  </Text>
+                </View>
+
+                <View style={styles.ledgerMetricCol}>
+                  <Text style={styles.ledgerMetricLabel}>AMOUNT RECEIVED</Text>
+                  <Text style={[styles.ledgerMetricVal, { color: '#059669' }]}>
+                    ₹{parseFloat(customerSummary?.total_paid || '0').toLocaleString('en-IN')}
+                  </Text>
+                </View>
+
+                <View style={[styles.ledgerMetricCol, { borderRightWidth: 0 }]}>
+                  <Text style={styles.ledgerMetricLabel}>OUTSTANDING</Text>
+                  <Text style={[styles.ledgerMetricVal, { color: amountDue > 0 ? '#DC2626' : '#059669', fontWeight: '800' }]}>
+                    ₹{amountDue.toLocaleString('en-IN')}
+                  </Text>
                 </View>
               </View>
-            ) : (
-              <View style={styles.emptyCard}>
-                <Ionicons name="book-outline" size={32} color={colors.gray300} style={{ marginBottom: 6 }} />
-                <Text style={styles.emptyCardTitle}>No Ledger Records</Text>
-                <Text style={styles.emptyCardSub}>No transaction ledger statement generated yet.</Text>
-              </View>
-            )}
+            </View>
           </View>
         )}
       </ScrollView>
 
-      {/* --- MODALS & DIALOGS --- */}
-
+      {/* --- MODALS --- */}
       {/* 1. Edit Customer Modal */}
       <AddCustomerModal
         visible={editCustomerModalVisible}
@@ -983,94 +912,17 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
         title="Edit Customer Details"
       />
 
-      {/* 2. Cash Payment Modal (Strictly Cash Only) */}
+      {/* 2. Record Payment Modal (Single Workflow with FIFO Allocation) */}
       <CollectPaymentModal
         visible={collectModalVisible}
         onClose={() => setCollectModalVisible(false)}
         onSubmit={handleConfirmCollectPayment}
         customerName={displayName}
         totalPendingAmount={amountDue}
-        initialAmount={collectAmount}
+        invoices={invoices}
       />
 
-      {/* 4. Full Ledger Passbook Modal */}
-      <Modal visible={ledgerModalVisible} transparent animationType="fade" onRequestClose={() => setLedgerModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setLedgerModalVisible(false)} />
-          <View style={[styles.modalCenterBox, { maxHeight: '82%' }]}>
-            <View style={styles.modalHeaderRow}>
-              <View>
-                <Text style={styles.modalSheetTitle}>Customer Ledger Passbook</Text>
-                <Text style={styles.modalSheetSub}>{displayName} • Detailed Statement</Text>
-              </View>
-              <TouchableOpacity onPress={() => setLedgerModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close" size={20} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            {ledgerStatement ? (
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <View style={styles.ledgerStatementSummary}>
-                  <View style={styles.stmtSummaryRow}>
-                    <Text style={styles.stmtLabel}>Opening Balance</Text>
-                    <Text style={styles.stmtValue}>₹{ledgerStatement.summary?.opening_balance || '0'}</Text>
-                  </View>
-                  <View style={styles.stmtSummaryRow}>
-                    <Text style={styles.stmtLabel}>Total Invoiced (Debits)</Text>
-                    <Text style={[styles.stmtValue, { color: colors.danger }]}>+₹{ledgerStatement.summary?.total_debit || '0'}</Text>
-                  </View>
-                  <View style={styles.stmtSummaryRow}>
-                    <Text style={styles.stmtLabel}>Total Collections (Credits)</Text>
-                    <Text style={[styles.stmtValue, { color: colors.success }]}>-₹{ledgerStatement.summary?.total_credit || '0'}</Text>
-                  </View>
-                  <View style={[styles.stmtSummaryRow, { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 6 }]}>
-                    <Text style={[styles.stmtLabel, { fontWeight: '700' }]}>Net Closing Balance</Text>
-                    <Text style={[styles.stmtValue, { fontWeight: '800', color: colors.primary }]}>₹{ledgerStatement.summary?.closing_balance || '0'}</Text>
-                  </View>
-                </View>
-
-                <Text style={styles.transactionsHeader}>TRANSACTION TIMELINE</Text>
-                {(!ledgerStatement.transactions || ledgerStatement.transactions.length === 0) ? (
-                  <Text style={styles.emptyNote}>No transactions recorded in this period.</Text>
-                ) : (
-                  ledgerStatement.transactions.map((tx: any, idx: number) => {
-                    const isDebit = parseFloat(tx.debit) > 0;
-                    return (
-                      <View key={idx} style={styles.txRow}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.txDesc}>{tx.description}</Text>
-                          <Text style={styles.txDate}>{tx.date}</Text>
-                        </View>
-                        <View style={{ alignItems: 'flex-end' }}>
-                          <Text style={[styles.txAmount, isDebit ? { color: colors.danger } : { color: colors.success }]}>
-                            {isDebit ? `+₹${tx.debit}` : `-₹${tx.credit}`}
-                          </Text>
-                          <Text style={styles.txRunningBal}>Bal: ₹{tx.running_balance}</Text>
-                        </View>
-                      </View>
-                    );
-                  })
-                )}
-              </ScrollView>
-            ) : (
-              <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 30 }} />
-            )}
-          </View>
-        </View>
-      </Modal>
-
-      {/* 5. Daily Schedule Modal */}
-      <DailyScheduleModal
-        visible={scheduleModalVisible}
-        onClose={() => setScheduleModalVisible(false)}
-        onSubmit={handleSaveSchedule}
-        customerId={customerId || 0}
-        customerName={displayName}
-        customerAddress={displayAddress}
-        existingSchedule={editingSchedule}
-      />
-
-      {/* 6. Centralized Reusable Confirm Dialog */}
+      {/* 3. Confirmation Dialog */}
       <ConfirmDialog
         visible={confirmDialogConfig.visible}
         title={confirmDialogConfig.title}
@@ -1082,6 +934,15 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
         onConfirm={confirmDialogConfig.onConfirm}
         onCancel={() => setConfirmDialogConfig(prev => ({ ...prev, visible: false }))}
       />
+
+      {/* 4. Billing Cycle Day Modal */}
+      <BillingCycleDayModal
+        visible={billingCycleModalVisible}
+        currentDay={customer?.billing_cycle_day || 1}
+        customerName={displayName}
+        onClose={() => setBillingCycleModalVisible(false)}
+        onSave={handleSaveBillingCycleDay}
+      />
     </SafeAreaView>
   );
 }
@@ -1089,861 +950,665 @@ export default function CustomerDetailScreen({ route, navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
-  },
-  centerBox: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: '#FAF8F5',
   },
   topHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.cardBackground,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: '#EFECE9',
   },
   topHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   backButton: {
-    padding: spacing.xs,
-    marginRight: spacing.xs,
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#FAF5F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
   },
   screenTitle: {
-    ...typography.heading1,
-    color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#8C331A',
   },
   editActionHeaderBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F7EFE9',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: radius.md,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#FAF5F0',
     borderWidth: 1,
-    borderColor: '#F5C6B8',
+    borderColor: '#E8D7CE',
   },
   editActionHeaderText: {
-    ...typography.badge,
-    color: colors.primary,
+    fontSize: 12,
     fontWeight: '700',
+    color: '#8C331A',
   },
   scrollContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.xxl,
+    padding: 14,
+    paddingBottom: 32,
   },
-
-  /* 2. Customer Identity Card */
   identityCard: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
-    padding: spacing.md,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: colors.border,
-    ...shadows.sm,
-    marginBottom: spacing.md,
+    borderColor: '#EFECE9',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
   },
   identityTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: spacing.sm,
   },
   avatarBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#FDEBE4',
-    borderWidth: 1.5,
-    borderColor: '#F5C6B8',
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: '#FAF5F0',
+    borderWidth: 1,
+    borderColor: '#E8D7CE',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: spacing.md,
+    marginRight: 12,
   },
   avatarInitials: {
-    ...typography.heading2,
-    color: colors.primary,
+    fontSize: 15,
     fontWeight: '800',
+    color: '#8C331A',
   },
   identityInfoCol: {
     flex: 1,
   },
   customerName: {
-    ...typography.heading1,
-    color: colors.textPrimary,
-    marginBottom: 4,
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#1F2937',
   },
   phoneChip: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: '#FAF4ED',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: '#F5C6B8',
+    backgroundColor: '#FAF5F0',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 4,
   },
   phoneChipText: {
-    ...typography.caption,
-    fontFamily: 'Inter-SemiBold',
-    color: colors.primary,
+    fontSize: 11,
     fontWeight: '600',
+    color: '#8C331A',
   },
   noPhoneText: {
-    ...typography.caption,
-    color: colors.textMuted,
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginTop: 2,
   },
   addressRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    paddingTop: spacing.xs,
+    marginTop: 8,
     borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 6,
   },
   addressText: {
-    ...typography.caption,
-    color: colors.textSecondary,
+    fontSize: 11,
+    color: '#6B7280',
     flex: 1,
-    lineHeight: 18,
+    lineHeight: 15,
   },
-
-  /* 3. Overview Metrics */
-  overviewRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  overviewMetricCard: {
-    flex: 1,
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...shadows.sm,
-  },
-  overviewMetricDueCard: {
-    borderColor: '#FCA5A5',
-  },
-  overviewCardTop: {
+  cycleDayRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 6,
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  cycleDayLabel: {
+    fontSize: 11,
+    color: '#6B7280',
+  },
+  cycleDayValue: {
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  changeCycleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FDEBE4',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#F5C6B8',
+  },
+  changeCycleBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  changeCycleMiniLink: {
+    marginLeft: 6,
+    paddingVertical: 1,
+  },
+  changeCycleMiniLinkText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  overviewRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 10,
+  },
+  overviewMetricCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#EFECE9',
+  },
+  overviewMetricDueCard: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FEFDFD',
+  },
+  overviewCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
   },
   overviewCardLabel: {
-    ...typography.badge,
-    color: colors.textMuted,
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#8A7A70',
     letterSpacing: 0.5,
   },
   overviewIconWrap: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 22,
+    height: 22,
+    borderRadius: 6,
     justifyContent: 'center',
     alignItems: 'center',
   },
   overviewCardAmount: {
-    ...typography.heading1,
-    fontSize: 22,
-    fontWeight: '800',
-    color: colors.textPrimary,
-    marginBottom: 2,
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#1F2937',
+    marginVertical: 2,
   },
   dueText: {
-    color: colors.danger,
+    color: '#DC2626',
   },
   settledText: {
-    color: colors.success,
+    color: '#059669',
   },
   overviewCardSub: {
-    ...typography.caption,
-    fontSize: 11,
-    color: colors.textSecondary,
+    fontSize: 10,
+    color: '#8A7A70',
   },
-
-  /* 4. Action Buttons */
   actionsBar: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
+    gap: 8,
+    marginBottom: 12,
   },
   primaryActionBtn: {
-    flex: 1,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    paddingVertical: 12,
+    flex: 1.1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    ...shadows.sm,
+    backgroundColor: '#8C331A',
+    paddingVertical: 10,
+    borderRadius: 10,
   },
   primaryActionText: {
-    ...typography.badge,
-    fontSize: 13,
-    color: colors.white,
-    fontWeight: '700',
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
   },
   secondaryActionBtn: {
     flex: 1,
-    backgroundColor: colors.cardBackground,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    ...shadows.sm,
+    backgroundColor: '#FAF5F0',
+    borderWidth: 1,
+    borderColor: '#E8D7CE',
+    paddingVertical: 10,
+    borderRadius: 10,
   },
   secondaryActionText: {
-    ...typography.badge,
+    color: '#8C331A',
     fontSize: 12,
-    color: colors.primary,
     fontWeight: '700',
   },
-
-  /* 5. Sticky Search and 2-Tab Segmented Bar */
   stickySectionWrapper: {
     backgroundColor: '#FAF8F5',
-    paddingVertical: 4,
-    marginBottom: spacing.md,
-    zIndex: 10,
+    paddingBottom: 6,
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 42,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 2,
-    elevation: 1,
+    borderColor: '#EFECE9',
     marginBottom: 8,
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
-    fontFamily: 'Inter-Regular',
+    fontSize: 12,
     color: '#1F2937',
     padding: 0,
   },
   tabBarRow: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#FAF5F0',
     borderRadius: 10,
     padding: 3,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
-    gap: 4,
+    borderColor: '#E8D7CE',
   },
   segmentTab: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: 8,
   },
   segmentTabActive: {
     backgroundColor: '#8C331A',
   },
   segmentTabText: {
-    fontSize: 12,
-    fontFamily: 'Inter-SemiBold',
+    fontSize: 11,
     fontWeight: '700',
     color: '#6B7280',
   },
   segmentTabTextActive: {
     color: '#FFFFFF',
+    fontWeight: '800',
   },
   tabContentContainer: {
-    marginBottom: spacing.md,
+    marginTop: 6,
   },
-
-  /* Common Section Header */
-  sectionContainer: {
-    marginBottom: spacing.lg,
+  orderCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#EFECE9',
+  },
+  orderCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  orderCardId: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1F2937',
+  },
+  orderTypeBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  orderTypeBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  orderTypeScheduled: {
+    backgroundColor: '#EFF6FF',
+  },
+  orderTypeScheduledText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  orderTypeOneTime: {
+    backgroundColor: '#FEF3C7',
+  },
+  orderTypeOneTimeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#D97706',
+  },
+  orderCardDate: {
+    fontSize: 10,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  orderStatusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: '#FAF5F0',
+    borderWidth: 1,
+    borderColor: '#E8D7CE',
+  },
+  orderStatusBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  orderCardItems: {
+    fontSize: 11,
+    color: '#4B5563',
+    lineHeight: 15,
+    marginBottom: 6,
+  },
+  orderCardBottom: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 6,
+  },
+  orderAmountLabel: {
+    fontSize: 9,
+    color: '#9CA3AF',
+  },
+  orderCardTotal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#8C331A',
+  },
+  invoicedTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  invoicedTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  unbilledTag: {
+    fontSize: 10,
+    color: '#D97706',
+    fontWeight: '600',
   },
   sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.sm,
+    marginBottom: 8,
+    paddingHorizontal: 2,
   },
   sectionHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   sectionTitle: {
-    ...typography.caption,
-    fontFamily: 'Inter-Bold',
+    fontSize: 10,
     fontWeight: '800',
-    color: colors.textMuted,
-    letterSpacing: 0.6,
-  },
-  viewAllLink: {
-    ...typography.caption,
-    fontFamily: 'Inter-SemiBold',
-    fontWeight: '600',
-    color: colors.primary,
+    color: '#8A7A70',
+    letterSpacing: 0.5,
   },
   addTemplatePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F7EFE9',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#FAF5F0',
     borderWidth: 1,
-    borderColor: '#F5C6B8',
+    borderColor: '#E8D7CE',
   },
   addTemplatePillText: {
-    ...typography.badge,
-    fontSize: 11,
-    color: colors.primary,
+    fontSize: 10,
     fontWeight: '700',
-    marginLeft: 2,
-  },
-
-  /* Empty state */
-  emptyCard: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-  },
-  emptyCardTitle: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 2,
-  },
-  emptyCardSub: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-
-  /* Daily Schedule Styles */
-  scheduleCard: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.sm,
-  },
-  scheduleCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 4,
-  },
-  scheduleTimeText: {
-    fontSize: 16,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  scheduleDaysText: {
-    ...typography.caption,
-    fontFamily: 'Inter-Medium',
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  scheduleTotalLabel: {
-    fontSize: 9,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '800',
-    color: '#9CA3AF',
-    letterSpacing: 0.4,
-  },
-  scheduleTotalAmount: {
-    fontSize: 14,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '800',
     color: '#8C331A',
   },
-  schedulePartnerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  schedulePartnerName: {
-    fontSize: 12,
-    fontFamily: 'Inter-Regular',
-    color: colors.textSecondary,
-  },
-  scheduleItemsBox: {
-    backgroundColor: colors.background,
-    padding: spacing.xs,
-    borderRadius: radius.sm,
-    marginVertical: spacing.xs,
-  },
-  scheduleItemsText: {
-    fontSize: 12,
-    fontFamily: 'Inter-Medium',
-    color: colors.textPrimary,
-    lineHeight: 18,
-  },
-  scheduleMetaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginVertical: 4,
-  },
-  scheduleNextLabel: {
-    fontSize: 11,
-    fontFamily: 'Inter-SemiBold',
-    color: colors.primary,
-    fontWeight: '700',
-  },
-  scheduleLeadLabel: {
-    fontSize: 10,
-    fontFamily: 'Inter-Regular',
-    color: colors.textMuted,
-  },
-  actionsGrid: {
-    borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
-    paddingTop: 8,
-    marginTop: 4,
-    gap: 6,
-  },
-  actionsGridRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionGridBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 7,
-    borderRadius: 8,
-    backgroundColor: '#FAF8F5',
+  schedCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#EFEAE4',
+    borderColor: '#EFECE9',
   },
-  actionGridBtnText: {
-    fontSize: 11,
-    fontFamily: 'Inter-SemiBold',
-    fontWeight: '700',
-    color: '#374151',
-  },
-  cancelActionBtn: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FEE2E2',
-  },
-  orderAmountLabel: {
-    fontSize: 9,
-    fontFamily: 'Inter-Regular',
-    color: '#9CA3AF',
-  },
-  cancelDateInput: {
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
-    fontSize: 13,
-    color: colors.textPrimary,
-    height: 38,
-    marginTop: 4,
-  },
-  cancelNoticeNote: {
-    fontSize: 11,
-    fontFamily: 'Inter-Regular',
-    color: colors.textSecondary,
-    lineHeight: 16,
-    marginTop: spacing.sm,
-  },
-  cancelModalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: spacing.sm,
-    marginTop: spacing.sm,
-  },
-  cancelModalCancelBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8,
-    borderRadius: radius.md,
-    backgroundColor: colors.background,
-  },
-  cancelModalCancelText: {
-    fontSize: 12,
-    fontFamily: 'Inter-Medium',
-    color: colors.textSecondary,
-  },
-  cancelModalConfirmBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8,
-    borderRadius: radius.md,
-    backgroundColor: colors.danger,
-  },
-  cancelModalConfirmText: {
-    fontSize: 12,
-    fontFamily: 'Inter-Bold',
-    color: colors.white,
-    fontWeight: '700',
-  },
-
-  /* Order Cards */
-  orderCard: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...shadows.sm,
-    marginBottom: spacing.sm,
-  },
-  orderCardTop: {
+  schedTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     marginBottom: 4,
   },
-  orderCardId: {
-    ...typography.body,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  orderCardDate: {
-    ...typography.caption,
-    color: colors.textMuted,
-  },
-  orderStatusBadge: {
-    backgroundColor: '#FAF4ED',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: '#F5C6B8',
-  },
-  orderStatusBadgeText: {
-    fontSize: 10,
-    fontFamily: 'Inter-Bold',
-    color: colors.primary,
+  schedTitle: {
+    fontSize: 14,
     fontWeight: '800',
+    color: '#1F2937',
   },
-  orderCardItems: {
-    ...typography.caption,
-    color: colors.textSecondary,
+  schedBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  schedBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  schedBadgeActive: {
+    backgroundColor: '#ECFDF5',
+  },
+  schedBadgeActiveText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  schedBadgeInactive: {
+    backgroundColor: '#F3F4F6',
+  },
+  schedBadgeInactiveText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  schedDays: {
+    fontSize: 10,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  schedItems: {
+    fontSize: 11,
+    color: '#4B5563',
     marginVertical: 4,
   },
-  orderCardBottom: {
+  schedActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 6,
+    marginTop: 2,
+  },
+  schedActionMiniBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#FAF5F0',
+    borderWidth: 1,
+    borderColor: '#E8D7CE',
+  },
+  schedActionMiniBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  ledgerCompactCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#EFECE9',
+    marginBottom: 12,
+  },
+  ledgerCompactHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 4,
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    paddingBottom: 10,
+    marginBottom: 10,
   },
-  orderCardTotal: {
-    ...typography.body,
-    fontFamily: 'Inter-Bold',
+  ledgerCompactTitle: {
+    fontSize: 13,
     fontWeight: '800',
-    color: colors.textPrimary,
+    color: '#1F2937',
   },
-  invoicedTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.approvedBackground,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
+  ledgerCompactPeriod: {
+    fontSize: 10,
+    color: '#6B7280',
+    marginTop: 2,
   },
-  invoicedTagText: {
+  viewLedgerPrimaryBtn: {
+    backgroundColor: '#8C331A',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  viewLedgerPrimaryBtnText: {
     fontSize: 11,
-    fontFamily: 'Inter-Bold',
-    color: colors.approved,
-    fontWeight: '700',
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
-  unbilledTag: {
-    fontSize: 11,
-    color: colors.textMuted,
-    fontStyle: 'italic',
-  },
-
-  /* Ledger Card */
-  ledgerCard: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...shadows.sm,
-    overflow: 'hidden',
-  },
-  ledgerGrid: {
+  ledgerMetricsGrid: {
     flexDirection: 'row',
-    paddingVertical: spacing.md,
   },
-  ledgerCol: {
+  ledgerMetricCol: {
     flex: 1,
     alignItems: 'center',
     borderRightWidth: 1,
-    borderRightColor: colors.borderLight,
-    paddingHorizontal: 4,
+    borderRightColor: '#EFECE9',
   },
-  ledgerColLabel: {
+  ledgerMetricLabel: {
     fontSize: 9,
-    fontFamily: 'Inter-Bold',
     fontWeight: '800',
-    color: colors.textMuted,
-    marginBottom: 4,
-    textAlign: 'center',
-  },
-  ledgerColValue: {
-    fontSize: 13,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  ledgerCardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FAF8F5',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
-  },
-  ledgerPeriodText: {
-    ...typography.caption,
-    fontSize: 11,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  collectMiniBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.primary,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: radius.sm,
-  },
-  collectMiniBtnText: {
-    ...typography.caption,
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.white,
-  },
-
-  /* Modals Overlay */
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.lg,
-  },
-  modalCenterBox: {
-    width: '100%',
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    ...shadows.lg,
-  },
-  modalHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
-    paddingBottom: spacing.sm,
-  },
-  modalSheetTitle: {
-    ...typography.heading2,
-    color: colors.textPrimary,
-    fontWeight: '800',
-  },
-  modalSheetSub: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  repeatOrderOptionCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
-  },
-  repeatOptionId: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  repeatOptionItems: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  repeatOptionTotal: {
-    ...typography.body,
-    fontWeight: '800',
-    color: colors.primary,
-    marginLeft: spacing.sm,
-  },
-
-  /* Ledger Statement Modal */
-  ledgerStatementSummary: {
-    backgroundColor: '#FAF8F5',
-    padding: spacing.md,
-    borderRadius: radius.md,
-    marginBottom: spacing.md,
-  },
-  stmtSummaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginVertical: 3,
-  },
-  stmtLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
-  stmtValue: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  transactionsHeader: {
-    fontSize: 11,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '800',
-    color: colors.textMuted,
-    marginVertical: spacing.sm,
+    color: '#8A7A70',
     letterSpacing: 0.5,
+    marginBottom: 2,
   },
-  emptyNote: {
-    ...typography.caption,
-    color: colors.textMuted,
-    textAlign: 'center',
-    marginVertical: spacing.md,
+  ledgerMetricVal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1F2937',
   },
-  txRow: {
+  recentInvoicesHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
+    marginBottom: 8,
+    marginTop: 4,
+    paddingHorizontal: 2,
   },
-  txDesc: {
-    ...typography.caption,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  txDate: {
+  viewAllLedgerLink: {
     fontSize: 11,
-    color: colors.textMuted,
-    marginTop: 2,
-  },
-  txAmount: {
-    ...typography.body,
     fontWeight: '700',
+    color: '#8C331A',
   },
-  txRunningBal: {
+  invoiceListItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: '#EFECE9',
+  },
+  invoiceListNum: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  invoiceListDate: {
     fontSize: 10,
-    color: colors.textSecondary,
+    color: '#6B7280',
     marginTop: 2,
   },
-  statusTag: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
-  },
-  statusTagActive: {
-    backgroundColor: colors.approvedBackground,
-  },
-  statusTagPaused: {
-    backgroundColor: '#F3F4F6',
-  },
-  statusTagText: {
-    fontSize: 10,
-    fontFamily: 'Inter-Bold',
+  invoiceListTotal: {
+    fontSize: 12,
     fontWeight: '800',
+    color: '#8C331A',
   },
-  statusTagTextActive: {
-    color: colors.approved,
-  },
-  statusTagTextPaused: {
-    color: colors.gray500,
-  },
-  inputSubLabel: {
-    fontSize: 11,
-    fontFamily: 'Inter-Medium',
-    color: colors.textSecondary,
-    marginBottom: 4,
-  },
-  orderTypeBadge: {
+  invStatusPill: {
     paddingHorizontal: 6,
     paddingVertical: 1,
-    borderRadius: radius.sm,
+    borderRadius: 4,
+    marginTop: 2,
+  },
+  invStatusPillText: {
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  invStatusPaid: {
+    backgroundColor: '#ECFDF5',
+  },
+  invStatusPaidText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  invStatusUnpaid: {
+    backgroundColor: '#FEF2F2',
+  },
+  invStatusUnpaidText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  emptyCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 24,
+    alignItems: 'center',
     borderWidth: 1,
+    borderColor: '#EFECE9',
+    marginTop: 4,
   },
-  orderTypeBadgeText: {
-    fontSize: 9,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '800',
+  emptyCardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#4B5563',
   },
-  orderTypeOneTime: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
-  },
-  orderTypeOneTimeText: {
-    fontSize: 9,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '800',
-    color: '#1D4ED8',
-  },
-  orderTypeScheduled: {
-    backgroundColor: '#F5EFEA',
-    borderColor: '#E8D7CA',
-  },
-  orderTypeScheduledText: {
-    fontSize: 9,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '800',
-    color: colors.primary,
-  },
-  ledgerInlineTransactionsCard: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.md,
-    marginTop: spacing.sm,
-    ...shadows.sm,
-  },
-  ledgerInlineHeader: {
+  emptyCardSub: {
     fontSize: 11,
-    fontFamily: 'Inter-Bold',
-    fontWeight: '800',
-    color: colors.textMuted,
-    marginBottom: spacing.xs,
-    letterSpacing: 0.5,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  centerBox: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
