@@ -132,8 +132,9 @@ export interface NotificationItem {
   title: string;
   message: string;
   time: string;
-  type: 'payment' | 'order' | 'overdue' | 'system';
+  type: 'payment' | 'order' | 'overdue' | 'system' | string;
   isRead: boolean;
+  data?: any;
 }
 
 export interface PaymentRecord {
@@ -287,6 +288,7 @@ export interface AppContextType {
     itemType: string,
   ) => void;
   markAllNotificationsAsRead: () => Promise<void> | void;
+  markNotificationAsRead: (id: string) => Promise<void> | void;
   deleteNotification: (id: string) => Promise<void> | void;
   deleteSelectedNotifications: (ids: string[]) => void;
   clearAllNotifications: () => Promise<void> | void;
@@ -413,8 +415,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const logout = async () => {
     try {
       // Deactivate device token before clearing auth session
-      await notificationService.deactivateDeviceToken().catch(() => {});
-      await authService.logout().catch(() => {});
+      await notificationService.deactivateDeviceToken().catch(() => { });
+      await authService.logout().catch(() => { });
     } catch (e) {
       console.log('Error during logout services cleanup:', e);
     } finally {
@@ -440,7 +442,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   // Centralized Function to re-sync all live data from Django Backend
   const refreshBackendData = useCallback(async () => {
     try {
-      const [liveCustomers, liveProducts, livePartners, liveSchedules, liveInvoices, liveStats] =
+      const [liveCustomers, liveProducts, livePartners, liveSchedules, liveInvoices, liveStats, liveNotifications] =
         await Promise.all([
           customerService.getCustomers().catch(() => null),
           productService.getProductsList().catch(() => null),
@@ -448,18 +450,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
           scheduleService.getSchedules().catch(() => null),
           billingService.getInvoices().catch(() => null),
           billingService.getDashboardStats().catch(() => null),
+          notificationService.getNotifications().catch(() => null),
         ]);
 
       if (liveCustomers && liveCustomers.length > 0) setCustomers(liveCustomers);
       if (liveProducts && liveProducts.length > 0) setProducts(liveProducts);
       if (livePartners && livePartners.length > 0) setDeliveryBoys(livePartners);
       if (liveSchedules && liveSchedules.length > 0) setSchedules(liveSchedules);
+      if (Array.isArray(liveNotifications) && liveNotifications.length > 0) {
+        setNotifications(liveNotifications);
+      }
 
       if (Array.isArray(liveInvoices) && liveInvoices.length > 0) {
         const mappedInvoices: InvoiceItem[] = liveInvoices.map(inv => {
           const grandNum = parseFloat(inv.grand_total) || 0;
+          const paidNum = parseFloat(inv.total_paid) || 0;
           const pendingNum = parseFloat(inv.pending_amount) || 0;
           const isPaid = inv.status === 'paid' || pendingNum <= 0;
+          const isPartiallyPaid = !isPaid && (paidNum > 0 || inv.status === 'partially_paid');
           const isOverdue = !isPaid && Boolean(inv.is_overdue);
           return {
             id: String(inv.id),
@@ -469,15 +477,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
             customerPhone: inv.customer_phone || '',
             amount: `₹${grandNum.toLocaleString()}`,
             numericAmount: grandNum,
+            subtotal: parseFloat(inv.subtotal) || grandNum,
+            discountAmount: parseFloat(inv.discount_amount || '0') || 0,
+            paidAmount: paidNum,
+            pendingAmount: pendingNum,
             due: isPaid
               ? 'Paid in Full'
               : isOverdue
-              ? `Overdue • ₹${pendingNum.toLocaleString()} due`
-              : `₹${pendingNum.toLocaleString()} due`,
+                ? `Overdue • ₹${pendingNum.toLocaleString()} due`
+                : `₹${pendingNum.toLocaleString()} due`,
             date: inv.created_at ? new Date(inv.created_at).toLocaleDateString() : 'Today',
             createdAt: inv.finalized_at || inv.created_at || undefined,
             isOverdue: isOverdue,
-            status: isPaid ? 'PAID' : isOverdue ? 'OVERDUE' : 'PENDING',
+            status: isPaid ? 'PAID' : isPartiallyPaid ? 'PARTIALLY_PAID' : isOverdue ? 'OVERDUE' : 'PENDING',
             deliveryPartnerName: 'Rahul Sharma',
             deliveryStatus: isPaid ? 'Delivered' : 'Pending',
             items: (inv.items || []).map(it => ({
@@ -486,7 +498,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
               qty: it.quantity,
               price: parseFloat(it.unit_price) || 0,
             })),
-            subtotal: parseFloat(inv.subtotal) || grandNum,
             tax: 0,
           };
         });
@@ -939,8 +950,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       const inv = invoices.find(i => i.id === id);
       const remainingDue =
-        inv?.numericAmount ||
-        (inv?.amount ? parseFloat(inv.amount.replace(/[^0-9.]/g, '')) : 0);
+        inv?.pendingAmount !== undefined
+          ? inv.pendingAmount
+          : inv?.numericAmount ||
+          (inv?.amount ? parseFloat(inv.amount.replace(/[^0-9.]/g, '')) : 0);
 
       if (remainingDue > 0) {
         await billingService.addPayment(id, {
@@ -980,29 +993,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     // 2. Synchronize all balances, invoices, customer debts & stats from backend
     await refreshBackendData();
 
-    // 3. Add Activity and Notification
-    setActivities(prev => [
-      {
-        id: `act-${Date.now()}`,
-        color: '#059669',
-        title: `Payment Collected (Invoice #${invoiceId})`,
-        subtitle: `₹${paidAmount.toLocaleString()} via [${paymentMethod}]`,
-        time: 'Just now',
-      },
-      ...prev,
-    ]);
+    // 3. Add Activity and Notification (Only for Owner/Admin role)
+    if (userRole === 'ADMIN') {
+      setActivities(prev => [
+        {
+          id: `act-${Date.now()}`,
+          color: '#059669',
+          title: `Payment Collected (Invoice #${invoiceId})`,
+          subtitle: `₹${paidAmount.toLocaleString()} via [${paymentMethod}]`,
+          time: 'Just now',
+        },
+        ...prev,
+      ]);
 
-    setNotifications(prev => [
-      {
-        id: `n-${Date.now()}`,
-        title: 'Payment Received',
-        message: `₹${paidAmount.toLocaleString()} recorded for invoice #${invoiceId} via ${paymentMethod}.`,
-        time: 'Just now',
-        type: 'payment',
-        isRead: false,
-      },
-      ...prev,
-    ]);
+      setNotifications(prev => [
+        {
+          id: `n-${Date.now()}`,
+          title: 'Payment Received',
+          message: `₹${paidAmount.toLocaleString()} recorded for invoice #${invoiceId} via ${paymentMethod}.`,
+          time: 'Just now',
+          type: 'payment',
+          isRead: false,
+        },
+        ...prev,
+      ]);
+    }
   };
 
   const deleteInvoice = async (id: string) => {
@@ -1307,7 +1322,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   /* Notifications State & Actions */
 
-  const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
+  // Role-filtered notifications: Delivery Partners strictly never see Owner financial/payment notifications
+  const visibleNotifications = useMemo(() => {
+    if (userRole === 'DELIVERY_PARTNER') {
+      return notifications.filter(
+        n =>
+          n.type !== 'payment' &&
+          !n.title?.toLowerCase().includes('payment') &&
+          !n.title?.toLowerCase().includes('invoice') &&
+          !n.message?.toLowerCase().includes('₹')
+      );
+    }
+    return notifications;
+  }, [notifications, userRole]);
+
+  const unreadNotificationsCount = visibleNotifications.filter(n => !n.isRead).length;
 
   const addNotification = async (
     item: Omit<NotificationItem, 'id' | 'time' | 'isRead'>,
@@ -1346,6 +1375,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const markAllNotificationsAsRead = async () => {
     await notificationService.markAllAsRead();
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  };
+
+  const markNotificationAsRead = async (id: string) => {
+    await notificationService.markAsRead(id);
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
   };
 
   const deleteNotification = async (id: string) => {
@@ -1392,11 +1426,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         assignOrderPartner,
         paymentHistory,
 
-        notifications,
+        notifications: visibleNotifications,
         unreadNotificationsCount,
         addNotification,
         addCupRecord,
         markAllNotificationsAsRead,
+        markNotificationAsRead,
         deleteNotification,
         deleteSelectedNotifications,
         clearAllNotifications,
