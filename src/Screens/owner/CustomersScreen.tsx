@@ -113,10 +113,10 @@ export default function CustomersScreen() {
     if (!selectedCustomer) return;
     setCollectModalVisible(false);
     try {
-      await collectPayment(selectedCustomer.id, data.amount, data.paymentMethod, data.notes);
+      await collectPayment(selectedCustomer.id, data.amount, undefined, data.notes);
       AppToast.success(
         'Payment Recorded',
-        `₹${data.amount} recorded for ${selectedCustomer.name} via ${data.paymentMethod.toUpperCase()}`
+        `₹${data.amount} recorded for ${selectedCustomer.name}`
       );
     } catch (err: any) {
       AppToast.error('Payment Error', err?.message || 'Failed to record payment.');
