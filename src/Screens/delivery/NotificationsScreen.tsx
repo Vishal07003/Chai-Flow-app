@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { useNavigation } from '@react-navigation/native';
 import DeliveryHeader from '../../components/delivery/DeliveryHeader';
 import { useApp, NotificationItem } from '../../context/AppContext';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -19,6 +20,7 @@ import { colors, typography, radius, spacing, shadows } from '../../theme';
 interface SwipeableDeliveryNotificationProps {
   item: NotificationItem;
   onRequestDelete: (id: string) => void;
+  onPressItem: (item: NotificationItem) => void;
   isSwipeOpen: boolean;
   onSwipeOpen: (id: string) => void;
   onSwipeClose: () => void;
@@ -27,6 +29,7 @@ interface SwipeableDeliveryNotificationProps {
 function SwipeableDeliveryNotification({
   item,
   onRequestDelete,
+  onPressItem,
   isSwipeOpen,
   onSwipeOpen,
   onSwipeClose,
@@ -114,6 +117,8 @@ function SwipeableDeliveryNotification({
           onPress={() => {
             if (isSwipeOpen) {
               onSwipeClose();
+            } else {
+              onPressItem(item);
             }
           }}
         >
@@ -144,12 +149,29 @@ function SwipeableDeliveryNotification({
 }
 
 export default function NotificationsScreen() {
+  const navigation = useNavigation<any>();
   const {
     notifications,
     markAllNotificationsAsRead,
+    markNotificationAsRead,
     deleteNotification,
     clearAllNotifications,
   } = useApp();
+
+  const handleNotificationPress = (item: NotificationItem) => {
+    if (!item.isRead) {
+      markNotificationAsRead(item.id);
+    }
+    const orderId = item.data?.order_id || (item.data?.type === 'delivery_assigned' ? item.data?.order_id : null);
+    const deliveryId = item.data?.delivery_id;
+    if (orderId || deliveryId) {
+      navigation.navigate('OrderDetails', {
+        deliveryId: deliveryId || orderId,
+        orderId: orderId,
+        order: { id: orderId, delivery_id: deliveryId },
+      });
+    }
+  };
 
   const [openCardId, setOpenCardId] = useState<string | null>(null);
 
@@ -247,6 +269,7 @@ export default function NotificationsScreen() {
               key={item.id}
               item={item}
               onRequestDelete={onRequestDelete}
+              onPressItem={handleNotificationPress}
               isSwipeOpen={openCardId === item.id}
               onSwipeOpen={id => setOpenCardId(id)}
               onSwipeClose={() => setOpenCardId(null)}
@@ -275,7 +298,7 @@ export default function NotificationsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAF8F5',
+    backgroundColor: '#F7F8FA',
   },
   topRow: {
     flexDirection: 'row',
@@ -285,12 +308,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#EFECE8',
+    borderBottomColor: '#E8EDF2',
   },
   countText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#374151',
+    color: '#253247',
   },
   actionBtnsGroup: {
     flexDirection: 'row',
@@ -302,20 +325,22 @@ const styles = StyleSheet.create({
   markReadText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#059669',
+    color: '#8C331A',
   },
   clearAllBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 10,
+    borderRadius: 8,
   },
   clearAllText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#EF4444',
+    color: '#DC2626',
     marginLeft: 4,
   },
   scrollContent: {
@@ -326,7 +351,7 @@ const styles = StyleSheet.create({
   cardWrapper: {
     position: 'relative',
     marginBottom: 10,
-    borderRadius: 16,
+    borderRadius: 14,
     overflow: 'hidden',
   },
   swipeDeleteBack: {
@@ -335,10 +360,10 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#EF4444',
+    backgroundColor: '#DC2626',
     justifyContent: 'center',
     alignItems: 'flex-end',
-    borderRadius: 16,
+    borderRadius: 14,
   },
   swipeDeleteContent: {
     width: 90,
@@ -355,14 +380,10 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#EFECE8',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    borderColor: '#E8EDF2',
+    ...shadows.sm,
   },
   cardInnerTouch: {
     flexDirection: 'row',
@@ -370,16 +391,18 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   unreadCard: {
-    backgroundColor: '#F0FDF4',
-    borderColor: '#A7F3D0',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E8EDF2',
     borderLeftWidth: 4,
-    borderLeftColor: '#059669',
+    borderLeftColor: '#8C331A',
   },
   iconCircle: {
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#F7F8FA',
+    borderWidth: 1,
+    borderColor: '#E8EDF2',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -395,15 +418,15 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#111827',
+    color: '#253247',
   },
   timeText: {
     fontSize: 11,
-    color: '#6B7280',
+    color: '#718096',
   },
   cardMessage: {
     fontSize: 13,
-    color: '#4B5563',
+    color: '#718096',
     marginTop: 4,
     lineHeight: 18,
   },
@@ -421,7 +444,9 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#F7F8FA',
+    borderWidth: 1,
+    borderColor: '#E8EDF2',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
@@ -429,12 +454,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#111827',
+    color: '#253247',
     marginBottom: 6,
   },
   emptySubtitle: {
     fontSize: 13,
-    color: '#6B7280',
+    color: '#718096',
     textAlign: 'center',
     lineHeight: 18,
   },
