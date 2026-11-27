@@ -13,10 +13,9 @@ import DailyBillsScreen from '../Screens/owner/DailyBillsScreen';
 import QuickBillingScreen from '../Screens/owner/QuickBillingScreen';
 import MoreScreen from '../Screens/owner/MoreScreen';
 
-// Delivery Partner Screens (Approved 5 Tabs: Home, My Deliveries, Tracking, History, Profile)
+// Delivery Partner Screens (Approved 4 Tabs: Home, My Deliveries, History, Profile)
 import HomeScreen from '../Screens/delivery/HomeScreen';
 import DeliveryOrdersScreen from '../Screens/delivery/OrdersScreen';
-import TrackingScreen from '../Screens/delivery/TrackingScreen';
 import DeliveryHistoryScreen from '../Screens/delivery/HistoryScreen';
 import DeliveryProfileScreen from '../Screens/delivery/ProfileScreen';
 
@@ -58,9 +57,6 @@ export default function BottomTabs() {
               break;
             case 'DeliveryOrders':
               iconName = focused ? 'bicycle' : 'bicycle-outline';
-              break;
-            case 'Tracking':
-              iconName = focused ? 'navigate' : 'navigate-outline';
               break;
             case 'History':
               iconName = focused ? 'time' : 'time-outline';
@@ -104,11 +100,6 @@ export default function BottomTabs() {
             name="DeliveryOrders"
             component={DeliveryOrdersScreen}
             options={{ tabBarLabel: 'MY DELIVERIES' }}
-          />
-          <Tab.Screen
-            name="Tracking"
-            component={TrackingScreen}
-            options={{ tabBarLabel: 'TRACKING' }}
           />
           <Tab.Screen
             name="History"
