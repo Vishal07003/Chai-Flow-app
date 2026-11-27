@@ -26,8 +26,13 @@ export default function TrackingScreen() {
     try {
       setLoading(true);
       const data = await deliveryService.getDeliveries();
+      const list: BackendDelivery[] = Array.isArray(data)
+        ? data
+        : (data && 'results' in data)
+        ? (data as any).results
+        : [];
       // Filter runs that are in progress or accepted
-      const inProgress = (data || []).filter(d =>
+      const inProgress = list.filter((d: BackendDelivery) =>
         ['accepted', 'picked_up', 'on_the_way'].includes(d.status)
       );
       setActiveDeliveries(inProgress);
