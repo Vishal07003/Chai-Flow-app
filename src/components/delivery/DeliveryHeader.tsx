@@ -104,13 +104,13 @@ export default function DeliveryHeader({
 const styles = StyleSheet.create({
   headerContainer: {
     height: 64,
-    backgroundColor: '#FAF8F5',
+    backgroundColor: '#FFFFFF',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#EFECE8',
+    borderBottomColor: '#E8EDF2',
   },
   leftRow: {
     flexDirection: 'row',
@@ -124,13 +124,13 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     borderWidth: 2,
-    borderColor: '#059669',
+    borderColor: '#8C331A',
   },
   avatarFallback: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#059669',
+    backgroundColor: '#8C331A',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -140,7 +140,7 @@ const styles = StyleSheet.create({
   titleText: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#111827',
+    color: '#253247',
   },
   subtitleRow: {
     flexDirection: 'row',
@@ -151,12 +151,12 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#10B981',
+    backgroundColor: '#059669',
     marginRight: 5,
   },
   subtitleText: {
     fontSize: 11,
-    color: '#6B7280',
+    color: '#718096',
     fontWeight: '600',
   },
   rightRow: {
@@ -167,11 +167,11 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F7F8FA',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#EFECE8',
+    borderColor: '#E8EDF2',
     position: 'relative',
   },
   notifBadge: {
