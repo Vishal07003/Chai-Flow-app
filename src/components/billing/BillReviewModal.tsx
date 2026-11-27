@@ -10,10 +10,11 @@ import {
   Keyboard,
   Platform,
   FlatList,
-  Dimensions,
-  KeyboardAvoidingView,
+  useWindowDimensions,
+  ScrollView,
+  BackHandler,
+  Alert,
 } from 'react-native';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { colors } from '../../theme';
 import AppToast from '../../utils/toast';
@@ -82,7 +83,8 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
 
   // Keyboard height state for adaptive bottom sheet positioning
   const [keyboardHeight, setKeyboardHeight] = useState<number>(0);
-  const scrollViewRef = useRef<any>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const { height: windowHeight } = useWindowDimensions();
 
   // Delete product confirmation state
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
@@ -95,6 +97,8 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
 
   // Track keyboard show/hide events to adapt bottom sheet height & position
   useEffect(() => {
+    if (!visible) return;
+
     const showSub = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
       e => {
@@ -108,11 +112,23 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
       }
     );
 
+    // Hardware back press handler on Android
+    const backAction = () => {
+      if (keyboardHeight > 0) {
+        Keyboard.dismiss();
+        return true;
+      }
+      onClose();
+      return true;
+    };
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+
     return () => {
       showSub.remove();
       hideSub.remove();
+      backHandler.remove();
     };
-  }, []);
+  }, [visible, keyboardHeight, onClose]);
 
   useEffect(() => {
     if (visible) {
@@ -256,36 +272,65 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
       return;
     }
 
-    setIsSaving(true);
-    try {
-      const payloadItems = items.map(it => ({
-        product_id: it.product_id || null,
-        product_name: it.product_name,
-        quantity: it.quantity,
-        unit_price: it.unit_price || '0',
-      }));
+    const previousSubtotal = initialItems.reduce((sum, it) => {
+      const price = parseFloat(it.unit_price) || 0;
+      const q = it.quantity || 0;
+      return sum + price * q;
+    }, 0);
+    const previousDiscount = parseFloat(initialDiscount || '0') || 0;
+    const previousGrandTotal = Math.max(0, previousSubtotal - Math.min(previousDiscount, previousSubtotal));
+    const newGrandTotal = grandTotal;
 
-      await saveAction({
-        items: payloadItems,
-        discount_amount: String(discountAmount),
-        notes: notes.trim(),
-        due_date: null, // Payment collection is handled via Collect Cash in Customer Profile
-        reason: editReason.trim() || undefined,
-      });
+    const executeSave = async () => {
+      setIsSaving(true);
+      try {
+        const payloadItems = items.map(it => ({
+          product_id: it.product_id || null,
+          product_name: it.product_name,
+          quantity: it.quantity,
+          unit_price: it.unit_price || '0',
+        }));
 
-      AppToast.success(
-        mode === 'create_from_order' ? 'Bill Saved' : 'Bill Updated',
-        mode === 'create_from_order'
-          ? `Invoice generated for Order #${orderId}.`
-          : `Invoice #${invoiceNumber || invoiceId} updated with audit trail.`
+        await saveAction({
+          items: payloadItems,
+          discount_amount: String(discountAmount),
+          notes: notes.trim(),
+          due_date: null, // Payment collection is handled via Collect Cash in Customer Profile
+          reason: editReason.trim() || undefined,
+        });
+
+        AppToast.success(
+          mode === 'create_from_order' ? 'Bill Saved' : 'Bill Updated',
+          mode === 'create_from_order'
+            ? `Invoice generated for Order #${orderId}.`
+            : `Invoice #${invoiceNumber || invoiceId} updated with audit trail.`
+        );
+        onSaveSuccess();
+        onClose();
+      } catch (err: any) {
+        AppToast.error('Save Failed', err?.message || 'Could not save bill. Please try again.');
+      } finally {
+        setIsSaving(false);
+      }
+    };
+
+    if (mode === 'edit_invoice') {
+      Alert.alert(
+        'Confirm Invoice Correction',
+        `Original Total: ₹${previousGrandTotal.toLocaleString('en-IN')}\nNew Total: ₹${newGrandTotal.toLocaleString('en-IN')}\n\nCorrection Reason:\n"${editReason.trim()}"\n\nAll existing payments and allocations will remain intact. Proceed with this correction?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Save Correction',
+            style: 'default',
+            onPress: executeSave,
+          },
+        ]
       );
-      onSaveSuccess();
-      onClose();
-    } catch (err: any) {
-      AppToast.error('Save Failed', err?.message || 'Could not save bill. Please try again.');
-    } finally {
-      setIsSaving(false);
+      return;
     }
+
+    executeSave();
   };
 
   const filteredProducts = useMemo(() => {
@@ -296,13 +341,18 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
 
   const itemToDelete = deleteIndex !== null ? items[deleteIndex] : null;
 
-  // Compute dynamic max height based on available screen space above keyboard
-  const screenHeight = Dimensions.get('window').height;
+  // Compute dynamic max height based on available screen space
   const isKeyboardOpen = keyboardHeight > 0;
-  // Dynamic max height so bottom sheet adapts smoothly to available screen height above keyboard
   const modalMaxHeight = isKeyboardOpen
-    ? Math.max(screenHeight - keyboardHeight - 16, 260)
-    : screenHeight * 0.90;
+    ? Math.max(windowHeight - keyboardHeight - 16, 260)
+    : Math.min(windowHeight * 0.90, 720);
+
+  // Helper to scroll smoothly to focused input
+  const scrollToInput = (yOffset: number) => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: yOffset, animated: true });
+    }, 120);
+  };
 
   return (
     <Modal
@@ -310,19 +360,21 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
       transparent
       animationType="slide"
       onRequestClose={onClose}
-      statusBarTranslucent
+      statusBarTranslucent={false}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.modalOverlay}
+      <View
+        style={[
+          styles.modalOverlay,
+          Platform.OS === 'android' && isKeyboardOpen && {
+            paddingBottom: keyboardHeight,
+            justifyContent: 'flex-end',
+          },
+        ]}
       >
         <View
           style={[
             styles.modalContainer,
-            {
-              maxHeight: modalMaxHeight,
-              ...(Platform.OS === 'android' && isKeyboardOpen ? { marginBottom: keyboardHeight } : {}),
-            },
+            { maxHeight: modalMaxHeight },
           ]}
         >
           {/* Header */}
@@ -346,17 +398,14 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
             </TouchableOpacity>
           </View>
 
-          <KeyboardAwareScrollView
+          <ScrollView
             ref={scrollViewRef}
             style={styles.modalBody}
             contentContainerStyle={styles.modalScrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={true}
-            enableOnAndroid={true}
-            enableAutomaticScroll={true}
-            extraHeight={140}
-            extraScrollHeight={100}
             bounces={false}
+            nestedScrollEnabled={true}
           >
             {/* Delivery Metadata (Read Only Info) */}
             <View style={styles.metaInfoCard}>
@@ -423,6 +472,7 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
                       keyboardType="numeric"
                       value={String(item.quantity)}
                       onChangeText={t => handleQtyChange(index, t)}
+                      onFocus={() => scrollToInput(index * 55)}
                     />
                   </View>
 
@@ -433,6 +483,7 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
                       keyboardType="decimal-pad"
                       value={item.unit_price}
                       onChangeText={t => handlePriceChange(index, t)}
+                      onFocus={() => scrollToInput(index * 55)}
                     />
                   </View>
 
@@ -484,10 +535,20 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
                   value={discount}
                   onChangeText={t => setDiscount(t.replace(/[^0-9.]/g, ''))}
                   placeholder="0"
+                  onFocus={() => scrollToInput(250 + items.length * 55)}
                 />
               </View>
 
               <View style={styles.calcDivider} />
+
+              {mode === 'edit_invoice' && (
+                <View style={[styles.calcRow, { marginBottom: 6 }]}>
+                  <Text style={[styles.calcLabel, { color: '#8C331A', fontWeight: '700' }]}>Original Total:</Text>
+                  <Text style={[styles.calcValue, { color: '#8C331A', fontWeight: '700' }]}>
+                    ₹{(Math.max(0, (initialItems.reduce((s, it) => s + (parseFloat(it.unit_price) || 0) * (it.quantity || 0), 0)) - (parseFloat(initialDiscount || '0') || 0))).toFixed(0)}
+                  </Text>
+                </View>
+              )}
 
               <View style={styles.calcRow}>
                 <Text style={styles.grandTotalLabel}>Final Bill Amount:</Text>
@@ -537,7 +598,7 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
             )}
 
             <View style={{ height: 16 }} />
-          </KeyboardAwareScrollView>
+          </ScrollView>
 
           {/* Modal Actions Footer */}
           <View style={styles.modalFooter}>
@@ -668,7 +729,7 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
             </View>
           </View>
         </Modal>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 };
