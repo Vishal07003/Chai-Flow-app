@@ -9,6 +9,7 @@ import {
   PanResponder,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Header from '../components/common/Header';
 import { useApp, NotificationItem } from '../context/AppContext';
@@ -22,6 +23,7 @@ interface SwipeableNotificationCardProps {
   isSelected: boolean;
   onToggleSelect: (id: string) => void;
   onRequestDelete: (id: string) => void;
+  onPressItem: (item: NotificationItem) => void;
   isSwipeOpen: boolean;
   onSwipeOpen: (id: string) => void;
   onSwipeClose: () => void;
@@ -33,6 +35,7 @@ function SwipeableNotificationCard({
   isSelected,
   onToggleSelect,
   onRequestDelete,
+  onPressItem,
   isSwipeOpen,
   onSwipeOpen,
   onSwipeClose,
@@ -150,6 +153,8 @@ function SwipeableNotificationCard({
             }
             if (isSelectionMode) {
               onToggleSelect(item.id);
+            } else {
+              onPressItem(item);
             }
           }}
           style={styles.cardInner}
@@ -201,14 +206,35 @@ function SwipeableNotificationCard({
 }
 
 export default function NotificationsScreen() {
+  const navigation = useNavigation<any>();
   const {
     notifications,
     unreadNotificationsCount,
     markAllNotificationsAsRead,
+    markNotificationAsRead,
     deleteNotification,
     deleteSelectedNotifications,
     clearAllNotifications,
   } = useApp();
+
+  const handleNotificationPress = (item: NotificationItem) => {
+    if (!item.isRead) {
+      markNotificationAsRead(item.id);
+    }
+    const notifType = item.data?.type || item.type;
+    if (notifType === 'new_order' || notifType === 'order_status' || notifType === 'delivery_completed') {
+      const orderId = item.data?.order_id;
+      if (orderId) {
+        navigation.navigate('OrderDetails', { orderId });
+      } else {
+        navigation.navigate('Orders');
+      }
+    } else if (notifType === 'invoice_generated' && item.data?.invoice_id) {
+      navigation.navigate('InvoiceDetail', { invoiceId: item.data.invoice_id });
+    } else if (notifType === 'payment_received') {
+      navigation.navigate('Invoices');
+    }
+  };
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -424,6 +450,7 @@ export default function NotificationsScreen() {
               isSelected={selectedIds.includes(item.id)}
               onToggleSelect={handleToggleSelect}
               onRequestDelete={onRequestDelete}
+              onPressItem={handleNotificationPress}
               isSwipeOpen={openCardId === item.id}
               onSwipeOpen={id => setOpenCardId(id)}
               onSwipeClose={() => setOpenCardId(null)}
