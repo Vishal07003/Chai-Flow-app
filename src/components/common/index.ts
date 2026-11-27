@@ -16,4 +16,6 @@ export { default as TimePickerModal } from './TimePickerModal';
 export { default as CalendarPickerModal } from './CalendarPickerModal';
 export { default as AppDatePicker, type AppDatePickerProps } from './AppDatePicker';
 export { default as AppTimePicker, type AppTimePickerProps, format24To12 } from './AppTimePicker';
+export { default as BillingCycleDayModal, type BillingCycleDayModalProps } from './BillingCycleDayModal';
+export { default as PaginationControl, type PaginationControlProps } from './PaginationControl';
 
