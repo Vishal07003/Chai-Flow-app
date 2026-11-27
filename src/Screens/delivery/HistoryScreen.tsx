@@ -5,38 +5,59 @@ import {
   Text,
   FlatList,
   TouchableOpacity,
-  TextInput,
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import deliveryService, { BackendDelivery } from '../../services/delivery.service';
+import Header from '../../components/common/Header';
+import SearchBar from '../../components/common/SearchBar';
+import EmptyState from '../../components/common/EmptyState';
+import PaginationControl from '../../components/common/PaginationControl';
+import deliveryService, { BackendDelivery, PaginatedResponse } from '../../services/delivery.service';
 import { colors, typography, radius, spacing, shadows } from '../../theme';
 
-type FilterStatus = 'all' | 'delivered' | 'failed';
-type DateFilter = 'all' | 'today' | 'week' | 'month';
+type HistoryStatusFilter = 'all' | 'delivered' | 'failed';
 
-export default function DeliveryHistoryScreen() {
+export default function DeliveryHistoryScreen({ navigation }: any) {
   const [historyList, setHistoryList] = useState<BackendDelivery[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
-  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
+  const [filterStatus, setFilterStatus] = useState<HistoryStatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalRecords, setTotalRecords] = useState(0);
 
   const fetchHistory = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await deliveryService.getDeliveries({ status: 'history' });
-      setHistoryList(data || []);
+      const res = await deliveryService.getDeliveries({
+        status: 'history',
+        page: currentPage,
+        page_size: pageSize,
+      });
+
+      if (res && 'results' in res) {
+        const paginated = res as PaginatedResponse<BackendDelivery>;
+        setHistoryList(paginated.results || []);
+        setTotalRecords(paginated.count || 0);
+      } else if (Array.isArray(res)) {
+        setHistoryList(res);
+        setTotalRecords(res.length);
+      } else {
+        setHistoryList([]);
+        setTotalRecords(0);
+      }
     } catch (err) {
       console.log('Failed to fetch delivery history:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [currentPage, pageSize]);
 
   useEffect(() => {
     fetchHistory();
@@ -47,47 +68,18 @@ export default function DeliveryHistoryScreen() {
     fetchHistory();
   };
 
-  // Date filtering logic
-  const isWithinDateFilter = (dateStr?: string | null, filter: DateFilter = 'all') => {
-    if (filter === 'all' || !dateStr) return true;
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return true;
-
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    if (filter === 'today') {
-      return date >= todayStart;
-    }
-    if (filter === 'week') {
-      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      return date >= weekAgo;
-    }
-    if (filter === 'month') {
-      const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      return date >= monthAgo;
-    }
-    return true;
-  };
-
-  // Filtered deliveries list
+  // Filtered deliveries list according to status chips and search query
   const filteredItems = useMemo(() => {
     return historyList.filter(d => {
       // 1. Status filter
-      if (filterStatus !== 'all' && d.status !== filterStatus) {
+      if (filterStatus !== 'all' && d.status.toLowerCase() !== filterStatus) {
         return false;
       }
 
-      // 2. Date filter
-      const recordDate = d.delivered_time || d.updated_at || d.order_details?.created_at;
-      if (!isWithinDateFilter(recordDate, dateFilter)) {
-        return false;
-      }
-
-      // 3. Search query filter (Order ID or Customer/Company Name)
+      // 2. Search query filter
       if (searchQuery.trim()) {
         const query = searchQuery.trim().toLowerCase();
-        const orderIdStr = String(d.order_details?.id || d.order || '').toLowerCase();
+        const orderIdStr = String(d.order_details?.order_number || d.order_details?.id || d.order || '').toLowerCase();
         const customerName = (
           d.order_details?.company_name ||
           d.order_details?.customer_name ||
@@ -104,234 +96,157 @@ export default function DeliveryHistoryScreen() {
 
       return true;
     });
-  }, [historyList, filterStatus, dateFilter, searchQuery]);
+  }, [historyList, filterStatus, searchQuery]);
 
-  const renderHistoryItem = ({ item }: { item: BackendDelivery }) => {
-    const isDelivered = item.status === 'delivered';
-    const customerName =
-      item.order_details?.company_name ||
-      item.order_details?.customer_name ||
-      'Direct Customer';
-    const address = item.order_details?.delivery_address || 'Address not specified';
+  const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
 
-    const timestamp = item.delivered_time || item.updated_at;
-    const formattedDateTime = timestamp
-      ? new Date(timestamp).toLocaleString('en-IN', {
+  const renderHistoryCard = ({ item }: { item: BackendDelivery }) => {
+    const isDelivered = item.status.toLowerCase() === 'delivered';
+    const orderNum = item.order_details?.order_number || `ORD-${item.order}`;
+    const customer = item.order_details?.customer_name || item.order_details?.company_name || 'Customer';
+    const address = item.order_details?.delivery_address || 'No address';
+
+    const deliveredDate = item.delivered_time
+      ? new Date(item.delivered_time).toLocaleDateString('en-IN', {
           day: 'numeric',
           month: 'short',
-          year: 'numeric',
           hour: '2-digit',
           minute: '2-digit',
-          hour12: true,
-          timeZone: 'Asia/Kolkata',
         })
-      : 'Date unavailable';
-
-    // Build operational items list
-    const orderItems = item.order_details?.items || [];
-    const deliveredItems = item.delivered_items || [];
+      : item.updated_at
+      ? new Date(item.updated_at).toLocaleDateString('en-IN')
+      : 'Completed';
 
     return (
-      <View style={styles.card}>
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={0.85}
+        onPress={() =>
+          navigation?.navigate('OrderDetails', {
+            delivery: item,
+            deliveryId: item.id,
+            order: item.order_details,
+          })
+        }
+      >
         <View style={styles.cardHeader}>
-          <View style={{ flex: 1, marginRight: 8 }}>
-            <Text style={styles.orderNumber}>
-              Order #{item.order_details?.id || item.order}
-            </Text>
-            <Text style={styles.companyName}>{customerName}</Text>
+          <View style={styles.orderTitleRow}>
+            <Ionicons name="receipt-outline" size={15} color={colors.primary} />
+            <Text style={styles.orderNumberText}>{orderNum}</Text>
           </View>
-          <View
-            style={[
-              styles.badge,
-              isDelivered ? styles.deliveredBadge : styles.failedBadge,
-            ]}
-          >
-            <Ionicons
-              name={isDelivered ? 'checkmark-circle' : 'close-circle'}
-              size={14}
-              color={isDelivered ? '#059669' : '#DC2626'}
-            />
-            <Text
-              style={[
-                styles.badgeText,
-                { color: isDelivered ? '#059669' : '#DC2626' },
-              ]}
-            >
-              {isDelivered ? 'DELIVERED' : 'FAILED'}
+
+          <View style={[styles.statusBadge, isDelivered ? styles.badgeDelivered : styles.badgeFailed]}>
+            <Text style={[styles.statusBadgeText, isDelivered ? styles.badgeTextDelivered : styles.badgeTextFailed]}>
+              {isDelivered ? 'Delivered' : 'Failed'}
             </Text>
           </View>
         </View>
 
-        <View style={styles.infoRow}>
-          <Ionicons name="calendar-outline" size={15} color="#6B7280" />
-          <Text style={styles.infoText}>{formattedDateTime}</Text>
-        </View>
+        <Text style={styles.customerNameText}>{customer}</Text>
 
-        <View style={styles.infoRow}>
-          <Ionicons name="location-outline" size={15} color="#6B7280" />
-          <Text style={styles.infoText} numberOfLines={2}>
+        <View style={styles.metaRow}>
+          <Ionicons name="location-outline" size={13} color={colors.textSecondary} />
+          <Text style={styles.metaText} numberOfLines={1}>
             {address}
           </Text>
         </View>
 
-        {item.failure_reason ? (
-          <View style={styles.failureBox}>
-            <Text style={styles.failureLabel}>Failure Reason:</Text>
-            <Text style={styles.failureText}>{item.failure_reason}</Text>
+        <View style={styles.cardFooter}>
+          <View style={styles.metaRow}>
+            <Ionicons name="checkmark-done" size={13} color={colors.textMuted} />
+            <Text style={styles.dateText}>{deliveredDate}</Text>
           </View>
-        ) : null}
 
-        {/* Operational Items & Delivery Quantity Reconciliation */}
-        <View style={styles.itemsContainer}>
-          <Text style={styles.itemsHeader}>Items & Quantities:</Text>
-          {deliveredItems.length > 0 ? (
-            deliveredItems.map(di => (
-              <View key={di.id} style={styles.itemRow}>
-                <Text style={styles.itemProductName} numberOfLines={1}>
-                  {di.product_name}
-                </Text>
-                <View style={styles.qtyContainer}>
-                  <Text style={styles.itemQty}>
-                    Delivered: {di.delivered_quantity} / Ordered: {di.ordered_quantity}
-                  </Text>
-                  {di.has_discrepancy && (
-                    <View style={styles.discrepancyTag}>
-                      <Text style={styles.discrepancyTagText}>Discrepancy</Text>
-                    </View>
-                  )}
-                </View>
-              </View>
-            ))
-          ) : orderItems.length > 0 ? (
-            orderItems.map(oi => (
-              <View key={oi.id} style={styles.itemRow}>
-                <Text style={styles.itemProductName} numberOfLines={1}>
-                  {oi.product_details?.name || 'Item'}
-                </Text>
-                <Text style={styles.itemQty}>
-                  Qty: {oi.quantity}
-                </Text>
-              </View>
-            ))
-          ) : (
-            <Text style={styles.noItemsText}>Package details recorded</Text>
-          )}
+          <View style={styles.viewLinkRow}>
+            <Text style={styles.viewLinkText}>Details</Text>
+            <Ionicons name="chevron-forward" size={13} color={colors.primary} />
+          </View>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Delivery History</Text>
-        <Text style={styles.headerSub}>Operational delivery records & logs</Text>
-      </View>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <Header title="Delivery History" showBack={false} />
 
-      {/* Search Input */}
-      <View style={styles.searchSection}>
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={18} color="#9CA3AF" style={{ marginRight: 8 }} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search order ID, customer or address..."
-            placeholderTextColor="#9CA3AF"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            clearButtonMode="while-editing"
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="close-circle" size={18} color="#9CA3AF" />
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
+      {/* Search Header */}
+      <View style={styles.searchContainer}>
+        <SearchBar
+          value={searchQuery}
+          onChangeText={text => {
+            setSearchQuery(text);
+            setCurrentPage(1);
+          }}
+          placeholder="Search by order #, customer, address..."
+          containerStyle={{ marginVertical: 0, marginBottom: 8 }}
+        />
 
-      {/* Filter Rows */}
-      <View style={styles.filterSection}>
-        {/* Status Chips */}
-        <View style={styles.chipRow}>
-          {(['all', 'delivered', 'failed'] as const).map(f => (
-            <TouchableOpacity
-              key={f}
-              style={[
-                styles.filterChip,
-                filterStatus === f && styles.activeFilterChip,
-              ]}
-              onPress={() => setFilterStatus(f)}
-            >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  filterStatus === f && styles.activeFilterChipText,
-                ]}
+        {/* Status Filters */}
+        <View style={styles.filterRow}>
+          {(['all', 'delivered', 'failed'] as HistoryStatusFilter[]).map(st => {
+            const isActive = filterStatus === st;
+            return (
+              <TouchableOpacity
+                key={st}
+                style={[styles.filterChip, isActive && styles.filterChipActive]}
+                onPress={() => {
+                  setFilterStatus(st);
+                  setCurrentPage(1);
+                }}
+                activeOpacity={0.7}
               >
-                {f.toUpperCase()}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Date Filter Chips */}
-        <View style={[styles.chipRow, { marginTop: 6 }]}>
-          {(
-            [
-              { id: 'all', label: 'All Dates' },
-              { id: 'today', label: 'Today' },
-              { id: 'week', label: 'Past 7 Days' },
-              { id: 'month', label: 'Past 30 Days' },
-            ] as const
-          ).map(df => (
-            <TouchableOpacity
-              key={df.id}
-              style={[
-                styles.dateChip,
-                dateFilter === df.id && styles.activeDateChip,
-              ]}
-              onPress={() => setDateFilter(df.id)}
-            >
-              <Text
-                style={[
-                  styles.dateChipText,
-                  dateFilter === df.id && styles.activeDateChipText,
-                ]}
-              >
-                {df.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+                <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                  {st.charAt(0).toUpperCase() + st.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
       </View>
 
-      {/* Content */}
-      {loading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#059669" />
-          <Text style={styles.loadingText}>Loading delivery records...</Text>
+      {/* Main List */}
+      {loading && !refreshing ? (
+        <View style={styles.centerBox}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading completed deliveries...</Text>
         </View>
       ) : filteredItems.length === 0 ? (
-        <View style={styles.centerContainer}>
-          <Ionicons name="file-tray-outline" size={54} color="#D1D5DB" />
-          <Text style={styles.emptyTitle}>No Delivery Records Found</Text>
-          <Text style={styles.emptySub}>
-            Completed and failed deliveries matching your filters will appear here.
-          </Text>
-        </View>
+        <EmptyState
+          icon="time-outline"
+          title="No Delivery History"
+          subtitle={
+            searchQuery
+              ? 'No historical deliveries matched your search.'
+              : 'You have not completed any deliveries yet.'
+          }
+        />
       ) : (
         <FlatList
           data={filteredItems}
           keyExtractor={item => String(item.id)}
-          renderItem={renderHistoryItem}
-          contentContainerStyle={styles.listContainer}
-          showsVerticalScrollIndicator={false}
+          renderItem={renderHistoryCard}
+          contentContainerStyle={styles.listContent}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              colors={['#059669']}
-              tintColor="#059669"
+              colors={[colors.primary]}
+            />
+          }
+          ListFooterComponent={
+            <PaginationControl
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalRecords={totalRecords}
+              pageSize={pageSize}
+              pageSizeOptions={[10, 20, 30]}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={size => {
+                setPageSize(size);
+                setCurrentPage(1);
+              }}
+              isLoading={loading}
             />
           }
         />
@@ -345,246 +260,143 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FAF8F5',
   },
-  header: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#EFEAE4',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#1F2937',
-  },
-  headerSub: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  searchSection: {
+  searchContainer: {
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 6,
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    height: 40,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 13,
-    color: '#1F2937',
-    paddingVertical: 0,
-  },
-  filterSection: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
+    paddingTop: 8,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#EFEAE4',
+    borderBottomColor: colors.border,
   },
-  chipRow: {
+  filterRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     gap: 8,
   },
   filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 16,
-    backgroundColor: '#F3F4F6',
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
   },
-  activeFilterChip: {
-    backgroundColor: '#059669',
+  filterChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   filterChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#4B5563',
-  },
-  activeFilterChipText: {
-    color: '#FFFFFF',
-  },
-  dateChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: '#FAF8F5',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  activeDateChip: {
-    borderColor: '#059669',
-    backgroundColor: '#ECFDF5',
-  },
-  dateChipText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
-  activeDateChipText: {
-    color: '#059669',
+  filterChipTextActive: {
+    color: '#FFFFFF',
     fontWeight: '700',
   },
-  listContainer: {
-    padding: 16,
-    paddingBottom: 32,
-  },
-  centerContainer: {
+  centerBox: {
     flex: 1,
-    alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    alignItems: 'center',
+    padding: 32,
   },
   loadingText: {
     marginTop: 10,
-    fontSize: 14,
-    color: '#6B7280',
-    fontWeight: '600',
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#374151',
-    marginTop: 14,
-  },
-  emptySub: {
     fontSize: 13,
-    color: '#9CA3AF',
-    textAlign: 'center',
-    marginTop: 4,
-    lineHeight: 18,
+    color: colors.textSecondary,
+  },
+  listContent: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 24,
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: radius.lg,
+    padding: 14,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2,
+    borderColor: colors.border,
+    ...shadows.sm,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
-  orderNumber: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#111827',
-  },
-  companyName: {
-    fontSize: 13,
-    color: '#4B5563',
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  badge: {
-    flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    gap: 4,
-  },
-  deliveredBadge: {
-    backgroundColor: '#ECFDF5',
-  },
-  failedBadge: {
-    backgroundColor: '#FEF2F2',
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 6,
-    gap: 8,
-  },
-  infoText: {
-    fontSize: 13,
-    color: '#4B5563',
-    flex: 1,
-  },
-  failureBox: {
-    marginTop: 10,
-    padding: 10,
-    backgroundColor: '#FEF2F2',
-    borderRadius: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#DC2626',
-  },
-  failureLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#991B1B',
-  },
-  failureText: {
-    fontSize: 12,
-    color: '#DC2626',
-    marginTop: 2,
-  },
-  itemsContainer: {
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-  },
-  itemsHeader: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#6B7280',
     marginBottom: 6,
   },
-  itemRow: {
+  orderTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
+    gap: 6,
   },
-  itemProductName: {
-    fontSize: 13,
-    color: '#374151',
-    fontWeight: '500',
+  orderNumberText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  statusBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+    borderWidth: 1,
+  },
+  badgeDelivered: {
+    backgroundColor: '#D1FAE5',
+    borderColor: '#A7F3D0',
+  },
+  badgeFailed: {
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FECACA',
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  badgeTextDelivered: {
+    color: '#047857',
+  },
+  badgeTextFailed: {
+    color: '#B91C1C',
+  },
+  customerNameText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: 4,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  metaText: {
+    fontSize: 12,
+    color: colors.textSecondary,
     flex: 1,
   },
-  qtyContainer: {
-    alignItems: 'flex-end',
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 8,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.surface,
   },
-  itemQty: {
+  dateText: {
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  viewLinkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  viewLinkText: {
     fontSize: 12,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  noItemsText: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    fontStyle: 'italic',
-  },
-  discrepancyTag: {
-    marginTop: 2,
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  discrepancyTagText: {
-    fontSize: 10,
     fontWeight: '700',
-    color: '#92400E',
+    color: colors.primary,
   },
 });
