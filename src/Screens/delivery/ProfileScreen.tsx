@@ -429,7 +429,7 @@ export default function ProfileScreen({ navigation: _navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAF8F5',
+    backgroundColor: '#F7F8FA',
   },
   scrollContent: {
     paddingHorizontal: 16,
@@ -445,21 +445,19 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 10,
     fontSize: 14,
-    color: '#6B7280',
+    color: '#718096',
     fontWeight: '600',
   },
   bannerCard: {
-    backgroundColor: '#059669',
-    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     padding: 18,
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 16,
-    elevation: 3,
-    shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E8EDF2',
+    ...shadows.sm,
   },
   uploadArea: {
     marginRight: 14,
@@ -472,13 +470,13 @@ const styles = StyleSheet.create({
     height: 68,
     borderRadius: 34,
     borderWidth: 2,
-    borderColor: '#FFFFFF',
+    borderColor: '#E8EDF2',
   },
   cameraBadge: {
     position: 'absolute',
     bottom: 0,
     right: 0,
-    backgroundColor: '#10B981',
+    backgroundColor: '#8C331A',
     width: 22,
     height: 22,
     borderRadius: 11,
@@ -491,17 +489,17 @@ const styles = StyleSheet.create({
     width: 68,
     height: 68,
     borderRadius: 34,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: '#F7F8FA',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#D1FAE5',
+    borderColor: '#E8EDF2',
     borderStyle: 'dashed',
   },
   uploadPlaceholderText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: '#718096',
     marginTop: 2,
   },
   bannerInfo: {
@@ -510,7 +508,7 @@ const styles = StyleSheet.create({
   profileName: {
     fontSize: 19,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: '#253247',
     letterSpacing: 0.3,
   },
   statusRow: {
@@ -526,7 +524,7 @@ const styles = StyleSheet.create({
   },
   profileRole: {
     fontSize: 12,
-    color: '#D1FAE5',
+    color: '#718096',
     fontWeight: '600',
   },
   sectionHeaderRow: {
@@ -539,7 +537,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#6B7280',
+    color: '#718096',
     letterSpacing: 0.8,
   },
   editBtn: {
@@ -549,7 +547,7 @@ const styles = StyleSheet.create({
   editText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#059669',
+    color: '#8C331A',
   },
   cancelBtn: {
     paddingHorizontal: 8,
@@ -557,19 +555,15 @@ const styles = StyleSheet.create({
   cancelText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#EF4444',
+    color: '#DC2626',
   },
   formCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#EFECE8',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    borderColor: '#E8EDF2',
+    ...shadows.sm,
     marginBottom: 14,
   },
   fieldGroup: {
@@ -578,31 +572,31 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#6B7280',
+    color: '#718096',
     marginBottom: 5,
     letterSpacing: 0.6,
   },
   valueText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#111827',
+    color: '#253247',
   },
   input: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#F7F8FA',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E8EDF2',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 9,
     fontSize: 14,
-    color: '#111827',
+    color: '#253247',
   },
   multilineInput: {
     minHeight: 54,
     textAlignVertical: 'top',
   },
   saveBtn: {
-    backgroundColor: '#059669',
+    backgroundColor: '#8C331A',
     paddingVertical: 12,
     borderRadius: 12,
     alignItems: 'center',
@@ -617,7 +611,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#FEE2E2',
     paddingVertical: 12,
