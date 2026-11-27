@@ -83,18 +83,45 @@ export const adminTheme = {
   chaiAccent: '#8C331A',
 };
 
-// Delivery Partner Theme Tokens (Unified with Chai Flow Brand)
+// Delivery Partner Theme Tokens (Unified with Chai Flow Brand - Bright Light Theme)
 export const deliveryTheme = {
+  // Brand & Accents
   primary: '#8C331A',
+  primaryAccent: '#B74A21',
   primaryLight: '#B74A21',
   primaryDark: '#662210',
-  primaryBg: '#FDEBE4',
-  primaryBorder: '#F5C6B8',
-  badgeBg: '#F7EFE9',
-  accent: '#7A2E19',
-  text: '#7A2E19',
-  // Specific operational status indicators
-  deliverySuccess: '#047857',
+  primaryBg: '#F7F8FA',
+  primaryBorder: '#E8EDF2',
+
+  // Surfaces & Backgrounds
+  background: '#F7F8FA',
+  cardBackground: '#FFFFFF',
+  border: '#E8EDF2',
+  borderLight: '#F0F4F8',
+
+  // Typography & Neutrals
+  mainText: '#253247',
+  secondaryText: '#718096',
+  text: '#253247',
+  textPrimary: '#253247',
+  textSecondary: '#718096',
+  textMuted: '#A0AEC0',
+
+  // Status Badges (Soft Backgrounds)
+  pending: '#D97706',
+  pendingBg: '#FEF3C7', // soft amber
+  pendingText: '#92400E',
+
+  pickedUp: '#2563EB',
+  pickedUpBg: '#EFF6FF', // soft blue
+  pickedUpText: '#1D4ED8',
+
+  delivered: '#059669',
+  deliveredBg: '#ECFDF5', // soft green
+  deliveredText: '#047857',
+
+  // Operational status indicators
+  deliverySuccess: '#059669',
   deliverySuccessBg: '#ECFDF5',
 };
 

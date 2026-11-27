@@ -13,4 +13,5 @@ export interface Customer {
   category?: string;
   pendingBalance?: number;
   openingBalance?: number;
+  billing_cycle_day?: number;
 }
