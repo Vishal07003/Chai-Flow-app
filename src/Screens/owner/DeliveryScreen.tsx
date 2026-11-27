@@ -15,7 +15,6 @@ import { useNavigation } from '@react-navigation/native';
 
 import Header from '../../components/common/Header';
 import SearchBar from '../../components/common/SearchBar';
-import FleetMap from '../../components/delivery/FleetMap';
 import DeliveryBoyCard from '../../components/delivery/DeliveryBoyCard';
 import DeliveryBoyDetailModal from '../../components/delivery/DeliveryBoyDetailModal';
 import FloatingButton from '../../components/common/FloatingButton';
@@ -277,9 +276,6 @@ export default function DeliveryScreen() {
             <Text style={[styles.metricVal, { color: '#6B7280' }]}>{counts.offline}</Text>
           </View>
         </View>
-
-        {/* 4. Compact Collapsible Live Fleet GPS View */}
-        <FleetMap partners={partners} onRefresh={fetchPartners} />
 
         {/* 5. Team Section Header */}
         <View style={styles.teamHeaderRow}>
