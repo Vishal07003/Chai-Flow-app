@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Modal,
   View,
@@ -16,11 +16,18 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { colors, typography, radius, spacing, shadows } from '../../theme';
+import { BackendInvoice } from '../../services/billing.service';
 
 export interface CollectPaymentFormData {
   amount: number;
-  paymentMethod: 'cash';
-  notes: string;
+  notes?: string;
+}
+
+export interface OutstandingInvoiceSummary {
+  id: number | string;
+  invoice_number: string;
+  pending_amount: number;
+  created_at?: string;
 }
 
 export interface CollectPaymentModalProps {
@@ -30,6 +37,7 @@ export interface CollectPaymentModalProps {
   customerName?: string;
   totalPendingAmount?: number | string;
   initialAmount?: number | string;
+  invoices?: OutstandingInvoiceSummary[] | BackendInvoice[];
 }
 
 export default function CollectPaymentModal({
@@ -39,13 +47,14 @@ export default function CollectPaymentModal({
   customerName = 'Customer',
   totalPendingAmount = 0,
   initialAmount,
+  invoices = [],
 }: CollectPaymentModalProps) {
   const [amountInput, setAmountInput] = useState<string>('');
-  const paymentMethod: 'cash' = 'cash';
   const [notes, setNotes] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [showConfirmDialog, setShowConfirmDialog] = useState<boolean>(false);
 
   const numPending = typeof totalPendingAmount === 'string' ? parseFloat(totalPendingAmount) || 0 : totalPendingAmount;
 
@@ -61,6 +70,7 @@ export default function CollectPaymentModal({
       setNotes('');
       setErrorMessage('');
       setIsSubmitting(false);
+      setShowConfirmDialog(false);
     }
   }, [visible, initialAmount, numPending]);
 
@@ -78,6 +88,10 @@ export default function CollectPaymentModal({
     );
 
     const backAction = () => {
+      if (showConfirmDialog) {
+        setShowConfirmDialog(false);
+        return true;
+      }
       if (isKeyboardVisible) {
         Keyboard.dismiss();
         return true;
@@ -93,47 +107,118 @@ export default function CollectPaymentModal({
       hideSub.remove();
       backHandler.remove();
     };
-  }, [visible, isKeyboardVisible]);
+  }, [visible, isKeyboardVisible, showConfirmDialog]);
 
   const handleClose = () => {
     Keyboard.dismiss();
     setErrorMessage('');
+    setShowConfirmDialog(false);
     onClose();
   };
 
   const handleFullAmount = () => {
     if (numPending > 0) {
       setAmountInput(String(numPending));
+      setErrorMessage('');
     }
   };
 
-  const handleSubmit = async () => {
+  const parsedAmount = parseFloat(amountInput);
+  const numEntered = isNaN(parsedAmount) || parsedAmount < 0 ? 0 : parsedAmount;
+
+  // Oldest Outstanding First FIFO Allocation Calculation
+  // Invoices sorted chronologically by created_at ascending (oldest first)
+  const normalizedInvoices: OutstandingInvoiceSummary[] = useMemo(() => {
+    if (!invoices || invoices.length === 0) return [];
+    return invoices
+      .map((inv: any) => ({
+        id: inv.id,
+        invoice_number: inv.invoice_number || inv.invoiceNo || `INV-${inv.id}`,
+        pending_amount: parseFloat(inv.pending_amount) || 0,
+        created_at: inv.created_at || inv.date || '',
+      }))
+      .filter(inv => inv.pending_amount > 0)
+      .sort((a, b) => {
+        if (!a.created_at && !b.created_at) return 0;
+        if (!a.created_at) return 1;
+        if (!b.created_at) return -1;
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      });
+  }, [invoices]);
+
+  const fifoPreview = useMemo(() => {
+    let remainingToAllocate = numEntered;
+    let totalAllocated = 0;
+
+    const breakdown = normalizedInvoices.map(inv => {
+      if (remainingToAllocate <= 0) {
+        return {
+          ...inv,
+          allocated: 0,
+          remainingAfter: inv.pending_amount,
+        };
+      }
+      const toAlloc = Math.min(remainingToAllocate, inv.pending_amount);
+      remainingToAllocate -= toAlloc;
+      totalAllocated += toAlloc;
+      return {
+        ...inv,
+        allocated: toAlloc,
+        remainingAfter: Math.max(0, inv.pending_amount - toAlloc),
+      };
+    });
+
+    const unappliedCredit = Math.max(0, numEntered - totalAllocated);
+    const remainingCustomerBalance = Math.max(0, numPending - numEntered);
+
+    return {
+      breakdown,
+      totalAllocated,
+      unappliedCredit,
+      remainingCustomerBalance,
+    };
+  }, [normalizedInvoices, numEntered, numPending]);
+
+  // Step 1: Open Confirmation Dialog after validating input
+  const handleProceedToConfirm = () => {
     Keyboard.dismiss();
-    const amt = parseFloat(amountInput);
-    if (isNaN(amt) || amt <= 0) {
-      setErrorMessage('Please enter a valid payment amount greater than ₹0');
+    setErrorMessage('');
+
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setErrorMessage('Please enter a valid payment amount greater than ₹0.');
       return;
     }
 
-    setErrorMessage('');
+    if (numPending <= 0) {
+      setErrorMessage('This customer has no outstanding balance to pay.');
+      return;
+    }
+
+    setShowConfirmDialog(true);
+  };
+
+  // Step 2: Final Single Submission to API after Owner Confirmation
+  const handleFinalConfirmSubmit = async () => {
+    if (isSubmitting) return; // Prevent duplicate submission
     setIsSubmitting(true);
+    setErrorMessage('');
+
     try {
       await onSubmit({
-        amount: amt,
-        paymentMethod,
+        amount: parsedAmount,
         notes: notes.trim(),
       });
+      setShowConfirmDialog(false);
       handleClose();
     } catch (err: any) {
-      setErrorMessage(err?.message || err?.detail || 'Failed to record payment');
+      setShowConfirmDialog(false);
+      setErrorMessage(err?.message || err?.detail || 'Failed to record payment. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const windowHeight = Dimensions.get('window').height;
-  const numEntered = parseFloat(amountInput) || 0;
-  const remainingDue = Math.max(0, numPending - numEntered);
 
   return (
     <Modal
@@ -148,7 +233,9 @@ export default function CollectPaymentModal({
           style={StyleSheet.absoluteFill}
           activeOpacity={1}
           onPress={() => {
-            if (isKeyboardVisible) {
+            if (showConfirmDialog) {
+              setShowConfirmDialog(false);
+            } else if (isKeyboardVisible) {
               Keyboard.dismiss();
             } else {
               handleClose();
@@ -167,19 +254,19 @@ export default function CollectPaymentModal({
           <View
             style={[
               styles.modalCard,
-              { maxHeight: isKeyboardVisible ? windowHeight * 0.75 : windowHeight * 0.85 },
+              { maxHeight: isKeyboardVisible ? windowHeight * 0.75 : windowHeight * 0.88 },
             ]}
           >
             {/* Header */}
             <View style={styles.modalHeader}>
               <View style={styles.headerTitleRow}>
                 <View style={styles.headerIconCircle}>
-                  <Ionicons name="cash" size={16} color="#8C331A" />
+                  <Ionicons name="receipt-outline" size={16} color="#8C331A" />
                 </View>
-                <View>
-                  <Text style={styles.modalTitle}>Collect Payment</Text>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.modalTitle}>Record Payment</Text>
                   <Text style={styles.modalSubtitle} numberOfLines={1}>
-                    {customerName} • Settle open balance
+                    {customerName}
                   </Text>
                 </View>
               </View>
@@ -188,6 +275,7 @@ export default function CollectPaymentModal({
                 onPress={handleClose}
                 hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                 style={styles.closeBtn}
+                disabled={isSubmitting}
               >
                 <Ionicons name="close" size={18} color="#6B5E55" />
               </TouchableOpacity>
@@ -204,7 +292,7 @@ export default function CollectPaymentModal({
               {/* Error Banner */}
               {errorMessage ? (
                 <View style={styles.errorBanner}>
-                  <Ionicons name="alert-circle" size={16} color="#DC2626" />
+                  <Ionicons name="alert-circle" size={16} color="#DC2626" style={{ marginRight: 6 }} />
                   <Text style={styles.errorBannerText}>{errorMessage}</Text>
                 </View>
               ) : null}
@@ -212,14 +300,15 @@ export default function CollectPaymentModal({
               {/* Outstanding Balance Banner */}
               <View style={styles.dueBalanceBanner}>
                 <View>
-                  <Text style={styles.dueBalanceLabel}>Current Balance Due</Text>
-                  <Text style={styles.dueBalanceAmount}>₹{numPending.toLocaleString()}</Text>
+                  <Text style={styles.dueBalanceLabel}>Current Total Outstanding</Text>
+                  <Text style={styles.dueBalanceAmount}>₹{numPending.toLocaleString('en-IN')}</Text>
                 </View>
                 {numPending > 0 && (
                   <TouchableOpacity
                     style={styles.payFullChip}
                     onPress={handleFullAmount}
                     activeOpacity={0.8}
+                    disabled={isSubmitting}
                   >
                     <Text style={styles.payFullChipText}>Pay Full</Text>
                   </TouchableOpacity>
@@ -228,7 +317,7 @@ export default function CollectPaymentModal({
 
               {/* Amount Input */}
               <Text style={styles.fieldLabel}>
-                COLLECTION AMOUNT (₹) <Text style={styles.requiredStar}>*</Text>
+                PAYMENT AMOUNT (₹) <Text style={styles.requiredStar}>*</Text>
               </Text>
               <View style={styles.amountInputRow}>
                 <Text style={styles.currencyPrefix}>₹</Text>
@@ -238,42 +327,100 @@ export default function CollectPaymentModal({
                   placeholder="0"
                   placeholderTextColor="#A09489"
                   value={amountInput}
-                  onChangeText={setAmountInput}
+                  onChangeText={val => {
+                    setAmountInput(val);
+                    if (errorMessage) setErrorMessage('');
+                  }}
                   autoFocus={true}
+                  editable={!isSubmitting}
                 />
               </View>
 
-              {/* Payment Method - Fixed Cash Only Badge */}
-              <Text style={styles.fieldLabel}>PAYMENT METHOD</Text>
-              <View style={styles.fixedCashBadge}>
-                <Ionicons name="cash-outline" size={16} color={colors.primary} style={{ marginRight: 6 }} />
-                <Text style={styles.fixedCashText}>Payment Mode: Cash</Text>
-              </View>
+              {/* FIFO Allocation Preview Section */}
+              {numEntered > 0 && (
+                <View style={styles.previewContainer}>
+                  <View style={styles.previewHeaderRow}>
+                    <Ionicons name="list-outline" size={14} color="#8C331A" style={{ marginRight: 5 }} />
+                    <Text style={styles.previewTitle}>FIFO ALLOCATION PREVIEW</Text>
+                    <Text style={styles.previewBadge}>Oldest First</Text>
+                  </View>
 
-              {/* Notes / Reference */}
+                  {fifoPreview.breakdown.length > 0 ? (
+                    fifoPreview.breakdown.map((item, idx) => (
+                      <View key={item.id || idx} style={styles.previewItemRow}>
+                        <View style={{ flex: 1.5 }}>
+                          <Text style={styles.previewInvNumber}>{item.invoice_number}</Text>
+                          <Text style={styles.previewInvDue}>
+                            Due: ₹{item.pending_amount.toLocaleString('en-IN')}
+                          </Text>
+                        </View>
+                        <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                          <Text
+                            style={[
+                              styles.previewAllocatedAmount,
+                              item.allocated > 0 ? styles.allocActive : styles.allocZero,
+                            ]}
+                          >
+                            ₹{item.allocated.toLocaleString('en-IN')} allocated
+                          </Text>
+                          <Text style={styles.previewRemainingAfter}>
+                            Bal: ₹{item.remainingAfter.toLocaleString('en-IN')}
+                          </Text>
+                        </View>
+                      </View>
+                    ))
+                  ) : (
+                    <View style={styles.previewSingleSummary}>
+                      <Text style={styles.previewSingleLabel}>Allocated to Outstanding Balance:</Text>
+                      <Text style={styles.previewSingleVal}>
+                        ₹{Math.min(numEntered, numPending).toLocaleString('en-IN')}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Summary of Allocation */}
+                  <View style={styles.allocationSummaryBox}>
+                    <View style={styles.summaryLine}>
+                      <Text style={styles.summaryLineLabel}>Total Allocated:</Text>
+                      <Text style={styles.summaryLineVal}>
+                        ₹{Math.min(numEntered, numPending).toLocaleString('en-IN')}
+                      </Text>
+                    </View>
+                    <View style={styles.summaryLine}>
+                      <Text style={styles.summaryLineLabel}>Remaining Outstanding:</Text>
+                      <Text
+                        style={[
+                          styles.summaryLineVal,
+                          { color: fifoPreview.remainingCustomerBalance > 0 ? '#DC2626' : '#059669' },
+                        ]}
+                      >
+                        ₹{fifoPreview.remainingCustomerBalance.toLocaleString('en-IN')}
+                      </Text>
+                    </View>
+                    {fifoPreview.unappliedCredit > 0 && (
+                      <View style={styles.summaryLine}>
+                        <Text style={[styles.summaryLineLabel, { color: '#059669' }]}>
+                          Unapplied Advance Credit:
+                        </Text>
+                        <Text style={[styles.summaryLineVal, { color: '#059669' }]}>
+                          ₹{fifoPreview.unappliedCredit.toLocaleString('en-IN')}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              )}
+
+              {/* Notes / Reference (Optional) */}
               <Text style={styles.fieldLabel}>NOTES / REFERENCE (OPTIONAL)</Text>
               <TextInput
                 style={styles.notesInput}
-                placeholder="e.g. Cash collected at counter"
+                placeholder="e.g. Counter payment settlement"
                 placeholderTextColor="#A0958D"
                 value={notes}
                 onChangeText={setNotes}
+                editable={!isSubmitting}
               />
-
-              {/* Calculation Summary */}
-              {numPending > 0 && numEntered > 0 && (
-                <View style={styles.calculationBox}>
-                  <Text style={styles.calcLabel}>Remaining Balance After Payment:</Text>
-                  <Text
-                    style={[
-                      styles.calcValue,
-                      remainingDue === 0 ? styles.calcValueSuccess : styles.calcValuePending,
-                    ]}
-                  >
-                    ₹{remainingDue.toLocaleString()}
-                  </Text>
-                </View>
-              )}
             </ScrollView>
 
             {/* Fixed Footer Buttons */}
@@ -288,24 +435,120 @@ export default function CollectPaymentModal({
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.submitBtn, isSubmitting && styles.submitBtnDisabled]}
-                onPress={handleSubmit}
-                disabled={isSubmitting}
+                style={[styles.submitBtn, (isSubmitting || numEntered <= 0) && styles.submitBtnDisabled]}
+                onPress={handleProceedToConfirm}
+                disabled={isSubmitting || numEntered <= 0}
                 activeOpacity={0.85}
               >
-                {isSubmitting ? (
-                  <ActivityIndicator color="#FFFFFF" size="small" />
-                ) : (
-                  <>
-                    <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.submitBtnText}>Record Payment</Text>
-                  </>
-                )}
+                <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.submitBtnText}>Record Payment</Text>
               </TouchableOpacity>
             </View>
           </View>
         </KeyboardAvoidingView>
       </View>
+
+      {/* Mandatory Confirm Payment Dialog Modal */}
+      {showConfirmDialog && (
+        <Modal
+          visible={showConfirmDialog}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowConfirmDialog(false)}
+        >
+          <View style={styles.confirmOverlay}>
+            <View style={styles.confirmCard}>
+              <View style={styles.confirmHeaderRow}>
+                <Ionicons name="alert-circle" size={20} color="#8C331A" style={{ marginRight: 8 }} />
+                <Text style={styles.confirmTitle}>Confirm Payment</Text>
+              </View>
+
+              <Text style={styles.confirmCustomerText}>
+                Customer: <Text style={{ fontWeight: '800', color: '#1F2937' }}>{customerName}</Text>
+              </Text>
+
+              <View style={styles.confirmDetailBox}>
+                <View style={styles.confirmDetailRow}>
+                  <Text style={styles.confirmDetailLabel}>Payment Amount:</Text>
+                  <Text style={styles.confirmDetailValMain}>₹{numEntered.toLocaleString('en-IN')}</Text>
+                </View>
+
+                <View style={styles.confirmDetailRow}>
+                  <Text style={styles.confirmDetailLabel}>Total Allocated:</Text>
+                  <Text style={styles.confirmDetailVal}>
+                    ₹{Math.min(numEntered, numPending).toLocaleString('en-IN')}
+                  </Text>
+                </View>
+
+                <View style={styles.confirmDetailRow}>
+                  <Text style={styles.confirmDetailLabel}>Remaining Outstanding:</Text>
+                  <Text
+                    style={[
+                      styles.confirmDetailVal,
+                      { color: fifoPreview.remainingCustomerBalance > 0 ? '#DC2626' : '#059669' },
+                    ]}
+                  >
+                    ₹{fifoPreview.remainingCustomerBalance.toLocaleString('en-IN')}
+                  </Text>
+                </View>
+
+                {fifoPreview.unappliedCredit > 0 && (
+                  <View style={styles.confirmDetailRow}>
+                    <Text style={[styles.confirmDetailLabel, { color: '#059669' }]}>
+                      Advance Credit:
+                    </Text>
+                    <Text style={[styles.confirmDetailVal, { color: '#059669' }]}>
+                      ₹{fifoPreview.unappliedCredit.toLocaleString('en-IN')}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Allocation Breakdown Preview Snippet */}
+              {fifoPreview.breakdown.filter(b => b.allocated > 0).length > 0 && (
+                <View style={styles.confirmBreakdownContainer}>
+                  <Text style={styles.confirmBreakdownTitle}>Invoice Allocation Breakdown:</Text>
+                  {fifoPreview.breakdown
+                    .filter(b => b.allocated > 0)
+                    .map((item, idx) => (
+                      <View key={item.id || idx} style={styles.confirmBreakdownRow}>
+                        <Text style={styles.confirmBreakdownInv}>{item.invoice_number}:</Text>
+                        <Text style={styles.confirmBreakdownAlloc}>
+                          ₹{item.allocated.toLocaleString('en-IN')} allocated
+                        </Text>
+                      </View>
+                    ))}
+                </View>
+              )}
+
+              {/* Action Buttons: Cancel vs Confirm Payment */}
+              <View style={styles.confirmActionsRow}>
+                <TouchableOpacity
+                  style={styles.confirmCancelBtn}
+                  onPress={() => setShowConfirmDialog(false)}
+                  disabled={isSubmitting}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.confirmCancelText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.confirmSaveBtn, isSubmitting && styles.submitBtnDisabled]}
+                  onPress={handleFinalConfirmSubmit}
+                  disabled={isSubmitting}
+                  activeOpacity={0.85}
+                >
+                  {isSubmitting ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.confirmSaveText}>Confirm Payment</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </Modal>
   );
 }
@@ -338,17 +581,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.16,
     shadowRadius: 12,
     elevation: 10,
-    flexDirection: 'column',
   },
   modalHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0EBE6',
-    backgroundColor: '#FFFFFF',
+    borderBottomColor: '#F3EFEA',
   },
   headerTitleRow: {
     flexDirection: 'row',
@@ -359,33 +600,33 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#F7EBE4',
+    backgroundColor: '#FAF5F2',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
+    borderWidth: 1,
+    borderColor: '#EFEAE4',
   },
   modalTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
-    color: '#2A2421',
+    color: '#1F2937',
   },
   modalSubtitle: {
     fontSize: 11,
-    color: '#8E8278',
+    color: '#8C331A',
+    fontWeight: '600',
     marginTop: 1,
   },
   closeBtn: {
-    padding: 6,
-    borderRadius: 16,
-    backgroundColor: '#FAF7F4',
+    padding: 4,
   },
   modalBody: {
-    flexShrink: 1,
+    flexGrow: 0,
   },
   bodyScrollContent: {
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 16,
+    paddingVertical: 14,
   },
   errorBanner: {
     flexDirection: 'row',
@@ -394,74 +635,68 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#FECACA',
     borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginBottom: 10,
+    padding: 10,
+    marginBottom: 12,
   },
   errorBannerText: {
+    flex: 1,
     fontSize: 12,
     color: '#DC2626',
     fontWeight: '600',
-    marginLeft: 6,
-    flex: 1,
   },
   dueBalanceBanner: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#FAF7F4',
+    backgroundColor: '#FAF8F5',
+    borderRadius: 12,
+    padding: 12,
     borderWidth: 1,
-    borderColor: '#E6DDD5',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 12,
+    borderColor: '#EFECE9',
+    marginBottom: 14,
   },
   dueBalanceLabel: {
     fontSize: 11,
+    color: '#6B7280',
     fontWeight: '600',
-    color: '#8E8278',
   },
   dueBalanceAmount: {
     fontSize: 18,
     fontWeight: '900',
     color: '#8C331A',
-    marginTop: 1,
+    marginTop: 2,
   },
   payFullChip: {
-    backgroundColor: '#F7EBE4',
-    paddingHorizontal: 10,
+    backgroundColor: '#8C331A',
+    paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#EFE5DF',
+    borderRadius: 8,
   },
   payFullChipText: {
-    fontSize: 12,
+    color: '#FFFFFF',
+    fontSize: 11,
     fontWeight: '800',
-    color: '#8C331A',
   },
   fieldLabel: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#8E8278',
+    color: '#8A7A70',
     letterSpacing: 0.5,
-    marginTop: 8,
-    marginBottom: 4,
+    marginBottom: 6,
   },
   requiredStar: {
     color: '#DC2626',
-    fontWeight: '700',
   },
   amountInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FAF7F4',
-    borderWidth: 1,
-    borderColor: '#E6DDD5',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#8C331A',
     borderRadius: 10,
     paddingHorizontal: 12,
-    height: 44,
+    marginBottom: 14,
+    height: 48,
   },
   currencyPrefix: {
     fontSize: 18,
@@ -471,132 +706,285 @@ const styles = StyleSheet.create({
   },
   amountInput: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '800',
-    color: '#2A2421',
-    paddingVertical: 0,
+    color: '#1F2937',
+    paddingVertical: 8,
   },
-  fixedCashBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F4EBE6',
-    borderWidth: 1.5,
-    borderColor: colors.primary,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    alignSelf: 'flex-start',
-    gap: spacing.xs,
-  },
-  fixedCashText: {
-    ...typography.body,
-    fontFamily: 'Inter-SemiBold',
-    fontWeight: '600',
-    color: colors.primary,
-  },
-  methodChipsRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginBottom: 6,
-  },
-  methodChip: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 7,
-    borderRadius: 8,
-    backgroundColor: '#FAF7F4',
+  previewContainer: {
+    backgroundColor: '#FAF5F2',
+    borderRadius: 12,
+    padding: 12,
     borderWidth: 1,
-    borderColor: '#E6DDD5',
+    borderColor: '#E8D7CE',
+    marginBottom: 14,
   },
-  methodChipActive: {
-    backgroundColor: '#8C331A',
-    borderColor: '#8C331A',
+  previewHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E8D7CE',
   },
-  methodChipText: {
+  previewTitle: {
     fontSize: 11,
+    fontWeight: '800',
+    color: '#8C331A',
+    letterSpacing: 0.3,
+    flex: 1,
+  },
+  previewBadge: {
+    fontSize: 9,
     fontWeight: '700',
-    color: '#6B5E55',
+    color: '#8C331A',
+    backgroundColor: '#FDEBE4',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
   },
-  methodChipTextActive: {
-    color: '#FFFFFF',
-  },
-  notesInput: {
-    backgroundColor: '#FAF7F4',
-    borderWidth: 1,
-    borderColor: '#E6DDD5',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    height: 40,
-    fontSize: 13,
-    color: '#2A2421',
-  },
-  calculationBox: {
+  previewItemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#FDFCFB',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginTop: 10,
-    borderWidth: 0.5,
-    borderColor: '#EFEAE4',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0E6DE',
   },
-  calcLabel: {
-    fontSize: 11,
-    color: '#8E8278',
-    fontWeight: '600',
+  previewInvNumber: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1F2937',
   },
-  calcValue: {
-    fontSize: 13,
+  previewInvDue: {
+    fontSize: 10,
+    color: '#6B7280',
+    marginTop: 1,
+  },
+  previewAllocatedAmount: {
+    fontSize: 12,
     fontWeight: '800',
   },
-  calcValueSuccess: {
+  allocActive: {
     color: '#059669',
   },
-  calcValuePending: {
-    color: '#D97706',
+  allocZero: {
+    color: '#9CA3AF',
+  },
+  previewRemainingAfter: {
+    fontSize: 10,
+    color: '#6B7280',
+    marginTop: 1,
+  },
+  previewSingleSummary: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  previewSingleLabel: {
+    fontSize: 12,
+    color: '#4B5563',
+    fontWeight: '600',
+  },
+  previewSingleVal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  allocationSummaryBox: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E8D7CE',
+  },
+  summaryLine: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  summaryLineLabel: {
+    fontSize: 11,
+    color: '#4B5563',
+    fontWeight: '600',
+  },
+  summaryLineVal: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1F2937',
+  },
+  notesInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 13,
+    color: '#1F2937',
+    marginBottom: 4,
   },
   modalFooter: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'flex-end',
+    gap: 10,
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderTopWidth: 1,
-    borderTopColor: '#F0EBE6',
+    borderTopColor: '#F3EFEA',
     backgroundColor: '#FFFFFF',
-    gap: 10,
   },
   cancelBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 8,
-    backgroundColor: '#FAF7F4',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E6DDD5',
+    borderColor: '#D1D5DB',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   cancelBtnText: {
     fontSize: 13,
-    fontWeight: '700',
-    color: '#6B5E55',
+    fontWeight: '600',
+    color: '#4B5563',
   },
   submitBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#8C331A',
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderRadius: 8,
+    backgroundColor: '#059669',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    minWidth: 140,
   },
   submitBtnDisabled: {
     opacity: 0.6,
   },
   submitBtnText: {
     fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  confirmOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  confirmCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 18,
+    shadowColor: '#2A2421',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 12,
+  },
+  confirmHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  confirmTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1F2937',
+  },
+  confirmCustomerText: {
+    fontSize: 13,
+    color: '#4B5563',
+    marginBottom: 12,
+  },
+  confirmDetailBox: {
+    backgroundColor: '#FAF8F5',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#EFECE9',
+    marginBottom: 12,
+  },
+  confirmDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  confirmDetailLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+  confirmDetailValMain: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#8C331A',
+  },
+  confirmDetailVal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1F2937',
+  },
+  confirmBreakdownContainer: {
+    marginBottom: 14,
+    paddingHorizontal: 2,
+  },
+  confirmBreakdownTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#8A7A70',
+    letterSpacing: 0.3,
+    marginBottom: 6,
+  },
+  confirmBreakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  confirmBreakdownInv: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  confirmBreakdownAlloc: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  confirmActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 6,
+  },
+  confirmCancelBtn: {
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  confirmCancelText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  confirmSaveBtn: {
+    backgroundColor: '#059669',
+    paddingVertical: 9,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+    minWidth: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmSaveText: {
+    fontSize: 12,
     fontWeight: '800',
     color: '#FFFFFF',
   },
