@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   View,
@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Header, CustomDialog } from '../../components/common';
+import { CollectPaymentModal, ReversePaymentModal, type CollectPaymentFormData } from '../../components/payment';
 import { useApp, InvoiceItem } from '../../context/AppContext';
 import { pdfService } from '../../services/pdf.service';
 import billingService, {
@@ -24,7 +25,7 @@ import AppToast from '../../utils/toast';
 
 export default function InvoiceDetailScreen({ route, navigation }: any) {
   const { invoice } = route.params || {};
-  const { userRole, markInvoiceAsPaid, customers } = useApp();
+  const { userRole, customers, collectInvoicePayment, refreshBackendData } = useApp();
 
   const mapBackendInvoiceToItem = (raw: any): InvoiceItem => {
     if (!raw) return raw;
@@ -35,23 +36,25 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
       const paidNum = parseFloat(raw.total_paid || '0') || 0;
       const pendingNum = parseFloat(raw.pending_amount || '0') || 0;
       const isPaidStatus = raw.status === 'paid' || pendingNum <= 0;
+      const isPartiallyPaidStatus = !isPaidStatus && (paidNum > 0 || raw.status === 'partially_paid');
 
       return {
         id: String(raw.id),
         invoiceNo: raw.invoice_number,
         name: raw.customer_name || 'Walk-in Customer',
         customerPhone: raw.customer_phone || '',
-        customerAddress: '',
-        amount: `₹${grandTotalNum.toLocaleString()}`,
+        customerAddress: raw.customer_address || raw.address || '',
+        amount: `₹${grandTotalNum.toLocaleString('en-IN')}`,
         numericAmount: grandTotalNum,
         subtotal: subtotalNum,
         discountAmount: discountNum,
         paidAmount: paidNum,
         pendingAmount: pendingNum,
-        due: isPaidStatus ? 'Paid' : `Pending ₹${pendingNum.toLocaleString()}`,
+        due: isPaidStatus ? 'Paid' : `Pending ₹${pendingNum.toLocaleString('en-IN')}`,
         date: raw.created_at ? new Date(raw.created_at).toLocaleDateString() : 'Today',
-        status: isPaidStatus ? 'PAID' : (paidNum > 0 || raw.status === 'partially_paid') ? 'PARTIALLY_PAID' : 'PENDING',
-        isOverdue: false,
+        createdAt: raw.finalized_at || raw.created_at || undefined,
+        status: isPaidStatus ? 'PAID' : isPartiallyPaidStatus ? 'PARTIALLY_PAID' : 'PENDING',
+        isOverdue: Boolean(raw.is_overdue),
         deliveryStatus: isPaidStatus ? 'Delivered' : 'Pending',
         items: (raw.items || []).map((it: any) => ({
           id: String(it.id),
@@ -92,6 +95,14 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
   );
   const [monthlyBreakdown, setMonthlyBreakdown] = useState<MonthlyInvoiceBreakdown | null>(null);
   const [isEditBillVisible, setIsEditBillVisible] = useState<boolean>(false);
+  const [isCollectPaymentVisible, setIsCollectPaymentVisible] = useState<boolean>(false);
+  const [reverseModalVisible, setReverseModalVisible] = useState<boolean>(false);
+  const [selectedPaymentForReverse, setSelectedPaymentForReverse] = useState<{
+    id: number;
+    amount: string | number;
+    received_at?: string;
+    allocations?: any[];
+  } | null>(null);
   const [isPdfLoading, setIsPdfLoading] = useState<boolean>(false);
   const [isExcelLoading, setIsExcelLoading] = useState<boolean>(false);
   const [pdfActionType, setPdfActionType] = useState<string>('');
@@ -120,7 +131,8 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
   const fetchLiveInvoice = useCallback(async () => {
     if (!rawInvoiceId) return;
     try {
-      const live: BackendInvoice = await billingService.getInvoiceDetail(rawInvoiceId);
+      const cleanId = String(rawInvoiceId).replace(/[^0-9]/g, '');
+      const live: BackendInvoice = await billingService.getInvoiceDetail(cleanId || rawInvoiceId);
       if (live) {
         setRawInvoiceData(live);
         setCurrentOrder(mapBackendInvoiceToItem(live));
@@ -152,6 +164,26 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
   const isPartiallyPaid = currentOrder.status === 'PARTIALLY_PAID';
   const isMonthly = rawInvoiceData?.billing_type === 'monthly';
 
+  // Derived Financials directly from authoritative backend data
+  const billTotalNum = rawInvoiceData
+    ? parseFloat(rawInvoiceData.grand_total) || 0
+    : currentOrder.numericAmount || 0;
+  const receivedNum = rawInvoiceData
+    ? parseFloat(rawInvoiceData.total_paid) || 0
+    : currentOrder.paidAmount || 0;
+  const remainingNum = rawInvoiceData
+    ? parseFloat(rawInvoiceData.pending_amount) || 0
+    : currentOrder.pendingAmount !== undefined
+    ? currentOrder.pendingAmount
+    : Math.max(0, billTotalNum - receivedNum);
+
+  const subtotalNum = rawInvoiceData
+    ? parseFloat(rawInvoiceData.subtotal) || billTotalNum
+    : currentOrder.subtotal || billTotalNum;
+  const discountNum = rawInvoiceData
+    ? parseFloat(rawInvoiceData.discount_amount || '0') || 0
+    : currentOrder.discountAmount || 0;
+
   // Save edited bill handler
   const handleSaveEditedBill = async (payload: {
     items: Array<{ product_id: number | null; product_name: string; quantity: number; unit_price: string }>;
@@ -164,6 +196,7 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
     await billingService.editBill(cleanId, payload);
     AppToast.success('Bill Updated', 'Invoice modifications saved successfully.');
     fetchLiveInvoice();
+    refreshBackendData();
   };
 
   const handleCallCustomer = () => {
@@ -175,7 +208,40 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
     }
   };
 
-  // PDF Handlers: Download, Share, Print
+  // Record Payment Confirmation via Reusable CollectPaymentModal
+  const handleConfirmRecordPayment = async (data: CollectPaymentFormData) => {
+    const cleanId = String(rawInvoiceData?.id || currentOrder.id).replace(/[^0-9]/g, '');
+    try {
+      await collectInvoicePayment(cleanId, data.amount, 'Cash');
+      setIsCollectPaymentVisible(false);
+      AppToast.success(
+        'Payment Recorded',
+        `₹${data.amount.toLocaleString('en-IN')} cash payment recorded successfully.`
+      );
+      await fetchLiveInvoice();
+      refreshBackendData();
+    } catch (err: any) {
+      AppToast.error('Payment Failed', err?.message || 'Could not record payment.');
+    }
+  };
+
+  // Reverse Payment Handler
+  const handleConfirmReversePayment = async (reason: string) => {
+    if (!selectedPaymentForReverse) return;
+    try {
+      await billingService.reversePayment(selectedPaymentForReverse.id, reason);
+      setReverseModalVisible(false);
+      setSelectedPaymentForReverse(null);
+      AppToast.success('Payment Reversed', 'Payment allocation safely undone and invoice balance updated.');
+      await fetchLiveInvoice();
+      refreshBackendData();
+    } catch (err: any) {
+      AppToast.error('Reversal Failed', err?.message || 'Could not reverse payment.');
+      throw err;
+    }
+  };
+
+  // PDF Handlers: Download, Share, & Excel
   const handleDownloadPdf = async () => {
     if (isPdfLoading) return;
     try {
@@ -270,37 +336,31 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Header */}
-      <Header title={orderIdDisplay} showBack={true} showNotification={false} />
+      {/* 1. INVOICE HEADER (Back Button, Invoice Number, Payment Status Pill) */}
+      <Header
+        title={orderIdDisplay}
+        showBack={true}
+        showNotification={false}
+      />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* 1. Summary Card */}
+        {/* 2. BILL SUMMARY CARD (Final Bill Amount, Amount Received, Remaining Balance, Payment Status) */}
         <View style={styles.summaryCard}>
           <View style={styles.summaryTopRow}>
-            <Text style={styles.summaryCardSubtitle}>
-              {isMonthly ? `MONTHLY INVOICE (${rawInvoiceData?.billing_period || ''})` : 'BILL SUMMARY'}
-            </Text>
-            {isAdmin && !isMonthly && (
-              <TouchableOpacity
-                style={styles.editBillHeaderBtn}
-                onPress={() => setIsEditBillVisible(true)}
-                activeOpacity={0.75}
-              >
-                <Ionicons name="create-outline" size={14} color="#8C331A" style={{ marginRight: 4 }} />
-                <Text style={styles.editBillHeaderBtnText}>Edit Bill</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          <Text style={styles.totalAmountText}>{currentOrder.amount}</Text>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={styles.summaryCardSubtitle}>
+                {isMonthly ? `MONTHLY INVOICE (${rawInvoiceData?.billing_period || ''})` : 'BILL SUMMARY'}
+              </Text>
+              <Text style={styles.invoiceNumberHeading}>{orderIdDisplay}</Text>
+            </View>
 
-          {/* Payment Status Badges */}
-          <View style={styles.badgesContainer}>
+            {/* Payment Status Pill */}
             <View
               style={[
-                styles.badge,
+                styles.statusBadge,
                 isPaid
                   ? styles.badgePaid
                   : isPartiallyPaid
@@ -310,7 +370,7 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
             >
               <Text
                 style={[
-                  styles.badgeText,
+                  styles.statusBadgeText,
                   isPaid
                     ? styles.badgeTextPaid
                     : isPartiallyPaid
@@ -318,76 +378,112 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
                     : styles.badgeTextUnpaid,
                 ]}
               >
-                {isPaid ? 'Paid' : isPartiallyPaid ? 'Partially Paid' : 'Unpaid'}
+                {isPaid ? 'PAID' : isPartiallyPaid ? 'PARTIALLY PAID' : 'UNPAID'}
               </Text>
             </View>
           </View>
 
-          {!isPaid && (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={styles.markPaidBtn}
-              onPress={() => {
-                markInvoiceAsPaid(currentOrder.id);
-                setCurrentOrder(prev => ({ ...prev, status: 'PAID', isOverdue: false }));
-                setDialogConfig({
-                  visible: true,
-                  title: 'Payment Completed 🎉',
-                  message: `Payment of ${currentOrder.amount} marked as completed.`,
-                  type: 'success',
-                  buttons: [{ text: 'OK', onPress: closeDialog }],
-                });
-              }}
-            >
-              <Ionicons name="checkmark-done-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.markPaidBtnText}>Mark Payment Completed</Text>
-            </TouchableOpacity>
-          )}
+          {/* 3 Metric Summary Grid */}
+          <View style={styles.summaryMetricsGrid}>
+            <View style={styles.summaryMetricCol}>
+              <Text style={styles.summaryMetricLabel}>FINAL BILL AMOUNT</Text>
+              <Text style={styles.summaryMetricVal}>
+                ₹{billTotalNum.toLocaleString('en-IN')}
+              </Text>
+            </View>
 
-          {/* Actions: PDF Download, Share, & Excel (Monthly) */}
-          <View style={styles.pdfActionsRow}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={[styles.pdfBtn, isPdfLoading && styles.pdfBtnDisabled]}
-              onPress={handleDownloadPdf}
-              disabled={isPdfLoading}
-            >
-              <Ionicons name="download-outline" size={17} color="#7A2E19" />
-              <Text style={styles.pdfBtnText}>PDF</Text>
-            </TouchableOpacity>
+            <View style={styles.summaryMetricCol}>
+              <Text style={styles.summaryMetricLabel}>AMOUNT RECEIVED</Text>
+              <Text style={[styles.summaryMetricVal, { color: '#059669' }]}>
+                ₹{receivedNum.toLocaleString('en-IN')}
+              </Text>
+            </View>
 
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={[styles.pdfBtn, isPdfLoading && styles.pdfBtnDisabled]}
-              onPress={handleSharePdf}
-              disabled={isPdfLoading}
-            >
-              <Ionicons name="share-social-outline" size={17} color="#7A2E19" />
-              <Text style={styles.pdfBtnText}>Share</Text>
-            </TouchableOpacity>
-
-            {isMonthly && (
-              <TouchableOpacity
-                activeOpacity={0.8}
-                style={[styles.pdfBtn, isExcelLoading && styles.pdfBtnDisabled]}
-                onPress={handleExportExcel}
-                disabled={isExcelLoading}
+            <View style={[styles.summaryMetricCol, { borderRightWidth: 0 }]}>
+              <Text style={styles.summaryMetricLabel}>REMAINING BALANCE</Text>
+              <Text
+                style={[
+                  styles.summaryMetricVal,
+                  { color: remainingNum > 0 ? '#DC2626' : '#059669', fontWeight: '800' },
+                ]}
               >
-                <Ionicons name="document-text-outline" size={17} color="#059669" />
-                <Text style={[styles.pdfBtnText, { color: '#059669' }]}>Excel</Text>
-              </TouchableOpacity>
-            )}
+                ₹{remainingNum.toLocaleString('en-IN')}
+              </Text>
+            </View>
           </View>
 
-          {isPdfLoading && (
-            <Text style={styles.pdfLoadingText}>⏳ {pdfActionType}</Text>
-          )}
-          {isExcelLoading && (
-            <Text style={styles.pdfLoadingText}>⏳ Generating Excel statement...</Text>
-          )}
+          {/* ACTION BUTTONS: Edit Invoice | Record Payment | Download PDF | Share Invoice */}
+          <View style={styles.actionButtonsContainer}>
+            {/* Row 1: Primary Action Buttons */}
+            <View style={styles.primaryActionsRow}>
+              {isAdmin && !isMonthly && (
+                <TouchableOpacity
+                  style={styles.editBillBtn}
+                  onPress={() => setIsEditBillVisible(true)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="create-outline" size={15} color="#8C331A" style={{ marginRight: 4 }} />
+                  <Text style={styles.editBillBtnText}>Edit Invoice</Text>
+                </TouchableOpacity>
+              )}
+
+              {!isPaid && (
+                <TouchableOpacity
+                  style={styles.recordPaymentBtn}
+                  onPress={() => setIsCollectPaymentVisible(true)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="cash-outline" size={15} color="#FFFFFF" style={{ marginRight: 5 }} />
+                  <Text style={styles.recordPaymentBtnText}>Record Payment</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Row 2: Document / Export Actions */}
+            <View style={styles.pdfActionsRow}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={[styles.pdfBtn, isPdfLoading && styles.pdfBtnDisabled]}
+                onPress={handleDownloadPdf}
+                disabled={isPdfLoading}
+              >
+                <Ionicons name="download-outline" size={15} color="#8C331A" />
+                <Text style={styles.pdfBtnText}>Download PDF</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={[styles.pdfBtn, isPdfLoading && styles.pdfBtnDisabled]}
+                onPress={handleSharePdf}
+                disabled={isPdfLoading}
+              >
+                <Ionicons name="share-social-outline" size={15} color="#8C331A" />
+                <Text style={styles.pdfBtnText}>Share Invoice</Text>
+              </TouchableOpacity>
+
+              {isMonthly && (
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  style={[styles.pdfBtn, isExcelLoading && styles.pdfBtnDisabled]}
+                  onPress={handleExportExcel}
+                  disabled={isExcelLoading}
+                >
+                  <Ionicons name="document-text-outline" size={15} color="#059669" />
+                  <Text style={[styles.pdfBtnText, { color: '#059669' }]}>Excel</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {isPdfLoading && (
+              <Text style={styles.pdfLoadingText}>⏳ {pdfActionType}</Text>
+            )}
+            {isExcelLoading && (
+              <Text style={styles.pdfLoadingText}>⏳ Generating Excel statement...</Text>
+            )}
+          </View>
         </View>
 
-        {/* 2. Customer Card */}
+        {/* 3. CUSTOMER DETAILS */}
         <TouchableOpacity
           activeOpacity={0.88}
           style={styles.sectionCard}
@@ -398,7 +494,7 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
               id: `c_${currentOrder.id}`,
               name: currentOrder.name,
               address: currentOrder.customerAddress || 'Local Market Area',
-              amount: currentOrder.numericAmount || 0,
+              amount: remainingNum,
               deliveryStatus: 'Active Customer',
               hasDot: true,
               isOverdue: currentOrder.isOverdue || false,
@@ -410,11 +506,14 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={styles.sectionTitleLabel}>CUSTOMER DETAILS</Text>
-                <Ionicons name="chevron-forward" size={14} color="#A52A0A" style={{ marginLeft: 4 }} />
+                <Ionicons name="chevron-forward" size={13} color="#8C331A" style={{ marginLeft: 3 }} />
               </View>
               <Text style={styles.customerName}>{currentOrder.name}</Text>
               {Boolean(currentOrder.customerPhone) && (
                 <Text style={styles.customerAddress}>📞 {currentOrder.customerPhone}</Text>
+              )}
+              {Boolean(currentOrder.customerAddress) && (
+                <Text style={styles.customerAddress}>📍 {currentOrder.customerAddress}</Text>
               )}
             </View>
 
@@ -424,14 +523,14 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
                 style={styles.callBtn}
                 onPress={handleCallCustomer}
               >
-                <Ionicons name="call" size={16} color="#FFFFFF" />
+                <Ionicons name="call" size={14} color="#FFFFFF" />
                 <Text style={styles.callBtnText}>Call</Text>
               </TouchableOpacity>
             )}
           </View>
         </TouchableOpacity>
 
-        {/* 3. Date-wise Monthly Breakdown (If Monthly Invoice) */}
+        {/* 4. INVOICE ITEMS */}
         {isMonthly && monthlyBreakdown?.dates && monthlyBreakdown.dates.length > 0 ? (
           <View style={styles.sectionCard}>
             <Text style={styles.sectionTitleLabel}>DELIVERY BREAKDOWN BY DATE</Text>
@@ -474,7 +573,6 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
             ))}
           </View>
         ) : (
-          /* Standard Product Items (Single Order Invoice) */
           <View style={styles.sectionCard}>
             <Text style={styles.sectionTitleLabel}>INVOICE ITEMS</Text>
             {currentOrder.items && currentOrder.items.length > 0 ? (
@@ -483,70 +581,217 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
                   <View style={styles.itemLeft}>
                     <Text style={styles.itemName}>{item.name}</Text>
                     <Text style={styles.itemQtyPrice}>
-                      Qty: {item.qty} × ₹{item.price}
+                      {item.qty} × ₹{item.price}
                     </Text>
                   </View>
-                  <Text style={styles.itemTotal}>₹{(item.qty * item.price).toLocaleString()}</Text>
+                  <Text style={styles.itemTotal}>
+                    ₹{(item.qty * item.price).toLocaleString('en-IN')}
+                  </Text>
                 </View>
               ))
             ) : (
               <View style={styles.itemRow}>
                 <Text style={styles.itemName}>Consolidated Order Items</Text>
-                <Text style={styles.itemTotal}>{currentOrder.amount}</Text>
+                <Text style={styles.itemTotal}>₹{billTotalNum.toLocaleString('en-IN')}</Text>
               </View>
             )}
           </View>
         )}
 
-        {/* 4. Financial Calculations Summary */}
+        {/* 5. PAYMENT SUMMARY */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitleLabel}>PAYMENT & TOTALS</Text>
+          <Text style={styles.sectionTitleLabel}>PAYMENT SUMMARY</Text>
 
           <View style={styles.calcRow}>
             <Text style={styles.calcLabel}>Subtotal</Text>
-            <Text style={styles.calcVal}>₹{(currentOrder.subtotal || currentOrder.numericAmount || 0).toLocaleString()}</Text>
+            <Text style={styles.calcVal}>₹{subtotalNum.toLocaleString('en-IN')}</Text>
           </View>
 
-          {Boolean(currentOrder.discountAmount && currentOrder.discountAmount > 0) && (
+          {discountNum > 0 ? (
             <View style={styles.calcRow}>
               <Text style={[styles.calcLabel, { color: '#059669', fontWeight: '700' }]}>Discount</Text>
               <Text style={[styles.calcVal, { color: '#059669', fontWeight: '800' }]}>
-                - ₹{Number(currentOrder.discountAmount).toLocaleString()}
+                - ₹{discountNum.toLocaleString('en-IN')}
               </Text>
             </View>
-          )}
+          ) : null}
 
           <View style={[styles.calcRow, { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 6, marginTop: 4 }]}>
             <Text style={[styles.calcLabel, { fontWeight: '800', color: '#111827' }]}>Final Bill Amount</Text>
             <Text style={[styles.calcVal, { fontWeight: '900', color: '#8C331A' }]}>
-              {currentOrder.amount || `₹${(currentOrder.numericAmount || 0).toLocaleString()}`}
+              ₹{billTotalNum.toLocaleString('en-IN')}
             </Text>
           </View>
 
-          {currentOrder.paidAmount !== undefined && (
-            <View style={styles.calcRow}>
-              <Text style={styles.calcLabel}>Amount Received</Text>
-              <Text style={[styles.calcVal, { color: '#059669', fontWeight: '700' }]}>
-                ₹{Number(currentOrder.paidAmount).toLocaleString()}
-              </Text>
-            </View>
-          )}
+          <View style={styles.calcRow}>
+            <Text style={styles.calcLabel}>Amount Received</Text>
+            <Text style={[styles.calcVal, { color: '#059669', fontWeight: '700' }]}>
+              ₹{receivedNum.toLocaleString('en-IN')}
+            </Text>
+          </View>
 
-          {currentOrder.pendingAmount !== undefined && Number(currentOrder.pendingAmount) > 0 && (
-            <View style={styles.calcRow}>
-              <Text style={[styles.calcLabel, { color: '#DC2626', fontWeight: '700' }]}>Remaining Balance</Text>
-              <Text style={[styles.calcVal, { color: '#DC2626', fontWeight: '800' }]}>
-                ₹{Number(currentOrder.pendingAmount).toLocaleString()}
-              </Text>
-            </View>
-          )}
+          <View style={[styles.calcRow, { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 6, marginTop: 4 }]}>
+            <Text style={[styles.calcLabel, { color: remainingNum > 0 ? '#DC2626' : '#059669', fontWeight: '800' }]}>
+              Remaining Balance
+            </Text>
+            <Text style={[styles.calcVal, { color: remainingNum > 0 ? '#DC2626' : '#059669', fontWeight: '900' }]}>
+              ₹{remainingNum.toLocaleString('en-IN')}
+            </Text>
+          </View>
         </View>
 
-        {/* 5. Invoice Edit Audit History (If edited) */}
+        {/* 6. PAYMENT HISTORY (Payment date/time, amount, allocations, and reversal status) */}
+        {((rawInvoiceData?.allocations && rawInvoiceData.allocations.length > 0) ||
+          (rawInvoiceData?.payments && rawInvoiceData.payments.length > 0)) && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionTitleRow}>
+              <Ionicons name="receipt-outline" size={15} color="#8C331A" style={{ marginRight: 5 }} />
+              <Text style={styles.sectionTitleLabel}>PAYMENT HISTORY</Text>
+            </View>
+
+            {/* If PaymentAllocations exist (authoritative invoice allocations) */}
+            {rawInvoiceData?.allocations && rawInvoiceData.allocations.length > 0 ? (
+              rawInvoiceData.allocations.map((alloc, idx) => {
+                const isReversed = Boolean(
+                  (alloc as any).is_reversed ||
+                  (alloc as any).status === 'reversed' ||
+                  (alloc.notes && alloc.notes.toLowerCase().includes('reversed'))
+                );
+
+                return (
+                  <View key={alloc.id || idx} style={styles.paymentHistoryItem}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View style={[styles.paymentDot, isReversed && styles.paymentDotReversed]} />
+                      <View>
+                        <Text style={[styles.paymentHistoryAmount, isReversed && styles.paymentAmountReversed]}>
+                          {isReversed ? '-' : '+'} ₹{parseFloat(alloc.allocated_amount || '0').toLocaleString('en-IN')}
+                        </Text>
+                        <Text style={styles.paymentHistoryDate}>
+                          {alloc.allocated_at ? new Date(alloc.allocated_at).toLocaleString() : 'Date N/A'}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View
+                        style={[
+                          styles.allocationPill,
+                          isReversed ? styles.allocationPillReversed : styles.allocationPillActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.allocationPillText,
+                            isReversed ? styles.allocationTextReversed : styles.allocationTextActive,
+                          ]}
+                        >
+                          {isReversed ? 'Reversed' : `Allocated to ${alloc.invoice_number || orderIdDisplay}`}
+                        </Text>
+                      </View>
+
+                      {/* Reverse Payment Action: Only shown for active non-reversed payments */}
+                      {!isReversed && (
+                        <TouchableOpacity
+                          style={styles.reverseActionBtn}
+                          onPress={() => {
+                            setSelectedPaymentForReverse({
+                              id: alloc.payment,
+                              amount: alloc.allocated_amount,
+                              received_at: alloc.allocated_at,
+                              allocations: [
+                                {
+                                  invoice_number: alloc.invoice_number || orderIdDisplay,
+                                  allocated_amount: alloc.allocated_amount,
+                                },
+                              ],
+                            });
+                            setReverseModalVisible(true);
+                          }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="arrow-undo-outline" size={13} color="#DC2626" />
+                          <Text style={styles.reverseActionBtnText}>Reverse</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                );
+              })
+            ) : (
+              /* Fallback direct payments */
+              rawInvoiceData?.payments.map((p, idx) => {
+                const isReversed = Boolean(
+                  (p as any).is_reversed ||
+                  (p as any).status === 'reversed' ||
+                  (p.notes && p.notes.toLowerCase().includes('reversed'))
+                );
+
+                return (
+                  <View key={p.id || idx} style={styles.paymentHistoryItem}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View style={[styles.paymentDot, isReversed && styles.paymentDotReversed]} />
+                      <View>
+                        <Text style={[styles.paymentHistoryAmount, isReversed && styles.paymentAmountReversed]}>
+                          {isReversed ? '-' : '+'} ₹{parseFloat(p.amount || '0').toLocaleString('en-IN')}
+                        </Text>
+                        <Text style={styles.paymentHistoryDate}>
+                          {p.received_at ? new Date(p.received_at).toLocaleString() : 'Date N/A'}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View
+                        style={[
+                          styles.allocationPill,
+                          isReversed ? styles.allocationPillReversed : styles.allocationPillActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.allocationPillText,
+                            isReversed ? styles.allocationTextReversed : styles.allocationTextActive,
+                          ]}
+                        >
+                          {isReversed ? 'Reversed' : `Allocated to ${orderIdDisplay}`}
+                        </Text>
+                      </View>
+
+                      {/* Reverse Payment Action: Only shown for active non-reversed payments */}
+                      {!isReversed && (
+                        <TouchableOpacity
+                          style={styles.reverseActionBtn}
+                          onPress={() => {
+                            setSelectedPaymentForReverse({
+                              id: p.id,
+                              amount: p.amount,
+                              received_at: p.received_at,
+                              allocations: [
+                                {
+                                  invoice_number: orderIdDisplay,
+                                  allocated_amount: p.amount,
+                                },
+                              ],
+                            });
+                            setReverseModalVisible(true);
+                          }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="arrow-undo-outline" size={13} color="#DC2626" />
+                          <Text style={styles.reverseActionBtnText}>Reverse</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </View>
+        )}
+
+        {/* 7. EXISTING AUDIT HISTORY (Immutable modification record) */}
         {rawInvoiceData?.audit_logs && rawInvoiceData.audit_logs.length > 0 && (
           <View style={styles.sectionCard}>
             <View style={styles.auditHeaderRow}>
-              <Ionicons name="time" size={16} color="#8C331A" style={{ marginRight: 6 }} />
+              <Ionicons name="time" size={15} color="#8C331A" style={{ marginRight: 6 }} />
               <Text style={styles.sectionTitleLabel}>BILL AUDIT HISTORY</Text>
             </View>
             <Text style={styles.auditSubtitle}>
@@ -599,7 +844,7 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
           quantity: it.qty,
           unit_price: String(it.price || '0'),
         }))}
-        initialDiscount={String(currentOrder.discountAmount || 0)}
+        initialDiscount={String(discountNum || 0)}
         initialNotes={currentOrder.notes || ''}
         initialDueDate={rawInvoiceData?.due_date || null}
         onSaveSuccess={() => {
@@ -607,6 +852,36 @@ export default function InvoiceDetailScreen({ route, navigation }: any) {
           fetchLiveInvoice();
         }}
         saveAction={handleSaveEditedBill}
+      />
+
+      {/* Reverse Payment Modal */}
+      <ReversePaymentModal
+        visible={reverseModalVisible}
+        onClose={() => {
+          setReverseModalVisible(false);
+          setSelectedPaymentForReverse(null);
+        }}
+        onSubmit={handleConfirmReversePayment}
+        customerName={currentOrder.name}
+        paymentId={selectedPaymentForReverse?.id}
+        amount={selectedPaymentForReverse?.amount || 0}
+        paymentDate={
+          selectedPaymentForReverse?.received_at
+            ? new Date(selectedPaymentForReverse.received_at).toLocaleString()
+            : 'Date N/A'
+        }
+        allocations={selectedPaymentForReverse?.allocations || []}
+      />
+
+      {/* Record Payment Reusable CollectPaymentModal */}
+      <CollectPaymentModal
+        visible={isCollectPaymentVisible}
+        onClose={() => setIsCollectPaymentVisible(false)}
+        onSubmit={handleConfirmRecordPayment}
+        customerName={currentOrder.name}
+        totalPendingAmount={remainingNum}
+        initialAmount={remainingNum}
+        invoices={rawInvoiceData ? [rawInvoiceData] : []}
       />
 
       {/* Custom Dialog Popup */}
@@ -633,8 +908,8 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 20,
+    borderRadius: 18,
+    padding: 16,
     marginBottom: 14,
     borderWidth: 1,
     borderColor: '#EFECE9',
@@ -643,103 +918,134 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 8,
-    alignItems: 'center',
   },
   summaryTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    width: '100%',
-    marginBottom: 8,
+    marginBottom: 12,
   },
   summaryCardSubtitle: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
     color: '#8A7A70',
     letterSpacing: 0.5,
   },
-  editBillHeaderBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  invoiceNumberHeading: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1F2937',
+    marginTop: 2,
+  },
+  statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
-    backgroundColor: '#FAF5F0',
-    borderWidth: 1,
-    borderColor: '#E8D7CE',
   },
-  editBillHeaderBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#8C331A',
-  },
-  totalAmountText: {
-    fontSize: 34,
-    fontWeight: '900',
-    color: '#8C331A',
-    marginBottom: 10,
-  },
-  badgesContainer: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 14,
-  },
-  badge: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 12,
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
   badgePaid: {
-    backgroundColor: '#E8F5E9',
+    backgroundColor: '#ECFDF5',
   },
   badgePartiallyPaid: {
     backgroundColor: '#FFFBEB',
   },
   badgeUnpaid: {
-    backgroundColor: '#FFEBEE',
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '800',
+    backgroundColor: '#FEF2F2',
   },
   badgeTextPaid: {
-    color: '#2E7D32',
+    color: '#059669',
   },
   badgeTextPartiallyPaid: {
-    color: '#B45309',
+    color: '#D97706',
   },
   badgeTextUnpaid: {
-    color: '#C62828',
+    color: '#DC2626',
   },
-  markPaidBtn: {
+  summaryMetricsGrid: {
+    flexDirection: 'row',
+    backgroundColor: '#FAF8F5',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    borderWidth: 1,
+    borderColor: '#F0EBE5',
+    marginBottom: 14,
+  },
+  summaryMetricCol: {
+    flex: 1,
+    alignItems: 'center',
+    borderRightWidth: 1,
+    borderRightColor: '#EAE3DC',
+    paddingHorizontal: 4,
+  },
+  summaryMetricLabel: {
+    fontSize: 8.5,
+    fontWeight: '800',
+    color: '#8A7A70',
+    letterSpacing: 0.3,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  summaryMetricVal: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#1F2937',
+    textAlign: 'center',
+  },
+  actionButtonsContainer: {
+    marginTop: 2,
+  },
+  primaryActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  editBillBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#059669',
     paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    width: '100%',
-    marginBottom: 12,
+    borderRadius: 10,
+    backgroundColor: '#FAF5F0',
+    borderWidth: 1,
+    borderColor: '#E8D7CE',
   },
-  markPaidBtnText: {
+  editBillBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8C331A',
+  },
+  recordPaymentBtn: {
+    flex: 1.3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#059669',
+  },
+  recordPaymentBtnText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
   },
   pdfActionsRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
     width: '100%',
-    marginTop: 4,
   },
   pdfBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingVertical: 9,
+    borderRadius: 10,
     backgroundColor: '#FAF5F0',
     borderWidth: 1,
     borderColor: '#E8D7CE',
@@ -749,19 +1055,20 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   pdfBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
-    color: '#7A2E19',
+    color: '#8C331A',
   },
   pdfLoadingText: {
     fontSize: 11,
-    color: '#7A2E19',
+    color: '#8C331A',
     fontWeight: '600',
     marginTop: 8,
+    textAlign: 'center',
   },
   sectionCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
+    borderRadius: 16,
     padding: 16,
     marginBottom: 14,
     borderWidth: 1,
@@ -771,6 +1078,11 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,
     shadowRadius: 6,
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   customerHeaderRow: {
     flexDirection: 'row',
@@ -782,15 +1094,15 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#8A7A70',
     letterSpacing: 0.5,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   customerName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: '#2A201A',
   },
   customerAddress: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#8A7A70',
     marginTop: 2,
   },
@@ -799,8 +1111,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#8C331A',
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
     gap: 4,
   },
   callBtnText: {
@@ -933,6 +1245,80 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#1F2937',
+  },
+  paymentHistoryItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  paymentDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#059669',
+    marginRight: 8,
+  },
+  paymentDotReversed: {
+    backgroundColor: '#DC2626',
+  },
+  paymentHistoryAmount: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  paymentAmountReversed: {
+    color: '#DC2626',
+    textDecorationLine: 'line-through',
+  },
+  paymentHistoryDate: {
+    fontSize: 10,
+    color: '#8A7A70',
+    marginTop: 2,
+  },
+  allocationPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  allocationPillActive: {
+    backgroundColor: '#FAF5F0',
+    borderWidth: 1,
+    borderColor: '#E8D7CE',
+  },
+  allocationPillReversed: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  allocationPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  allocationTextActive: {
+    color: '#8C331A',
+  },
+  allocationTextReversed: {
+    color: '#DC2626',
+  },
+  reverseActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  reverseActionBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#DC2626',
+    marginLeft: 3,
   },
   auditHeaderRow: {
     flexDirection: 'row',
